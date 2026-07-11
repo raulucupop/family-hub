@@ -787,6 +787,112 @@ app.post('/api/notifications/read', auth, (req, res) => {
   res.json({ ok: true });
 });
 
+// ---------- email reminders ----------
+// Tenants: one email when any unpaid charge (rent or shared invoice) is due within 7 days,
+// listing everything they owe. Family admins/adults: bills due within 7 days, plus
+// insurance / deadline / document expiries at 30, 14, 7 and 3 days.
+// email_log keeps one send per item per threshold; MAIL_FROM unset = feature off.
+const MAIL_THRESHOLDS = [3, 7, 14, 30]; // ascending, so .find() returns the tightest crossed
+let mailTransport = null;
+function getMailTransport() {
+  if (mailTransport) return mailTransport;
+  const nodemailer = require('nodemailer');
+  if (process.env.MAIL_DEBUG === '1') {
+    mailTransport = nodemailer.createTransport({ jsonTransport: true });
+  } else if (process.env.SMTP_HOST) {
+    mailTransport = nodemailer.createTransport({
+      host: process.env.SMTP_HOST,
+      port: Number(process.env.SMTP_PORT) || 587,
+      secure: Number(process.env.SMTP_PORT) === 465,
+      auth: process.env.SMTP_USER ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } : undefined,
+    });
+  } else {
+    mailTransport = nodemailer.createTransport({ sendmail: true, path: process.env.SENDMAIL_PATH || '/usr/sbin/sendmail' });
+  }
+  return mailTransport;
+}
+async function sendMail(to, subject, text) {
+  const info = await getMailTransport().sendMail({ from: process.env.MAIL_FROM, to: to.join(', '), subject, text });
+  if (process.env.MAIL_DEBUG === '1') console.log('MAIL_DEBUG:', info.message);
+}
+// claim keys atomically so parallel workers can't double-send; released again if sending fails
+function claimKeys(keys) {
+  const ins = db.prepare('INSERT OR IGNORE INTO email_log (key) VALUES (?)');
+  return keys.filter((k) => ins.run(k).changes > 0);
+}
+function releaseKeys(keys) {
+  const del = db.prepare('DELETE FROM email_log WHERE key = ?');
+  keys.forEach((k) => del.run(k));
+}
+async function runEmailReminders() {
+  if (!process.env.MAIL_FROM) return { skipped: 'MAIL_FROM not set — email reminders disabled' };
+  const daysTo = (d) => Math.ceil((new Date(d) - new Date(new Date().toISOString().slice(0, 10))) / 86400000);
+  let sent = 0, errors = 0;
+  for (const fam of db.prepare('SELECT * FROM families').all()) {
+    const cur = fam.currency || 'RON';
+    // --- household digest: bills ≤ 7 days, other deadlines at 30/14/7/3 ---
+    const due = [];
+    const keys = [];
+    for (const it of collectReminders(fam.id, 31)) {
+      if (it.days_left < 0) continue;
+      let key = null;
+      if (it.kind === 'bill') {
+        if (it.days_left <= 7) key = `adm:${fam.id}:bill:${it.ref_id}:${it.date}:7`;
+      } else {
+        const t = MAIL_THRESHOLDS.find((x) => it.days_left <= x);
+        if (t != null) key = `adm:${fam.id}:${it.kind}:${it.ref_id}:${it.date}:${t}`;
+      }
+      if (!key) continue;
+      due.push(it);
+      keys.push(key);
+    }
+    if (due.length) {
+      const claimed = claimKeys(keys);
+      if (claimed.length) {
+        const to = db.prepare("SELECT email FROM users WHERE family_id = ? AND role IN ('admin','adult') AND email IS NOT NULL").all(fam.id).map((u) => u.email);
+        if (to.length) {
+          const lines = due.map((i) => `- ${i.label}${i.entity ? ` (${i.entity})` : ''}: due ${i.date}, ${i.days_left === 0 ? 'today' : `in ${i.days_left} day${i.days_left === 1 ? '' : 's'}`}${i.amount ? ` — ${Number(i.amount).toFixed(2)} ${cur}` : ''}`);
+          try {
+            await sendMail(to, `Family Hub — ${due.length} deadline${due.length === 1 ? '' : 's'} coming up`,
+              `Hello,\n\nThese items in ${fam.name}'s Family Hub need attention soon:\n\n${lines.join('\n')}\n\nOpen Family Hub for details and to mark them done.\n`);
+            sent++;
+          } catch (err) { errors++; releaseKeys(claimed); console.error('email reminders (family):', err.message); }
+        }
+      }
+    }
+    // --- tenants: rent due ≤ 7 days pulls every unpaid charge into one email ---
+    for (const prop of db.prepare('SELECT * FROM properties WHERE family_id = ?').all(fam.id)) {
+      ensureRentCharge(prop);
+      const unpaid = db.prepare("SELECT * FROM tenant_charges WHERE property_id = ? AND status = 'unpaid' ORDER BY due_date").all(prop.id);
+      const trigger = unpaid.filter((c) => { const d = daysTo(c.due_date); return d >= 0 && d <= 7; });
+      if (!trigger.length) continue;
+      const claimed = claimKeys(trigger.map((c) => `ten:${c.id}:${c.due_date}`));
+      if (!claimed.length) continue;
+      const tenants = db.prepare("SELECT email FROM users WHERE role = 'tenant' AND tenant_property_id = ? AND email IS NOT NULL").all(prop.id).map((u) => u.email);
+      if (!tenants.length) { releaseKeys(claimed); continue; }
+      const total = unpaid.reduce((s, c) => s + c.amount, 0);
+      const lines = unpaid.map((c) => `- ${c.title}: ${Number(c.amount).toFixed(2)} ${cur}, due ${c.due_date}`);
+      try {
+        await sendMail(tenants, `Payments for ${prop.name} — due soon`,
+          `Hello,\n\nA friendly reminder about your upcoming payments for ${prop.name}:\n\n${lines.join('\n')}\n\nTotal to pay: ${total.toFixed(2)} ${cur}\n\nAfter you pay, open your tenant portal and press "Mark as paid" so the owner can confirm it.\n`);
+        sent++;
+      } catch (err) { errors++; releaseKeys(claimed); console.error('email reminders (tenant):', err.message); }
+    }
+  }
+  return { sent, errors };
+}
+// runs shortly after every start (visits wake the app) and every 6 hours while it stays alive;
+// a cron hitting /api/cron/email-reminders guarantees a daily check even with zero visits
+async function emailReminderTick() {
+  try { await runEmailReminders(); } catch (err) { console.error('email reminders:', err.message); }
+}
+setTimeout(emailReminderTick, 30 * 1000);
+setInterval(emailReminderTick, 6 * 3600 * 1000);
+app.get('/api/cron/email-reminders', async (req, res) => {
+  if (process.env.CRON_TOKEN && req.query.token !== process.env.CRON_TOKEN) return res.status(403).json({ error: 'Bad token' });
+  res.json(await runEmailReminders());
+});
+
 // ---------- bank import ----------
 // Client parses the CSV and sends normalized rows; server dedups by content hash.
 app.post('/api/import/transactions', auth, canWrite, (req, res) => {

@@ -238,6 +238,13 @@ CREATE TABLE IF NOT EXISTS notifications (
   UNIQUE(family_id, key)
 );
 
+-- which email reminders were already sent (key per item + threshold), so nobody gets spammed
+CREATE TABLE IF NOT EXISTS email_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  key TEXT UNIQUE NOT NULL,
+  sent_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS notification_reads (
   notification_id INTEGER NOT NULL REFERENCES notifications(id) ON DELETE CASCADE,
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
