@@ -186,18 +186,26 @@ function drawCharts(stats) {
 async function viewMoney(el, tab = 'expenses') {
   el.innerHTML = `<div class="pagehead"><div><h1>Budget & expenses</h1><p>Track what comes in, what goes out, and set monthly limits.</p></div>
     <a class="btn ghost small" href="/api/export/expenses.csv">Export expenses (CSV)</a></div>
-    <div class="tabs" style="max-width:420px">
-      ${['expenses', 'income', 'budgets'].map((t) => `<button data-t="${t}" class="${t === tab ? 'active' : ''}">${t[0].toUpperCase() + t.slice(1)}</button>`).join('')}
+    <div class="tabs" style="max-width:560px">
+      ${['expenses', 'income', 'budgets', 'credits'].map((t) => `<button data-t="${t}" class="${t === tab ? 'active' : ''}">${t[0].toUpperCase() + t.slice(1)}</button>`).join('')}
     </div><div id="moneybody">Loading…</div>`;
   el.querySelectorAll('.tabs button').forEach((b) => (b.onclick = () => viewMoney(el, b.dataset.t)));
   const body = $('#moneybody');
   if (tab === 'expenses') return moneyExpenses(body);
   if (tab === 'income') return moneyIncome(body);
+  if (tab === 'credits') return moneyCredits(body);
   return moneyBudgets(body);
 }
-async function moneyExpenses(body, month = thisMonth()) {
-  const all = await api('/expenses');
-  const rows = all.filter((e) => e.date.startsWith(month));
+function whoFilter(id, members, who) {
+  return `<select id="${id}" style="width:160px">
+    <option value="all" ${who === 'all' ? 'selected' : ''}>Whole family</option>
+    ${members.map((m) => `<option value="${m.id}" ${String(m.id) === String(who) ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}
+  </select>`;
+}
+async function moneyExpenses(body, month = thisMonth(), who = 'all') {
+  const [all, members] = await Promise.all([api('/expenses'), api('/family/members')]);
+  const mname = Object.fromEntries(members.map((m) => [m.id, m.name]));
+  const rows = all.filter((e) => e.date.startsWith(month) && (who === 'all' || String(e.user_id) === String(who)));
   const total = rows.reduce((s, e) => s + e.amount, 0);
   body.innerHTML = `
     ${canWrite() ? `<div class="card"><h3>Add expense</h3><form id="expform" class="formgrid">
@@ -208,46 +216,53 @@ async function moneyExpenses(body, month = thisMonth()) {
       <button class="btn">Add expense</button></form></div>` : ''}
     <div class="card" style="margin-top:16px">
       <div class="row" style="justify-content:space-between"><h3 style="margin:0">Expenses</h3>
-        <div class="row"><input id="mfilter" type="month" value="${month}" style="width:160px">
+        <div class="row">${whoFilter('wfilter', members, who)}<input id="mfilter" type="month" value="${month}" style="width:160px">
         <span class="amount"><b>${money(total)}</b></span></div></div>
-      ${rows.length ? `<table><thead><tr><th>Date</th><th>Category</th><th>Note</th><th class="right">Amount</th><th></th></tr></thead><tbody>
-        ${rows.map((e) => `<tr><td>${fdate(e.date)}</td><td>${esc(e.category)}</td><td>${esc(e.note || '')}</td>
+      ${rows.length ? `<table><thead><tr><th>Date</th><th>Category</th><th>By</th><th>Note</th><th class="right">Amount</th><th></th></tr></thead><tbody>
+        ${rows.map((e) => `<tr><td>${fdate(e.date)}</td><td>${esc(e.category)}</td><td>${esc(mname[e.user_id] || '—')}</td><td>${esc(e.note || '')}</td>
           <td class="right amount">${money(e.amount)}</td>
           <td class="right">${canWrite() ? `<button class="btn danger small" data-del="${e.id}">Delete</button>` : ''}</td></tr>`).join('')}
-      </tbody></table>` : `<div class="empty"><b>No expenses in ${month}</b>Add one above to start tracking.</div>`}
+      </tbody></table>` : `<div class="empty"><b>No expenses in ${month}${who === 'all' ? '' : ` for ${esc(mname[who] || '')}`}</b>Add one above to start tracking.</div>`}
     </div>`;
-  $('#mfilter').onchange = (e) => moneyExpenses(body, e.target.value);
+  $('#mfilter').onchange = (e) => moneyExpenses(body, e.target.value, who);
+  $('#wfilter').onchange = (e) => moneyExpenses(body, month, e.target.value);
   $('#expform')?.addEventListener('submit', async (e) => {
     e.preventDefault();
-    try { await api('/expenses', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) }); toast('Expense added'); moneyExpenses(body, month); }
+    try { await api('/expenses', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) }); toast('Expense added'); moneyExpenses(body, month, who); }
     catch (err) { toast(err.message); }
   });
   body.querySelectorAll('[data-del]').forEach((b) => (b.onclick = async () => {
     if (!confirm('Delete this expense?')) return;
-    await api('/expenses/' + b.dataset.del, { method: 'DELETE' }); moneyExpenses(body, month);
+    await api('/expenses/' + b.dataset.del, { method: 'DELETE' }); moneyExpenses(body, month, who);
   }));
 }
-async function moneyIncome(body) {
-  const rows = await api('/incomes');
+async function moneyIncome(body, who = 'all') {
+  const [all, members] = await Promise.all([api('/incomes'), api('/family/members')]);
+  const mname = Object.fromEntries(members.map((m) => [m.id, m.name]));
+  const rows = all.filter((r) => who === 'all' || String(r.user_id) === String(who));
+  const total = rows.reduce((s, r) => s + r.amount, 0);
   body.innerHTML = `
     ${canWrite() ? `<div class="card"><h3>Add income</h3><form id="incform" class="formgrid">
       <div><label>Date</label><input name="date" type="date" value="${today()}" required></div>
       <div><label>Source</label><input name="source" placeholder="Salary, freelance…" required></div>
       <div><label>Amount (${cur()})</label><input name="amount" type="number" step="0.01" min="0.01" required></div>
       <button class="btn">Add income</button></form></div>` : ''}
-    <div class="card" style="margin-top:16px"><h3>Income history</h3>
-      ${rows.length ? `<table><thead><tr><th>Date</th><th>Source</th><th class="right">Amount</th><th></th></tr></thead><tbody>
-        ${rows.map((r) => `<tr><td>${fdate(r.date)}</td><td>${esc(r.source)}</td><td class="right amount">${money(r.amount)}</td>
+    <div class="card" style="margin-top:16px">
+      <div class="row" style="justify-content:space-between"><h3 style="margin:0">Income history</h3>
+        <div class="row">${whoFilter('wfilter', members, who)}<span class="amount"><b>${money(total)}</b></span></div></div>
+      ${rows.length ? `<table><thead><tr><th>Date</th><th>Source</th><th>By</th><th class="right">Amount</th><th></th></tr></thead><tbody>
+        ${rows.map((r) => `<tr><td>${fdate(r.date)}</td><td>${esc(r.source)}</td><td>${esc(mname[r.user_id] || '—')}</td><td class="right amount">${money(r.amount)}</td>
         <td class="right">${canWrite() ? `<button class="btn danger small" data-del="${r.id}">Delete</button>` : ''}</td></tr>`).join('')}
-      </tbody></table>` : `<div class="empty"><b>No income recorded yet</b>Log salaries and other income to see the monthly balance.</div>`}
+      </tbody></table>` : `<div class="empty"><b>No income recorded yet${who === 'all' ? '' : ` for ${esc(mname[who] || '')}`}</b>Log salaries and other income to see the monthly balance.</div>`}
     </div>`;
+  $('#wfilter').onchange = (e) => moneyIncome(body, e.target.value);
   $('#incform')?.addEventListener('submit', async (e) => {
     e.preventDefault();
-    try { await api('/incomes', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) }); toast('Income added'); moneyIncome(body); }
+    try { await api('/incomes', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) }); toast('Income added'); moneyIncome(body, who); }
     catch (err) { toast(err.message); }
   });
   body.querySelectorAll('[data-del]').forEach((b) => (b.onclick = async () => {
-    await api('/incomes/' + b.dataset.del, { method: 'DELETE' }); moneyIncome(body);
+    await api('/incomes/' + b.dataset.del, { method: 'DELETE' }); moneyIncome(body, who);
   }));
 }
 async function moneyBudgets(body, month = thisMonth()) {
@@ -274,6 +289,96 @@ async function moneyBudgets(body, month = thisMonth()) {
     }
     toast('Budgets saved'); moneyBudgets(body, month);
   });
+}
+
+/* ---------- credits (loans) ---------- */
+async function moneyCredits(body) {
+  const [credits, members, properties] = await Promise.all([api('/credits'), api('/family/members'), api('/properties')]);
+  body.innerHTML = `
+    ${canWrite() ? `<div class="card"><h3>Add credit (loan)</h3><form id="credform" class="formgrid">
+      <div><label>Name</label><input name="name" placeholder="Credit ipotecar" required></div>
+      <div><label>Lender</label><input name="lender" placeholder="BT, BCR, ING…"></div>
+      <div><label>Principal (${cur()})</label><input name="principal" type="number" step="0.01" min="0.01" required></div>
+      <div><label>Dobândă (% / year)</label><input name="interest_rate" type="number" step="0.01" min="0" required></div>
+      <div><label>Term (months)</label><input name="term_months" type="number" step="1" min="1" required></div>
+      <div><label>Start date</label><input name="start_date" type="date" value="${today()}" required></div>
+      <div><label>Holder</label><select name="user_id"><option value="">Whole family</option>
+        ${members.map((m) => `<option value="${m.id}">${esc(m.name)}</option>`).join('')}</select></div>
+      <div><label>Linked property</label><select name="property_id"><option value="">None</option>
+        ${properties.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select></div>
+      <button class="btn">Add credit</button></form>
+      <p class="muted" id="credpreview" style="margin:10px 0 0"></p></div>` : ''}
+    <div id="credlist" style="margin-top:16px">${credits.length ? '' : `<div class="card empty"><b>No credits yet</b>Add a loan above — the monthly payment is calculated from the dobândă, and anticipated payments show how much interest you save.</div>`}</div>`;
+  const f = $('#credform');
+  if (f) {
+    const preview = () => {
+      const P = Number(f.principal.value), rate = f.interest_rate.value, n = Number(f.term_months.value);
+      if (P > 0 && n >= 1 && rate !== '' && Number(rate) >= 0) {
+        const r = Number(rate) / 100 / 12;
+        const pay = r > 0 ? (P * r) / (1 - Math.pow(1 + r, -n)) : P / n;
+        $('#credpreview').textContent = `Calculated payment: ${money(pay)} / month · total interest over ${n} months: ${money(pay * n - P)}`;
+      } else $('#credpreview').textContent = '';
+    };
+    f.addEventListener('input', preview);
+    f.onsubmit = async (e) => {
+      e.preventDefault();
+      try { await api('/credits', { method: 'POST', body: Object.fromEntries(new FormData(f)) }); toast('Credit added'); moneyCredits(body); }
+      catch (err) { toast(err.message); }
+    };
+  }
+  const list = $('#credlist');
+  for (const c of credits) list.appendChild(creditCard(c, () => moneyCredits(body)));
+}
+function creditCard(c, refresh) {
+  const wrap = document.createElement('details');
+  wrap.className = 'entity';
+  const saved = c.interest_saved > 0.005;
+  wrap.innerHTML = `<summary><span><b>${esc(c.name)}</b> <span class="muted">${[c.lender, c.user_name || 'Whole family', c.property_name, `${money(c.monthly_payment)}/mo`].filter(Boolean).map(esc).join(' · ')}</span>
+      ${saved ? `<span class="badge paid">saved ${money(c.interest_saved)}</span>` : ''}</span>
+    ${canWrite() ? `<span class="row"><button class="btn danger small" data-del>Delete</button></span>` : ''}</summary>
+    <div class="body">
+      <div class="deadgrid">
+        <div class="dead"><span class="muted">Holder</span><div class="d">${esc(c.user_name || 'Whole family')}</div></div>
+        <div class="dead"><span class="muted">Property</span><div class="d">${esc(c.property_name || '—')}</div></div>
+        <div class="dead"><span class="muted">Monthly payment · dobândă ${c.interest_rate}%</span><div class="d">${money(c.monthly_payment)}</div></div>
+        <div class="dead"><span class="muted">Balance today</span><div class="d">${money(c.balance)}</div></div>
+        <div class="dead"><span class="muted">Payoff</span><div class="d">${fdate(c.payoff_date)} · ${c.months_left} mo left</div></div>
+        <div class="dead"><span class="muted">Anticipated payments</span><div class="d">${money(c.prepaid_total)}</div></div>
+        <div class="dead"><span class="muted">Money saved (interest)</span><div class="d" style="color:#2f6b5a">${money(c.interest_saved)}</div></div>
+        <div class="dead"><span class="muted">Total interest projected</span><div class="d">${money(c.total_interest)} <span class="muted">vs ${money(c.base_total_interest)} without</span></div></div>
+      </div>
+      <h3 style="margin-top:16px">Anticipated payments</h3>
+      <p class="muted">Extra payments on top of the monthly one. The payment stays the same, the credit ends earlier — the interest you skip is your money saved.</p>
+      ${canWrite() ? `<form data-payform class="formgrid">
+        <div><label>Date</label><input name="date" type="date" value="${today()}" required></div>
+        <div><label>Amount (${cur()})</label><input name="amount" type="number" step="0.01" min="0.01" required></div>
+        <button class="btn small">Add payment</button></form>` : ''}
+      <div data-pays class="muted">Loading…</div>
+    </div>`;
+  const loadPays = async () => {
+    const pays = await api(`/credits/${c.id}/payments`);
+    const box = wrap.querySelector('[data-pays]');
+    box.className = '';
+    box.innerHTML = pays.length ? `<table><thead><tr><th>Date</th><th>By</th><th class="right">Amount</th><th></th></tr></thead><tbody>
+      ${pays.map((p) => `<tr><td>${fdate(p.date)}</td><td>${esc(p.paid_by_name || '')}</td><td class="right amount">${money(p.amount)}</td>
+        <td class="right">${canWrite() ? `<button class="btn danger small" data-paydel="${p.id}">✕</button>` : ''}</td></tr>`).join('')}</tbody></table>`
+      : `<p class="muted">No anticipated payments yet.</p>`;
+    box.querySelectorAll('[data-paydel]').forEach((b) => (b.onclick = async () => {
+      await api(`/credits/${c.id}/payments/${b.dataset.paydel}`, { method: 'DELETE' }); refresh();
+    }));
+  };
+  wrap.addEventListener('toggle', () => { if (wrap.open && !wrap._loaded) { wrap._loaded = true; loadPays(); } });
+  wrap.querySelector('[data-payform]')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try { await api(`/credits/${c.id}/payments`, { method: 'POST', body: Object.fromEntries(new FormData(e.target)) }); toast('Anticipated payment recorded'); refresh(); }
+    catch (err) { toast(err.message); }
+  });
+  wrap.querySelector('[data-del]')?.addEventListener('click', async (e) => {
+    e.preventDefault();
+    if (!confirm(`Delete ${c.name} and its payment history?`)) return;
+    await api('/credits/' + c.id, { method: 'DELETE' }); refresh();
+  });
+  return wrap;
 }
 
 /* ---------- bills ---------- */
@@ -361,10 +466,13 @@ async function viewVehicles(el) {
 /* ---------- properties ---------- */
 const P_DEADLINES = [['insurance_expiry', 'Insurance (PAD)'], ['property_tax_due', 'Property tax']];
 async function viewProperties(el) {
-  const props = await api('/properties');
+  const [props, members] = await Promise.all([api('/properties'), api('/family/members')]);
+  const mname = Object.fromEntries(members.map((m) => [m.id, m.name]));
+  const ownerOpts = [['', 'Whole family'], ...members.map((m) => [m.id, m.name])];
   el.innerHTML = `<div class="pagehead"><div><h1>Properties</h1><p>Insurance (PAD), property tax, mortgage and maintenance history for each home.</p></div></div>
     ${canWrite() ? entityForm('propform', 'Add property', [
       ['name', 'Name', 'text', 'Apartment — Bucharest'], ['address', 'Address', 'text', ''],
+      ['owner_id', 'Owner', 'select', ownerOpts],
       ...P_DEADLINES.map(([k, l]) => [k, l + ' due', 'date', '']),
       ['mortgage_lender', 'Mortgage lender', 'text', 'optional'], ['mortgage_payment', `Monthly payment (${cur()})`, 'number', ''], ['mortgage_due_day', 'Payment day of month', 'number', '15'],
     ]) : ''}
@@ -372,9 +480,11 @@ async function viewProperties(el) {
   bindEntityForm('propform', '/properties', () => viewProperties(el));
   const list = $('#proplist');
   for (const p of props) list.appendChild(entityCard(p, {
-    subtitle: [p.address, p.mortgage_lender ? `Mortgage: ${p.mortgage_lender}, ${money(p.mortgage_payment)} on day ${p.mortgage_due_day ?? '—'}` : null].filter(Boolean).join(' · '),
+    subtitle: [p.address, `Owner: ${mname[p.owner_id] || 'whole family'}`, p.mortgage_lender ? `Mortgage: ${p.mortgage_lender}, ${money(p.mortgage_payment)} on day ${p.mortgage_due_day ?? '—'}` : null].filter(Boolean).join(' · '),
     deadlines: P_DEADLINES, route: 'properties',
-    recordTypes: { maintenance: 'Maintenance', renovation: 'Renovation', utility: 'Utility', other: 'Other' },
+    editExtra: [['owner_id', 'Owner', 'select', ownerOpts]],
+    recordTypes: { maintenance: 'Maintenance', renovation: 'Renovation', utility: 'Utility', rent: 'Rent (income)', other_income: 'Other income', other: 'Other' },
+    incomeTypes: ['rent', 'other_income'],
     recordFields: [['date', 'Date', 'date'], ['amount', `Amount (${cur()})`, 'number'], ['note', 'Note', 'text']],
     refresh: () => viewProperties(el),
   }));
@@ -383,7 +493,9 @@ async function viewProperties(el) {
 /* shared entity helpers */
 function entityForm(id, title, fields) {
   return `<div class="card"><h3>${title}</h3><form id="${id}" class="formgrid">
-    ${fields.map(([n, l, t, ph]) => `<div><label>${l}</label><input name="${n}" type="${t}" step="${t === 'number' ? 'any' : ''}" placeholder="${ph}" ${n === 'name' ? 'required' : ''}></div>`).join('')}
+    ${fields.map(([n, l, t, ph]) => t === 'select'
+      ? `<div><label>${l}</label><select name="${n}">${ph.map(([v, lab]) => `<option value="${v}">${esc(lab)}</option>`).join('')}</select></div>`
+      : `<div><label>${l}</label><input name="${n}" type="${t}" step="${t === 'number' ? 'any' : ''}" placeholder="${ph}" ${n === 'name' ? 'required' : ''}></div>`).join('')}
     <button class="btn">Add</button></form></div>`;
 }
 function bindEntityForm(id, route, refresh) {
@@ -407,11 +519,11 @@ function entityCard(item, cfg) {
     return `<div class="dead ${daysClass(days)}"><span class="muted">${l}</span><div class="d">${fdate(d)} · ${daysLabel(days)}</div></div>`;
   }).join('');
   wrap.innerHTML = `<summary><span><b>${esc(item.name)}</b> <span class="muted">${esc(cfg.subtitle || '')}</span></span>
-    ${canWrite() ? `<span class="row"><button class="btn ghost small" data-edit>Edit dates</button><button class="btn danger small" data-del>Delete</button></span>` : ''}</summary>
+    ${canWrite() ? `<span class="row"><button class="btn ghost small" data-edit>Edit</button><button class="btn danger small" data-del>Delete</button></span>` : ''}</summary>
     <div class="body">
       <div class="deadgrid">${dl}</div>
       <div data-editbox hidden style="margin-top:12px"></div>
-      <h3 style="margin-top:16px">History & costs</h3>
+      <h3 style="margin-top:16px">${cfg.incomeTypes ? 'History — costs & income' : 'History & costs'}</h3>
       ${canWrite() ? `<form data-recform class="formgrid">
         <div><label>Type</label><select name="type">${Object.entries(cfg.recordTypes).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select></div>
         ${cfg.recordFields.map(([n, l, ty]) => `<div><label>${l}</label><input name="${n}" type="${ty}" step="any" ${n === 'date' ? `value="${t}" required` : ''}></div>`).join('')}
@@ -422,9 +534,21 @@ function entityCard(item, cfg) {
     const recs = await api(`/${cfg.route}/${item.id}/records`);
     const box = wrap.querySelector('[data-records]');
     box.className = '';
-    box.innerHTML = recs.length ? `<table><thead><tr><th>Date</th><th>Type</th><th>Note</th><th class="right">Amount</th><th></th></tr></thead><tbody>
+    const isIncome = (r) => (cfg.incomeTypes || []).includes(r.type);
+    let summary = '';
+    if (cfg.incomeTypes && recs.length) {
+      const spent = recs.filter((r) => !isIncome(r)).reduce((s, r) => s + (Number(r.amount) || 0), 0);
+      const income = recs.filter(isIncome).reduce((s, r) => s + (Number(r.amount) || 0), 0);
+      const net = income - spent;
+      summary = `<div class="row" style="gap:18px;flex-wrap:wrap;margin-bottom:10px">
+        <span class="muted">Money in this property:</span>
+        <span>Spent <b class="amount">${money(spent)}</b></span>
+        <span>Income <b class="amount" style="color:#2f6b5a">${money(income)}</b></span>
+        <span>Net <b class="amount" style="color:${net < 0 ? '#b23a2e' : '#2f6b5a'}">${money(net)}</b></span></div>`;
+    }
+    box.innerHTML = recs.length ? `${summary}<table><thead><tr><th>Date</th><th>Type</th><th>Note</th><th class="right">Amount</th><th></th></tr></thead><tbody>
       ${recs.map((r) => `<tr><td>${fdate(r.date)}</td><td>${cfg.recordTypes[r.type] || r.type}${r.odometer ? ` <span class="muted">(${r.odometer.toLocaleString('ro-RO')} km)</span>` : ''}</td>
-        <td>${esc(r.note || '')}</td><td class="right amount">${money(r.amount)}</td>
+        <td>${esc(r.note || '')}</td><td class="right amount" ${isIncome(r) ? 'style="color:#2f6b5a"' : ''}>${isIncome(r) ? '+' : ''}${money(r.amount)}</td>
         <td class="right">${canWrite() ? `<button class="btn danger small" data-recdel="${r.id}">✕</button>` : ''}</td></tr>`).join('')}</tbody></table>`
       : `<p class="muted">No records yet.</p>`;
     box.querySelectorAll('[data-recdel]').forEach((b) => (b.onclick = async () => {
@@ -448,13 +572,19 @@ function entityCard(item, cfg) {
     const box = wrap.querySelector('[data-editbox]');
     if (!box.hidden) { box.hidden = true; return; }
     box.hidden = false;
-    box.innerHTML = `<form class="formgrid">${cfg.deadlines.map(([k, l]) => `<div><label>${l}</label><input name="${k}" type="date" value="${item[k] || ''}"></div>`).join('')}
-      <button class="btn small">Save dates</button></form>`;
+    const editFields = [
+      ...cfg.deadlines.map(([k, l]) => [k, l, 'date']),
+      ...(cfg.editExtra || []),
+    ];
+    box.innerHTML = `<form class="formgrid">${editFields.map(([k, l, ty, opts]) => ty === 'select'
+      ? `<div><label>${l}</label><select name="${k}">${opts.map(([v, lab]) => `<option value="${v}" ${String(item[k] ?? '') === String(v) ? 'selected' : ''}>${esc(lab)}</option>`).join('')}</select></div>`
+      : `<div><label>${l}</label><input name="${k}" type="date" value="${item[k] || ''}"></div>`).join('')}
+      <button class="btn small">Save</button></form>`;
     box.querySelector('form').onsubmit = async (ev) => {
       ev.preventDefault();
       const body = Object.fromEntries(new FormData(ev.target));
       for (const k of Object.keys(body)) if (body[k] === '') body[k] = null;
-      try { await api(`/${cfg.route}/${item.id}`, { method: 'PUT', body }); toast('Dates updated'); cfg.refresh(); }
+      try { await api(`/${cfg.route}/${item.id}`, { method: 'PUT', body }); toast('Saved'); cfg.refresh(); }
       catch (err) { toast(err.message); }
     };
   });

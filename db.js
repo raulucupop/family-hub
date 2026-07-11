@@ -58,6 +58,32 @@ CREATE TABLE IF NOT EXISTS budgets (
   UNIQUE(family_id, category, month)
 );
 
+-- credits (loans): payment is derived from principal + dobanda + term;
+-- anticipated payments shorten the schedule and the interest saved is computed against the original plan
+CREATE TABLE IF NOT EXISTS credits (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  family_id INTEGER NOT NULL REFERENCES families(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  lender TEXT,
+  principal REAL NOT NULL,
+  interest_rate REAL NOT NULL, -- dobanda, % per year
+  term_months INTEGER NOT NULL,
+  start_date TEXT NOT NULL,
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,       -- holder; NULL = whole family
+  property_id INTEGER REFERENCES properties(id) ON DELETE SET NULL,
+  notes TEXT
+);
+
+CREATE TABLE IF NOT EXISTS credit_payments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  credit_id INTEGER NOT NULL REFERENCES credits(id) ON DELETE CASCADE,
+  family_id INTEGER NOT NULL REFERENCES families(id) ON DELETE CASCADE,
+  amount REAL NOT NULL,
+  date TEXT NOT NULL,
+  paid_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_credit_payments_credit ON credit_payments(credit_id);
+
 CREATE TABLE IF NOT EXISTS bills (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   family_id INTEGER NOT NULL REFERENCES families(id) ON DELETE CASCADE,
@@ -115,6 +141,7 @@ CREATE TABLE IF NOT EXISTS properties (
   mortgage_lender TEXT,
   mortgage_payment REAL,
   mortgage_due_day INTEGER, -- day of month
+  owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL, -- NULL = whole family
   notes TEXT
 );
 
@@ -122,7 +149,7 @@ CREATE TABLE IF NOT EXISTS property_records (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   property_id INTEGER NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
   family_id INTEGER NOT NULL REFERENCES families(id) ON DELETE CASCADE,
-  type TEXT NOT NULL CHECK (type IN ('maintenance','renovation','utility','other')),
+  type TEXT NOT NULL CHECK (type IN ('maintenance','renovation','utility','rent','other_income','other')),
   date TEXT NOT NULL,
   amount REAL,
   note TEXT
@@ -154,5 +181,36 @@ CREATE TABLE IF NOT EXISTS notification_reads (
   PRIMARY KEY (notification_id, user_id)
 );
 `);
+
+// ---- lightweight migrations for databases created before these columns existed ----
+const creditCols = db.prepare('PRAGMA table_info(credits)').all().map((c) => c.name);
+if (!creditCols.includes('user_id')) db.exec('ALTER TABLE credits ADD COLUMN user_id INTEGER REFERENCES users(id) ON DELETE SET NULL');
+if (!creditCols.includes('property_id')) db.exec('ALTER TABLE credits ADD COLUMN property_id INTEGER REFERENCES properties(id) ON DELETE SET NULL');
+
+const propCols = db.prepare('PRAGMA table_info(properties)').all().map((c) => c.name);
+if (!propCols.includes('owner_id')) db.exec('ALTER TABLE properties ADD COLUMN owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL');
+
+// property_records: older CHECK constraint lacks the income types ('rent', 'other_income') — rebuild once
+const prSql = (db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='property_records'").get() || {}).sql || '';
+if (prSql && !prSql.includes("'rent'")) {
+  db.exec(`
+    PRAGMA foreign_keys=OFF;
+    BEGIN;
+    ALTER TABLE property_records RENAME TO property_records_old;
+    CREATE TABLE property_records (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      property_id INTEGER NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+      family_id INTEGER NOT NULL REFERENCES families(id) ON DELETE CASCADE,
+      type TEXT NOT NULL CHECK (type IN ('maintenance','renovation','utility','rent','other_income','other')),
+      date TEXT NOT NULL,
+      amount REAL,
+      note TEXT
+    );
+    INSERT INTO property_records SELECT id, property_id, family_id, type, date, amount, note FROM property_records_old;
+    DROP TABLE property_records_old;
+    COMMIT;
+    PRAGMA foreign_keys=ON;
+  `);
+}
 
 module.exports = db;

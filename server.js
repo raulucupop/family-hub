@@ -167,7 +167,7 @@ function crud({ route, table, fields, validate, orderBy }) {
     res.json(rows);
   });
   app.post(`/api/${route}`, auth, canWrite, (req, res) => {
-    const err = validate(req.body || {});
+    const err = validate(req.body || {}, req);
     if (err) return res.status(400).json({ error: err });
     if (fields.includes('user_id') && req.body.user_id == null) req.body.user_id = req.user.id;
     const cols = ['family_id', ...fields];
@@ -178,7 +178,7 @@ function crud({ route, table, fields, validate, orderBy }) {
   app.put(`/api/${route}/:id`, auth, canWrite, (req, res) => {
     const row = db.prepare(`SELECT * FROM ${table} WHERE id = ? AND family_id = ?`).get(req.params.id, req.user.family_id);
     if (!row) return res.status(404).json({ error: 'Not found' });
-    const err = validate({ ...row, ...req.body });
+    const err = validate({ ...row, ...req.body }, req);
     if (err) return res.status(400).json({ error: err });
     const sets = fields.map((f) => `${f} = ?`).join(', ');
     const vals = fields.map((f) => (req.body[f] !== undefined ? req.body[f] : row[f]));
@@ -222,9 +222,15 @@ crud({
 });
 crud({
   route: 'properties', table: 'properties',
-  fields: ['name', 'address', 'insurance_expiry', 'property_tax_due', 'mortgage_lender', 'mortgage_payment', 'mortgage_due_day', 'notes'],
+  fields: ['name', 'address', 'insurance_expiry', 'property_tax_due', 'mortgage_lender', 'mortgage_payment', 'mortgage_due_day', 'owner_id', 'notes'],
   orderBy: 'name',
-  validate: (b) => (!b.name ? 'Property name is required' : null),
+  validate: (b, req) => {
+    if (!b.name) return 'Property name is required';
+    if (num(b.owner_id) != null && !db.prepare('SELECT id FROM users WHERE id = ? AND family_id = ?').get(num(b.owner_id), req.user.family_id)) {
+      return 'Owner must be a member of the family';
+    }
+    return null;
+  },
 });
 
 // ---------- budgets ----------
@@ -250,6 +256,133 @@ app.post('/api/budgets', auth, canWrite, (req, res) => {
 });
 app.delete('/api/budgets/:id', auth, canWrite, (req, res) => {
   db.prepare('DELETE FROM budgets WHERE id = ? AND family_id = ?').run(req.params.id, req.user.family_id);
+  res.json({ ok: true });
+});
+
+// ---------- credits (loans) ----------
+// Monthly payment from the annuity formula; anticipated payments keep the payment
+// constant and shorten the schedule, so the interest saved is baseline minus simulated.
+function creditStats(credit, prepays) {
+  const P = Number(credit.principal);
+  const r = Number(credit.interest_rate) / 100 / 12;
+  const n = Math.max(1, Math.round(Number(credit.term_months)));
+  const payment = r > 0 ? (P * r) / (1 - Math.pow(1 + r, -n)) : P / n;
+  const baseTotalInterest = payment * n - P;
+
+  const monthIdx = (d) => {
+    const [y1, m1] = credit.start_date.split('-').map(Number);
+    const [y2, m2] = String(d).split('-').map(Number);
+    return (y2 - y1) * 12 + (m2 - m1);
+  };
+  const prepayAt = {};
+  let prepaidTotal = 0;
+  for (const p of prepays) {
+    const k = Math.max(0, monthIdx(p.date));
+    prepayAt[k] = (prepayAt[k] || 0) + Number(p.amount);
+    prepaidTotal += Number(p.amount);
+  }
+
+  const elapsed = Math.max(0, monthIdx(new Date().toISOString().slice(0, 10)));
+  let bal = P, totalInterest = 0, months = 0, balanceNow = null;
+  const MAX = n + 1200; // safety net if the payment barely covers interest
+  while (bal > 0.005 && months < MAX) {
+    if (prepayAt[months]) bal = Math.max(0, bal - prepayAt[months]);
+    if (months === elapsed) balanceNow = bal;
+    if (bal <= 0.005) break;
+    const interest = bal * r;
+    totalInterest += interest;
+    bal = Math.max(0, bal + interest - payment);
+    months++;
+  }
+  if (balanceNow === null) balanceNow = bal; // already paid off before today
+
+  return {
+    monthly_payment: Math.round(payment * 100) / 100,
+    base_total_interest: Math.round(baseTotalInterest * 100) / 100,
+    total_interest: Math.round(totalInterest * 100) / 100,
+    interest_saved: Math.round(Math.max(0, baseTotalInterest - totalInterest) * 100) / 100,
+    prepaid_total: Math.round(prepaidTotal * 100) / 100,
+    balance: Math.round(balanceNow * 100) / 100,
+    months_left: Math.max(0, months - elapsed),
+    payoff_date: addMonths(credit.start_date, months),
+  };
+}
+function validateCredit(b, fid) {
+  if (!b.name) return 'Credit name is required';
+  if (!(Number(b.principal) > 0)) return 'Principal must be greater than 0';
+  if (!(Number(b.interest_rate) >= 0)) return 'Dobanda (interest %) must be 0 or more';
+  if (!(Number(b.term_months) >= 1)) return 'Term must be at least 1 month';
+  if (!isDate(b.start_date)) return 'Start date must be YYYY-MM-DD';
+  if (num(b.user_id) != null && !db.prepare('SELECT id FROM users WHERE id = ? AND family_id = ?').get(num(b.user_id), fid)) {
+    return 'Holder must be a member of the family';
+  }
+  if (num(b.property_id) != null && !db.prepare('SELECT id FROM properties WHERE id = ? AND family_id = ?').get(num(b.property_id), fid)) {
+    return 'Linked property not found';
+  }
+  return null;
+}
+const CREDIT_SELECT = `
+  SELECT c.*, u.name AS user_name, p.name AS property_name
+  FROM credits c
+  LEFT JOIN users u ON u.id = c.user_id
+  LEFT JOIN properties p ON p.id = c.property_id
+`;
+app.get('/api/credits', auth, (req, res) => {
+  const rows = db.prepare(`${CREDIT_SELECT} WHERE c.family_id = ? ORDER BY c.name`).all(req.user.family_id);
+  const pays = db.prepare('SELECT * FROM credit_payments WHERE family_id = ?').all(req.user.family_id);
+  res.json(rows.map((c) => ({ ...c, ...creditStats(c, pays.filter((p) => p.credit_id === c.id)) })));
+});
+app.post('/api/credits', auth, canWrite, (req, res) => {
+  const b = req.body || {};
+  const err = validateCredit(b, req.user.family_id);
+  if (err) return res.status(400).json({ error: err });
+  const info = db.prepare(`
+    INSERT INTO credits (family_id, name, lender, principal, interest_rate, term_months, start_date, user_id, property_id, notes)
+    VALUES (?,?,?,?,?,?,?,?,?,?)
+  `).run(req.user.family_id, str(b.name), str(b.lender), Number(b.principal), Number(b.interest_rate),
+    Math.round(Number(b.term_months)), b.start_date, num(b.user_id), num(b.property_id), str(b.notes));
+  const row = db.prepare(`${CREDIT_SELECT} WHERE c.id = ?`).get(info.lastInsertRowid);
+  res.json({ ...row, ...creditStats(row, []) });
+});
+app.put('/api/credits/:id', auth, canWrite, (req, res) => {
+  const row = db.prepare('SELECT * FROM credits WHERE id = ? AND family_id = ?').get(req.params.id, req.user.family_id);
+  if (!row) return res.status(404).json({ error: 'Not found' });
+  const b = { ...row, ...req.body };
+  const err = validateCredit(b, req.user.family_id);
+  if (err) return res.status(400).json({ error: err });
+  db.prepare('UPDATE credits SET name=?, lender=?, principal=?, interest_rate=?, term_months=?, start_date=?, user_id=?, property_id=?, notes=? WHERE id=?')
+    .run(str(b.name), str(b.lender), Number(b.principal), Number(b.interest_rate), Math.round(Number(b.term_months)), b.start_date,
+      num(b.user_id), num(b.property_id), str(b.notes), row.id);
+  const updated = db.prepare(`${CREDIT_SELECT} WHERE c.id = ?`).get(row.id);
+  const pays = db.prepare('SELECT * FROM credit_payments WHERE credit_id = ?').all(row.id);
+  res.json({ ...updated, ...creditStats(updated, pays) });
+});
+app.delete('/api/credits/:id', auth, canWrite, (req, res) => {
+  const info = db.prepare('DELETE FROM credits WHERE id = ? AND family_id = ?').run(req.params.id, req.user.family_id);
+  if (!info.changes) return res.status(404).json({ error: 'Not found' });
+  res.json({ ok: true });
+});
+app.get('/api/credits/:id/payments', auth, (req, res) => {
+  const rows = db.prepare(`
+    SELECT p.*, u.name AS paid_by_name FROM credit_payments p
+    LEFT JOIN users u ON u.id = p.paid_by
+    WHERE p.credit_id = ? AND p.family_id = ? ORDER BY p.date DESC, p.id DESC
+  `).all(req.params.id, req.user.family_id);
+  res.json(rows);
+});
+app.post('/api/credits/:id/payments', auth, canWrite, (req, res) => {
+  const credit = db.prepare('SELECT * FROM credits WHERE id = ? AND family_id = ?').get(req.params.id, req.user.family_id);
+  if (!credit) return res.status(404).json({ error: 'Not found' });
+  const b = req.body || {};
+  if (!(Number(b.amount) > 0)) return res.status(400).json({ error: 'Amount must be greater than 0' });
+  if (!isDate(b.date)) return res.status(400).json({ error: 'Date must be YYYY-MM-DD' });
+  db.prepare('INSERT INTO credit_payments (credit_id, family_id, amount, date, paid_by) VALUES (?,?,?,?,?)')
+    .run(credit.id, req.user.family_id, Number(b.amount), b.date, req.user.id);
+  res.json({ ok: true });
+});
+app.delete('/api/credits/:id/payments/:pid', auth, canWrite, (req, res) => {
+  db.prepare('DELETE FROM credit_payments WHERE id = ? AND credit_id = ? AND family_id = ?')
+    .run(req.params.pid, req.params.id, req.user.family_id);
   res.json({ ok: true });
 });
 
@@ -371,7 +504,7 @@ function subRecords(route, table, parentTable, parentKey, types) {
   });
 }
 subRecords('vehicles', 'vehicle_records', 'vehicles', 'vehicle_id', ['service', 'tires', 'fuel', 'other']);
-subRecords('properties', 'property_records', 'properties', 'property_id', ['maintenance', 'renovation', 'utility', 'other']);
+subRecords('properties', 'property_records', 'properties', 'property_id', ['maintenance', 'renovation', 'utility', 'rent', 'other_income', 'other']);
 
 // ---------- reminders (aggregated deadlines) ----------
 function collectReminders(fid, horizon) {
