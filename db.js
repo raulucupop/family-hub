@@ -24,7 +24,8 @@ CREATE TABLE IF NOT EXISTS users (
   name TEXT NOT NULL,
   email TEXT UNIQUE NOT NULL,
   password_hash TEXT NOT NULL,
-  role TEXT NOT NULL CHECK (role IN ('admin','adult','child')),
+  role TEXT NOT NULL CHECK (role IN ('admin','adult','child','tenant')),
+  tenant_property_id INTEGER REFERENCES properties(id) ON DELETE SET NULL, -- tenants only: the rented property
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -142,8 +143,29 @@ CREATE TABLE IF NOT EXISTS properties (
   mortgage_payment REAL,
   mortgage_due_day INTEGER, -- day of month
   owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL, -- NULL = whole family
+  rent_amount REAL,            -- monthly rent charged to the tenant
+  rent_due_day INTEGER,        -- day of month rent is due (1-28)
+  tenant_invite_code TEXT,     -- code a tenant uses to register
   notes TEXT
 );
+
+-- charges shared with a property's tenant: monthly rent (auto-generated) and invoices shared by the owner.
+-- tenant marks paid -> 'pending' until the owner confirms -> 'paid'
+CREATE TABLE IF NOT EXISTS tenant_charges (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  family_id INTEGER NOT NULL REFERENCES families(id) ON DELETE CASCADE,
+  property_id INTEGER NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+  type TEXT NOT NULL CHECK (type IN ('rent','invoice')),
+  title TEXT NOT NULL,
+  amount REAL NOT NULL,
+  due_date TEXT NOT NULL,
+  period TEXT, -- YYYY-MM, used to generate each month's rent exactly once
+  status TEXT NOT NULL DEFAULT 'unpaid' CHECK (status IN ('unpaid','pending','paid')),
+  marked_paid_at TEXT,
+  confirmed_at TEXT,
+  note TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_tenant_charges_property ON tenant_charges(property_id);
 
 CREATE TABLE IF NOT EXISTS property_records (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -189,6 +211,36 @@ if (!creditCols.includes('property_id')) db.exec('ALTER TABLE credits ADD COLUMN
 
 const propCols = db.prepare('PRAGMA table_info(properties)').all().map((c) => c.name);
 if (!propCols.includes('owner_id')) db.exec('ALTER TABLE properties ADD COLUMN owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL');
+if (!propCols.includes('rent_amount')) db.exec('ALTER TABLE properties ADD COLUMN rent_amount REAL');
+if (!propCols.includes('rent_due_day')) db.exec('ALTER TABLE properties ADD COLUMN rent_due_day INTEGER');
+if (!propCols.includes('tenant_invite_code')) db.exec('ALTER TABLE properties ADD COLUMN tenant_invite_code TEXT');
+
+// users: older CHECK constraint lacks the 'tenant' role — rebuild once, keeping ids
+const usersSql = (db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='users'").get() || {}).sql || '';
+if (usersSql && !usersSql.includes("'tenant'")) {
+  db.exec(`
+    PRAGMA foreign_keys=OFF;
+    PRAGMA legacy_alter_table=ON;
+    BEGIN;
+    ALTER TABLE users RENAME TO users_old;
+    CREATE TABLE users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      family_id INTEGER NOT NULL REFERENCES families(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      email TEXT UNIQUE NOT NULL,
+      password_hash TEXT NOT NULL,
+      role TEXT NOT NULL CHECK (role IN ('admin','adult','child','tenant')),
+      tenant_property_id INTEGER REFERENCES properties(id) ON DELETE SET NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    INSERT INTO users (id, family_id, name, email, password_hash, role, created_at)
+      SELECT id, family_id, name, email, password_hash, role, created_at FROM users_old;
+    DROP TABLE users_old;
+    COMMIT;
+    PRAGMA legacy_alter_table=OFF;
+    PRAGMA foreign_keys=ON;
+  `);
+}
 
 // property_records: older CHECK constraint lacks the income types ('rent', 'other_income') — rebuild once
 const prSql = (db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='property_records'").get() || {}).sql || '';

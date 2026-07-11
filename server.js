@@ -44,8 +44,12 @@ function auth(req, res, next) {
   if (!token) return res.status(401).json({ error: 'Not signed in' });
   try {
     const payload = jwt.verify(token, JWT_SECRET);
-    const user = db.prepare('SELECT id, family_id, name, email, role FROM users WHERE id = ?').get(payload.uid);
+    const user = db.prepare('SELECT id, family_id, name, email, role, tenant_property_id FROM users WHERE id = ?').get(payload.uid);
     if (!user) return res.status(401).json({ error: 'Account no longer exists' });
+    // tenants only ever see their own charges — never the family's data
+    if (user.role === 'tenant' && req.path !== '/api/me' && !req.path.startsWith('/api/tenant')) {
+      return res.status(403).json({ error: 'Tenant accounts can only access their own charges' });
+    }
     req.user = user;
     next();
   } catch {
@@ -79,7 +83,7 @@ function addMonths(dateStr, months) {
 
 // ---------- auth ----------
 app.post('/api/auth/register', (req, res) => {
-  const { familyName, name, email, password, inviteCode: code } = req.body || {};
+  const { familyName, name, email, password, inviteCode: code, tenantCode } = req.body || {};
   if (!name || !email || !password) return res.status(400).json({ error: 'Name, email and password are required' });
   if (String(password).length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
   const emailNorm = String(email).trim().toLowerCase();
@@ -87,8 +91,14 @@ app.post('/api/auth/register', (req, res) => {
     return res.status(409).json({ error: 'An account with this email already exists' });
   }
   const hash = bcrypt.hashSync(String(password), 10);
-  let familyId, role;
-  if (code) {
+  let familyId, role, tenantPropertyId = null;
+  if (tenantCode) {
+    const prop = db.prepare('SELECT * FROM properties WHERE tenant_invite_code = ?').get(String(tenantCode).trim().toUpperCase());
+    if (!prop) return res.status(400).json({ error: 'Tenant code not recognized' });
+    familyId = prop.family_id;
+    role = 'tenant';
+    tenantPropertyId = prop.id;
+  } else if (code) {
     const fam = db.prepare('SELECT id FROM families WHERE invite_code = ?').get(String(code).trim().toUpperCase());
     if (!fam) return res.status(400).json({ error: 'Invite code not recognized' });
     familyId = fam.id;
@@ -99,8 +109,8 @@ app.post('/api/auth/register', (req, res) => {
     familyId = info.lastInsertRowid;
     role = 'admin';
   }
-  const info = db.prepare('INSERT INTO users (family_id, name, email, password_hash, role) VALUES (?,?,?,?,?)')
-    .run(familyId, String(name).trim(), emailNorm, hash, role);
+  const info = db.prepare('INSERT INTO users (family_id, name, email, password_hash, role, tenant_property_id) VALUES (?,?,?,?,?,?)')
+    .run(familyId, String(name).trim(), emailNorm, hash, role, tenantPropertyId);
   const user = db.prepare('SELECT id, family_id, name, email, role FROM users WHERE id = ?').get(info.lastInsertRowid);
   setAuthCookie(res, signToken(user));
   res.json({ user });
@@ -129,7 +139,7 @@ app.get('/api/me', auth, (req, res) => {
 
 // ---------- family ----------
 app.get('/api/family/members', auth, (req, res) => {
-  const members = db.prepare('SELECT id, name, email, role, created_at FROM users WHERE family_id = ? ORDER BY created_at').all(req.user.family_id);
+  const members = db.prepare("SELECT id, name, email, role, created_at FROM users WHERE family_id = ? AND role != 'tenant' ORDER BY created_at").all(req.user.family_id);
   res.json(members);
 });
 app.patch('/api/family/members/:id', auth, adminOnly, (req, res) => {
@@ -138,6 +148,7 @@ app.patch('/api/family/members/:id', auth, adminOnly, (req, res) => {
   const target = db.prepare('SELECT * FROM users WHERE id = ? AND family_id = ?').get(req.params.id, req.user.family_id);
   if (!target) return res.status(404).json({ error: 'Member not found' });
   if (target.id === req.user.id) return res.status(400).json({ error: "You can't change your own role" });
+  if (target.role === 'tenant') return res.status(400).json({ error: 'Tenants are managed from their property' });
   db.prepare('UPDATE users SET role = ? WHERE id = ?').run(role, target.id);
   res.json({ ok: true });
 });
@@ -222,7 +233,7 @@ crud({
 });
 crud({
   route: 'properties', table: 'properties',
-  fields: ['name', 'address', 'insurance_expiry', 'property_tax_due', 'mortgage_lender', 'mortgage_payment', 'mortgage_due_day', 'owner_id', 'notes'],
+  fields: ['name', 'address', 'insurance_expiry', 'property_tax_due', 'mortgage_lender', 'mortgage_payment', 'mortgage_due_day', 'owner_id', 'rent_amount', 'rent_due_day', 'notes'],
   orderBy: 'name',
   validate: (b, req) => {
     if (!b.name) return 'Property name is required';
@@ -505,6 +516,114 @@ function subRecords(route, table, parentTable, parentKey, types) {
 }
 subRecords('vehicles', 'vehicle_records', 'vehicles', 'vehicle_id', ['service', 'tires', 'fuel', 'other']);
 subRecords('properties', 'property_records', 'properties', 'property_id', ['maintenance', 'renovation', 'utility', 'rent', 'other_income', 'other']);
+
+// ---------- tenants & shared charges ----------
+// Rent is generated once per month automatically when the property has rent_amount set and a tenant.
+function ensureRentCharge(prop) {
+  if (!(Number(prop.rent_amount) > 0)) return;
+  if (!db.prepare("SELECT id FROM users WHERE role = 'tenant' AND tenant_property_id = ?").get(prop.id)) return;
+  const period = new Date().toISOString().slice(0, 7);
+  if (db.prepare("SELECT id FROM tenant_charges WHERE property_id = ? AND type = 'rent' AND period = ?").get(prop.id, period)) return;
+  const day = Math.min(Math.max(Math.round(Number(prop.rent_due_day)) || 1, 1), 28);
+  db.prepare('INSERT INTO tenant_charges (family_id, property_id, type, title, amount, due_date, period) VALUES (?,?,?,?,?,?,?)')
+    .run(prop.family_id, prop.id, 'rent', `Rent ${period}`, Number(prop.rent_amount), `${period}-${String(day).padStart(2, '0')}`, period);
+}
+function familyProperty(req) {
+  return db.prepare('SELECT * FROM properties WHERE id = ? AND family_id = ?').get(req.params.id, req.user.family_id);
+}
+
+// owner side: tenant info & invite code for a property
+app.get('/api/properties/:id/tenant', auth, (req, res) => {
+  const prop = familyProperty(req);
+  if (!prop) return res.status(404).json({ error: 'Not found' });
+  const tenants = db.prepare("SELECT id, name, email, created_at FROM users WHERE role = 'tenant' AND tenant_property_id = ?").all(prop.id);
+  res.json({ invite_code: prop.tenant_invite_code, tenants });
+});
+app.post('/api/properties/:id/tenant/invite', auth, canWrite, (req, res) => {
+  const prop = familyProperty(req);
+  if (!prop) return res.status(404).json({ error: 'Not found' });
+  const code = inviteCode();
+  db.prepare('UPDATE properties SET tenant_invite_code = ? WHERE id = ?').run(code, prop.id);
+  res.json({ invite_code: code });
+});
+app.delete('/api/properties/:id/tenant/:uid', auth, canWrite, (req, res) => {
+  const prop = familyProperty(req);
+  if (!prop) return res.status(404).json({ error: 'Not found' });
+  const info = db.prepare("DELETE FROM users WHERE id = ? AND role = 'tenant' AND tenant_property_id = ?").run(req.params.uid, prop.id);
+  if (!info.changes) return res.status(404).json({ error: 'Tenant not found' });
+  res.json({ ok: true });
+});
+
+// owner side: charges shared with the tenant
+app.get('/api/properties/:id/charges', auth, (req, res) => {
+  const prop = familyProperty(req);
+  if (!prop) return res.status(404).json({ error: 'Not found' });
+  ensureRentCharge(prop);
+  res.json(db.prepare("SELECT * FROM tenant_charges WHERE property_id = ? ORDER BY (status = 'paid'), due_date DESC, id DESC").all(prop.id));
+});
+app.post('/api/properties/:id/charges', auth, canWrite, (req, res) => {
+  const prop = familyProperty(req);
+  if (!prop) return res.status(404).json({ error: 'Not found' });
+  const b = req.body || {};
+  if (!['rent', 'invoice'].includes(b.type)) return res.status(400).json({ error: 'Type must be rent or invoice' });
+  if (!b.title) return res.status(400).json({ error: 'Title is required' });
+  if (!(Number(b.amount) > 0)) return res.status(400).json({ error: 'Amount must be greater than 0' });
+  if (!isDate(b.due_date)) return res.status(400).json({ error: 'Due date must be YYYY-MM-DD' });
+  const info = db.prepare('INSERT INTO tenant_charges (family_id, property_id, type, title, amount, due_date, note) VALUES (?,?,?,?,?,?,?)')
+    .run(prop.family_id, prop.id, b.type, str(b.title), Number(b.amount), b.due_date, str(b.note));
+  res.json(db.prepare('SELECT * FROM tenant_charges WHERE id = ?').get(info.lastInsertRowid));
+});
+// owner confirms a payment the tenant marked (or records one directly);
+// confirmed rent is logged as property income so the spent/income summary stays true
+app.post('/api/properties/:id/charges/:cid/confirm', auth, canWrite, (req, res) => {
+  const prop = familyProperty(req);
+  if (!prop) return res.status(404).json({ error: 'Not found' });
+  const ch = db.prepare('SELECT * FROM tenant_charges WHERE id = ? AND property_id = ?').get(req.params.cid, prop.id);
+  if (!ch) return res.status(404).json({ error: 'Charge not found' });
+  if (ch.status === 'paid') return res.status(400).json({ error: 'Already confirmed' });
+  const today = new Date().toISOString().slice(0, 10);
+  const tx = db.transaction(() => {
+    db.prepare("UPDATE tenant_charges SET status = 'paid', confirmed_at = ? WHERE id = ?").run(today, ch.id);
+    if (ch.type === 'rent') {
+      db.prepare('INSERT INTO property_records (property_id, family_id, type, date, amount, note) VALUES (?,?,?,?,?,?)')
+        .run(prop.id, prop.family_id, 'rent', today, ch.amount, ch.title);
+    }
+  });
+  tx();
+  res.json({ ok: true });
+});
+app.post('/api/properties/:id/charges/:cid/reject', auth, canWrite, (req, res) => {
+  const prop = familyProperty(req);
+  if (!prop) return res.status(404).json({ error: 'Not found' });
+  const info = db.prepare("UPDATE tenant_charges SET status = 'unpaid', marked_paid_at = NULL WHERE id = ? AND property_id = ? AND status = 'pending'")
+    .run(req.params.cid, prop.id);
+  if (!info.changes) return res.status(404).json({ error: 'No pending payment to reject' });
+  res.json({ ok: true });
+});
+app.delete('/api/properties/:id/charges/:cid', auth, canWrite, (req, res) => {
+  const prop = familyProperty(req);
+  if (!prop) return res.status(404).json({ error: 'Not found' });
+  const info = db.prepare('DELETE FROM tenant_charges WHERE id = ? AND property_id = ?').run(req.params.cid, prop.id);
+  if (!info.changes) return res.status(404).json({ error: 'Charge not found' });
+  res.json({ ok: true });
+});
+
+// tenant side: the only data a tenant account can reach
+app.get('/api/tenant/charges', auth, (req, res) => {
+  if (req.user.role !== 'tenant') return res.status(403).json({ error: 'Tenant accounts only' });
+  const prop = db.prepare('SELECT * FROM properties WHERE id = ?').get(req.user.tenant_property_id);
+  if (!prop) return res.status(404).json({ error: 'Your rental is no longer registered — contact the owner' });
+  ensureRentCharge(prop);
+  const charges = db.prepare("SELECT id, type, title, amount, due_date, status, marked_paid_at, confirmed_at, note FROM tenant_charges WHERE property_id = ? ORDER BY (status = 'paid'), due_date DESC, id DESC").all(prop.id);
+  res.json({ property: { name: prop.name, address: prop.address }, charges });
+});
+app.post('/api/tenant/charges/:cid/pay', auth, (req, res) => {
+  if (req.user.role !== 'tenant') return res.status(403).json({ error: 'Tenant accounts only' });
+  const info = db.prepare("UPDATE tenant_charges SET status = 'pending', marked_paid_at = ? WHERE id = ? AND property_id = ? AND status = 'unpaid'")
+    .run(new Date().toISOString().slice(0, 10), req.params.cid, req.user.tenant_property_id);
+  if (!info.changes) return res.status(404).json({ error: 'Charge not found or already marked' });
+  res.json({ ok: true });
+});
 
 // ---------- reminders (aggregated deadlines) ----------
 function collectReminders(fid, horizon) {

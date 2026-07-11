@@ -39,7 +39,7 @@ window.addEventListener('hashchange', render);
 let NOTIF = { unread: 0, items: [] };
 function browserNotifOn() { return localStorage.getItem('fh_notif') === '1' && 'Notification' in window && Notification.permission === 'granted'; }
 async function pollNotifications() {
-  if (!ME) return;
+  if (!ME || ME.role === 'tenant') return;
   try {
     NOTIF = await api('/notifications');
     const badge = $('#notifbadge');
@@ -64,6 +64,7 @@ async function boot() {
 }
 function render() {
   if (!ME) return renderAuth();
+  if (ME.role === 'tenant') return renderTenantPortal();
   const page = (location.hash || '#dashboard').slice(1);
   const fn = routes[page] || viewDashboard;
   app.innerHTML = shell(page);
@@ -99,14 +100,16 @@ function renderAuth(mode = 'login') {
       <button data-m="login" class="${mode === 'login' ? 'active' : ''}">Sign in</button>
       <button data-m="create" class="${mode === 'create' ? 'active' : ''}">New family</button>
       <button data-m="join" class="${mode === 'join' ? 'active' : ''}">Join family</button>
+      <button data-m="tenant" class="${mode === 'tenant' ? 'active' : ''}">Tenant</button>
     </div>
     <form id="authform">
       ${mode !== 'login' ? `<div class="field"><label>Your name</label><input name="name" required></div>` : ''}
       ${mode === 'create' ? `<div class="field"><label>Family name</label><input name="familyName" placeholder="Familia Popescu" required></div>` : ''}
       ${mode === 'join' ? `<div class="field"><label>Invite code</label><input name="inviteCode" placeholder="8-character code from your admin" required></div>` : ''}
+      ${mode === 'tenant' ? `<div class="field"><label>Tenant code</label><input name="tenantCode" placeholder="code from your landlord" required></div>` : ''}
       <div class="field"><label>Email</label><input name="email" type="email" required></div>
       <div class="field"><label>Password ${mode !== 'login' ? '(min. 8 characters)' : ''}</label><input name="password" type="password" required minlength="${mode === 'login' ? 1 : 8}"></div>
-      <button class="btn" style="width:100%">${mode === 'login' ? 'Sign in' : mode === 'create' ? 'Create family' : 'Join family'}</button>
+      <button class="btn" style="width:100%">${mode === 'login' ? 'Sign in' : mode === 'create' ? 'Create family' : mode === 'tenant' ? 'Register as tenant' : 'Join family'}</button>
     </form>
   </div></div>`;
   app.querySelectorAll('.tabs button').forEach((b) => (b.onclick = () => renderAuth(b.dataset.m)));
@@ -120,6 +123,47 @@ function renderAuth(mode = 'login') {
       location.hash = '#dashboard'; render();
     } catch (err) { toast(err.message); }
   };
+}
+
+/* ---------- tenant portal ---------- */
+const CHARGE_STATUS = { unpaid: 'to pay', pending: 'confirmation pending', paid: 'paid' };
+async function renderTenantPortal() {
+  let data;
+  try { data = await api('/tenant/charges'); }
+  catch (err) {
+    app.innerHTML = `<div class="authwrap"><div class="card authcard"><div class="brandmark">Family<span>Hub</span></div>
+      <p class="muted">${esc(err.message)}</p><button class="btn" id="tlogout">Sign out</button></div></div>`;
+    $('#tlogout').onclick = async () => { await api('/auth/logout', { method: 'POST' }); ME = null; renderAuth(); };
+    return;
+  }
+  const t = today();
+  app.innerHTML = `<div class="authwrap"><div class="card" style="max-width:720px;width:100%">
+    <div class="row" style="justify-content:space-between;align-items:flex-start">
+      <div><div class="brandmark">Family<span>Hub</span></div>
+        <p class="muted" style="margin:4px 0 0">Tenant portal · <b>${esc(data.property.name)}</b>${data.property.address ? ' — ' + esc(data.property.address) : ''}</p>
+        <p class="muted" style="margin:4px 0 0">Signed in as ${esc(ME.name)} (${esc(ME.email)})</p></div>
+      <button class="btn ghost small" id="tlogout">Sign out</button></div>
+    ${data.charges.length ? `<table style="margin-top:14px"><thead><tr><th>Due</th><th>What</th><th class="right">Amount</th><th>Status</th><th></th></tr></thead><tbody>
+      ${data.charges.map((c) => {
+        const late = c.status === 'unpaid' && c.due_date < t;
+        return `<tr>
+          <td>${fdate(c.due_date)}${late ? ' <span class="badge late">overdue</span>' : ''}</td>
+          <td><b>${esc(c.title)}</b>${c.type === 'rent' ? ' <span class="muted">· rent</span>' : ''}${c.note ? `<br><span class="muted">${esc(c.note)}</span>` : ''}</td>
+          <td class="right amount">${money(c.amount)}</td>
+          <td>${c.status === 'paid' ? `<span class="badge paid">paid${c.confirmed_at ? ' ' + fdate(c.confirmed_at) : ''}</span>`
+            : c.status === 'pending' ? `<span class="badge role">confirmation pending</span>`
+            : `<span class="badge unpaid">to pay</span>`}</td>
+          <td class="right">${c.status === 'unpaid' ? `<button class="btn small" data-pay="${c.id}">Mark as paid</button>` : ''}</td>
+        </tr>`;
+      }).join('')}</tbody></table>`
+    : `<div class="empty" style="margin-top:14px"><b>Nothing to pay yet</b>Rent and shared invoices from your landlord will appear here.</div>`}
+    <p class="muted" style="margin-bottom:0">After you mark something as paid, the owner confirms it — until then it shows as "confirmation pending".</p>
+  </div></div>`;
+  $('#tlogout').onclick = async () => { await api('/auth/logout', { method: 'POST' }); ME = null; renderAuth(); };
+  app.querySelectorAll('[data-pay]').forEach((b) => (b.onclick = async () => {
+    try { await api(`/tenant/charges/${b.dataset.pay}/pay`, { method: 'POST' }); toast('Marked as paid — waiting for owner confirmation'); renderTenantPortal(); }
+    catch (err) { toast(err.message); }
+  }));
 }
 
 /* ---------- dashboard ---------- */
@@ -475,6 +519,7 @@ async function viewProperties(el) {
       ['owner_id', 'Owner', 'select', ownerOpts],
       ...P_DEADLINES.map(([k, l]) => [k, l + ' due', 'date', '']),
       ['mortgage_lender', 'Mortgage lender', 'text', 'optional'], ['mortgage_payment', `Monthly payment (${cur()})`, 'number', ''], ['mortgage_due_day', 'Payment day of month', 'number', '15'],
+      ['rent_amount', `Rent (${cur()}/mo, if rented out)`, 'number', ''], ['rent_due_day', 'Rent due day (1-28)', 'number', '1'],
     ]) : ''}
     <div id="proplist" style="margin-top:16px">${props.length ? '' : `<div class="card empty"><b>No properties yet</b>Add your home above to track its deadlines and costs.</div>`}</div>`;
   bindEntityForm('propform', '/properties', () => viewProperties(el));
@@ -482,11 +527,72 @@ async function viewProperties(el) {
   for (const p of props) list.appendChild(entityCard(p, {
     subtitle: [p.address, `Owner: ${mname[p.owner_id] || 'whole family'}`, p.mortgage_lender ? `Mortgage: ${p.mortgage_lender}, ${money(p.mortgage_payment)} on day ${p.mortgage_due_day ?? '—'}` : null].filter(Boolean).join(' · '),
     deadlines: P_DEADLINES, route: 'properties',
-    editExtra: [['owner_id', 'Owner', 'select', ownerOpts]],
+    editExtra: [['owner_id', 'Owner', 'select', ownerOpts], ['rent_amount', `Rent (${cur()}/mo)`, 'number'], ['rent_due_day', 'Rent due day (1-28)', 'number']],
+    extra: (box, p) => renderTenantBox(box, p),
     recordTypes: { maintenance: 'Maintenance', renovation: 'Renovation', utility: 'Utility', rent: 'Rent (income)', other_income: 'Other income', other: 'Other' },
     incomeTypes: ['rent', 'other_income'],
     recordFields: [['date', 'Date', 'date'], ['amount', `Amount (${cur()})`, 'number'], ['note', 'Note', 'text']],
     refresh: () => viewProperties(el),
+  }));
+}
+
+/* tenant & rent section inside a property card (owner view) */
+async function renderTenantBox(box, p) {
+  const [tinfo, charges] = await Promise.all([api(`/properties/${p.id}/tenant`), api(`/properties/${p.id}/charges`)]);
+  const t = today();
+  box.innerHTML = `<h3 style="margin-top:16px">Tenant & rent</h3>
+    <p class="muted">${p.rent_amount ? `Rent: <b>${money(p.rent_amount)}</b> / month, due day ${p.rent_due_day || 1} — this month's rent charge is generated automatically once a tenant has joined.` : 'No rent set — use <b>Edit</b> to set the monthly rent and due day.'}</p>
+    ${canWrite() ? `<p class="row" style="flex-wrap:wrap">
+      ${tinfo.invite_code ? `<span>Tenant code: <b class="amount" style="font-size:18px;letter-spacing:.12em">${esc(tinfo.invite_code)}</b></span>` : `<span class="muted">No tenant code yet.</span>`}
+      <button class="btn ghost small" data-tcode>${tinfo.invite_code ? 'Generate new code' : 'Generate code'}</button>
+      <span class="muted">Your tenant registers with it on the sign-in screen → <b>Tenant</b> tab. They only see the charges below — nothing else.</span></p>` : ''}
+    ${tinfo.tenants.length ? `<p>Tenant${tinfo.tenants.length > 1 ? 's' : ''}: ${tinfo.tenants.map((x) => `<b>${esc(x.name)}</b> <span class="muted">(${esc(x.email)})</span>${canWrite() ? ` <button class="btn danger small" data-tdel="${x.id}">Remove</button>` : ''}`).join(' · ')}</p>`
+      : `<p class="muted">No tenant has joined yet.</p>`}
+    ${canWrite() ? `<form data-chform class="formgrid">
+      <div><label>Type</label><select name="type"><option value="invoice">Invoice</option><option value="rent">Rent (extra)</option></select></div>
+      <div><label>Title</label><input name="title" placeholder="Electricity — June" required></div>
+      <div><label>Amount (${cur()})</label><input name="amount" type="number" step="0.01" min="0.01" required></div>
+      <div><label>Due date</label><input name="due_date" type="date" value="${t}" required></div>
+      <button class="btn small">Share with tenant</button></form>` : ''}
+    ${charges.length ? `<table><thead><tr><th>Due</th><th>What</th><th class="right">Amount</th><th>Status</th><th></th></tr></thead><tbody>
+      ${charges.map((c) => {
+        const late = c.status === 'unpaid' && c.due_date < t;
+        return `<tr>
+          <td>${fdate(c.due_date)}${late ? ' <span class="badge late">overdue</span>' : ''}</td>
+          <td><b>${esc(c.title)}</b>${c.type === 'rent' ? ' <span class="muted">· rent</span>' : ''}</td>
+          <td class="right amount">${money(c.amount)}</td>
+          <td>${c.status === 'paid' ? `<span class="badge paid">paid${c.confirmed_at ? ' ' + fdate(c.confirmed_at) : ''}</span>`
+            : c.status === 'pending' ? `<span class="badge role">pending — tenant marked paid ${c.marked_paid_at ? fdate(c.marked_paid_at) : ''}</span>`
+            : `<span class="badge unpaid">unpaid</span>`}</td>
+          <td class="right">${canWrite() ? `
+            ${c.status !== 'paid' ? `<button class="btn small" data-chconfirm="${c.id}">Confirm paid</button>` : ''}
+            ${c.status === 'pending' ? `<button class="btn ghost small" data-chreject="${c.id}">Reject</button>` : ''}
+            <button class="btn danger small" data-chdel="${c.id}">✕</button>` : ''}</td>
+        </tr>`;
+      }).join('')}</tbody></table>` : `<p class="muted">Nothing shared with the tenant yet.</p>`}`;
+  const reload = () => renderTenantBox(box, p);
+  box.querySelector('[data-tcode]')?.addEventListener('click', async () => {
+    await api(`/properties/${p.id}/tenant/invite`, { method: 'POST' }); toast('Tenant code generated'); reload();
+  });
+  box.querySelectorAll('[data-tdel]').forEach((b) => (b.onclick = async () => {
+    if (!confirm('Remove this tenant? Their account will be deleted.')) return;
+    await api(`/properties/${p.id}/tenant/${b.dataset.tdel}`, { method: 'DELETE' }); reload();
+  }));
+  box.querySelector('[data-chform]')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try { await api(`/properties/${p.id}/charges`, { method: 'POST', body: Object.fromEntries(new FormData(e.target)) }); toast('Shared with tenant'); reload(); }
+    catch (err) { toast(err.message); }
+  });
+  box.querySelectorAll('[data-chconfirm]').forEach((b) => (b.onclick = async () => {
+    try { await api(`/properties/${p.id}/charges/${b.dataset.chconfirm}/confirm`, { method: 'POST' }); toast('Payment confirmed'); reload(); }
+    catch (err) { toast(err.message); }
+  }));
+  box.querySelectorAll('[data-chreject]').forEach((b) => (b.onclick = async () => {
+    await api(`/properties/${p.id}/charges/${b.dataset.chreject}/reject`, { method: 'POST' }); toast('Marked back as unpaid'); reload();
+  }));
+  box.querySelectorAll('[data-chdel]').forEach((b) => (b.onclick = async () => {
+    if (!confirm('Delete this charge?')) return;
+    await api(`/properties/${p.id}/charges/${b.dataset.chdel}`, { method: 'DELETE' }); reload();
   }));
 }
 
@@ -523,6 +629,7 @@ function entityCard(item, cfg) {
     <div class="body">
       <div class="deadgrid">${dl}</div>
       <div data-editbox hidden style="margin-top:12px"></div>
+      <div data-extra></div>
       <h3 style="margin-top:16px">${cfg.incomeTypes ? 'History — costs & income' : 'History & costs'}</h3>
       ${canWrite() ? `<form data-recform class="formgrid">
         <div><label>Type</label><select name="type">${Object.entries(cfg.recordTypes).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select></div>
@@ -555,7 +662,13 @@ function entityCard(item, cfg) {
       await api(`/${cfg.route}/${item.id}/records/${b.dataset.recdel}`, { method: 'DELETE' }); loadRecords();
     }));
   };
-  wrap.addEventListener('toggle', () => { if (wrap.open && !wrap._loaded) { wrap._loaded = true; loadRecords(); } });
+  wrap.addEventListener('toggle', () => {
+    if (wrap.open && !wrap._loaded) {
+      wrap._loaded = true;
+      loadRecords();
+      if (cfg.extra) cfg.extra(wrap.querySelector('[data-extra]'), item);
+    }
+  });
   wrap.querySelector('[data-recform]')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     const body = Object.fromEntries([...new FormData(e.target)].filter(([, v]) => v !== ''));
@@ -578,7 +691,7 @@ function entityCard(item, cfg) {
     ];
     box.innerHTML = `<form class="formgrid">${editFields.map(([k, l, ty, opts]) => ty === 'select'
       ? `<div><label>${l}</label><select name="${k}">${opts.map(([v, lab]) => `<option value="${v}" ${String(item[k] ?? '') === String(v) ? 'selected' : ''}>${esc(lab)}</option>`).join('')}</select></div>`
-      : `<div><label>${l}</label><input name="${k}" type="date" value="${item[k] || ''}"></div>`).join('')}
+      : `<div><label>${l}</label><input name="${k}" type="${ty}" step="${ty === 'number' ? 'any' : ''}" value="${item[k] ?? ''}"></div>`).join('')}
       <button class="btn small">Save</button></form>`;
     box.querySelector('form').onsubmit = async (ev) => {
       ev.preventDefault();
