@@ -374,9 +374,7 @@ subRecords('vehicles', 'vehicle_records', 'vehicles', 'vehicle_id', ['service', 
 subRecords('properties', 'property_records', 'properties', 'property_id', ['maintenance', 'renovation', 'utility', 'other']);
 
 // ---------- reminders (aggregated deadlines) ----------
-app.get('/api/reminders', auth, (req, res) => {
-  const horizon = Math.min(Number(req.query.days) || 60, 365);
-  const fid = req.user.family_id;
+function collectReminders(fid, horizon) {
   const items = [];
   const push = (kind, label, entity, date, id, extra) => {
     if (!date) return;
@@ -398,12 +396,86 @@ app.get('/api/reminders', auth, (req, res) => {
   }
   const today = new Date().toISOString().slice(0, 10);
   const limit = new Date(Date.now() + horizon * 86400000).toISOString().slice(0, 10);
-  const withDays = items
+  return items
     .filter((i) => i.date <= limit)
     .map((i) => ({ ...i, days_left: Math.ceil((new Date(i.date) - new Date(today)) / 86400000) }))
     .sort((a, b) => a.date.localeCompare(b.date));
-  res.json(withDays);
+}
+app.get('/api/reminders', auth, (req, res) => {
+  const horizon = Math.min(Number(req.query.days) || 60, 365);
+  res.json(collectReminders(req.user.family_id, horizon));
 });
+
+// ---------- site notifications ----------
+const THRESHOLDS = [30, 14, 7, 1, 0];
+function generateNotifications(fid) {
+  const ins = db.prepare('INSERT OR IGNORE INTO notifications (family_id, key, title, body) VALUES (?,?,?,?)');
+  for (const r of collectReminders(fid, 31)) {
+    if (r.days_left < 0) {
+      ins.run(fid, `${r.kind}:${r.ref_id}:${r.date}:overdue`,
+        `Overdue: ${r.label}`, `${r.entity || ''} — was due ${r.date}${r.amount ? `, ${r.amount}` : ''}`.trim());
+      continue;
+    }
+    for (const t of THRESHOLDS) {
+      if (r.days_left <= t) {
+        ins.run(fid, `${r.kind}:${r.ref_id}:${r.date}:${t}`,
+          t === 0 ? `Due today: ${r.label}` : `${r.label} — ${r.days_left} day${r.days_left === 1 ? '' : 's'} left`,
+          `${r.entity || ''} — due ${r.date}${r.amount ? `, ${r.amount}` : ''}`.trim());
+        break; // only the tightest threshold crossed right now
+      }
+    }
+  }
+}
+app.get('/api/notifications', auth, (req, res) => {
+  generateNotifications(req.user.family_id);
+  const rows = db.prepare(`
+    SELECT n.id, n.title, n.body, n.created_at,
+           CASE WHEN r.user_id IS NULL THEN 0 ELSE 1 END AS read
+    FROM notifications n
+    LEFT JOIN notification_reads r ON r.notification_id = n.id AND r.user_id = ?
+    WHERE n.family_id = ?
+    ORDER BY n.id DESC LIMIT 100
+  `).all(req.user.id, req.user.family_id);
+  res.json({ items: rows, unread: rows.filter((x) => !x.read).length });
+});
+app.post('/api/notifications/read', auth, (req, res) => {
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids : null;
+  const rows = ids || db.prepare('SELECT id FROM notifications WHERE family_id = ?').all(req.user.family_id).map((r) => r.id);
+  const ins = db.prepare('INSERT OR IGNORE INTO notification_reads (notification_id, user_id) VALUES (?,?)');
+  const tx = db.transaction(() => rows.forEach((id) => ins.run(id, req.user.id)));
+  tx();
+  res.json({ ok: true });
+});
+
+// ---------- bank import ----------
+// Client parses the CSV and sends normalized rows; server dedups by content hash.
+app.post('/api/import/transactions', auth, canWrite, (req, res) => {
+  const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
+  if (!rows.length) return res.status(400).json({ error: 'No transactions to import' });
+  if (rows.length > 2000) return res.status(400).json({ error: 'Too many rows at once (max 2000)' });
+  let imported = 0, skipped = 0, errors = 0;
+  const insHash = db.prepare('INSERT OR IGNORE INTO imported_tx (family_id, hash) VALUES (?,?)');
+  const insExp = db.prepare('INSERT INTO expenses (family_id, user_id, category, amount, note, date) VALUES (?,?,?,?,?,?)');
+  const insInc = db.prepare('INSERT INTO incomes (family_id, user_id, source, amount, date) VALUES (?,?,?,?,?)');
+  const tx = db.transaction(() => {
+    for (const r of rows) {
+      const amount = Number(r.amount);
+      if (!isDate(r.date) || !(amount > 0) || !['expense', 'income'].includes(r.type)) { errors++; continue; }
+      const desc = String(r.description || '').slice(0, 200);
+      const hash = crypto.createHash('sha1').update(`${r.date}|${r.type}|${amount.toFixed(2)}|${desc.toLowerCase()}`).digest('hex');
+      if (!insHash.run(req.user.family_id, hash).changes) { skipped++; continue; }
+      if (r.type === 'expense') {
+        insExp.run(req.user.family_id, req.user.id, CATEGORY_SET.has(r.category) ? r.category : 'Other', amount, desc, r.date);
+      } else {
+        insInc.run(req.user.family_id, req.user.id, desc || 'Bank import', amount, r.date);
+      }
+      imported++;
+    }
+  });
+  tx();
+  res.json({ imported, skipped, errors });
+});
+const CATEGORY_SET = new Set(['Groceries', 'Utilities', 'Transportation', 'Entertainment', 'Healthcare', 'Education', 'Taxes', 'Other']);
 
 // ---------- dashboard stats ----------
 app.get('/api/stats', auth, (req, res) => {

@@ -127,6 +127,32 @@ CREATE TABLE IF NOT EXISTS property_records (
   amount REAL,
   note TEXT
 );
+
+-- bank import: remembers what was already imported so re-uploading a statement is safe
+CREATE TABLE IF NOT EXISTS imported_tx (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  family_id INTEGER NOT NULL REFERENCES families(id) ON DELETE CASCADE,
+  hash TEXT NOT NULL,
+  imported_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(family_id, hash)
+);
+
+-- site notifications, generated when a deadline crosses a threshold (30/14/7/1/0 days)
+CREATE TABLE IF NOT EXISTS notifications (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  family_id INTEGER NOT NULL REFERENCES families(id) ON DELETE CASCADE,
+  key TEXT NOT NULL,
+  title TEXT NOT NULL,
+  body TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(family_id, key)
+);
+
+CREATE TABLE IF NOT EXISTS notification_reads (
+  notification_id INTEGER NOT NULL REFERENCES notifications(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  PRIMARY KEY (notification_id, user_id)
+);
 `);
 
 module.exports = db;

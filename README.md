@@ -14,6 +14,8 @@ One shared account per family: budget and expenses, utility bills with due-date 
 - **Vehicles** — RCA, Casco, Rovinietă, ITP and vehicle-tax expiry tracking; service, tire and fuel logs with odometer.
 - **Properties** — insurance (PAD) and property-tax deadlines, mortgage details, maintenance/renovation/utility history.
 - **Dashboard** — a "coming up" ribbon of every deadline in the next 60 days, color-coded (amber ≤ 14 days, red = overdue).
+- **Bank import** — upload a CSV statement (BT, BCR, ING, Revolut…), map columns (single amount or debit/credit layout), auto-categorization of Romanian merchants (Lidl → Groceries, OMV → Transportation, PPC → Utilities…), review, import. Duplicate transactions are skipped automatically, so re-uploading the same statement is safe.
+- **Site alerts** — notifications are generated when any deadline crosses 30 / 14 / 7 / 1 / 0 days or goes overdue. Bell badge in the sidebar with per-user read status, plus optional browser notifications while the site is open in a tab.
 
 ## Run locally
 
@@ -67,7 +69,7 @@ Copy the `data/` directory (or the Docker volume). That's the entire application
 
 ## Roadmap ideas
 
-Camera invoice scanning + OCR, bank import (CSV first), calendar view, email/push notifications, PDF monthly reports, AI spending insights.
+Camera invoice scanning + OCR, calendar view, email/push notifications (server-sent), PDF monthly reports, AI spending insights, direct bank API import (PSD2).
 
 ## License
 

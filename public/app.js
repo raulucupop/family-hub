@@ -32,8 +32,28 @@ function daysClass(d) { return d < 0 ? 'late' : d <= 14 ? 'warn' : ''; }
 function daysLabel(d) { return d < 0 ? `${-d}d overdue` : d === 0 ? 'today' : `in ${d}d`; }
 
 /* ---------- router ---------- */
-const routes = { dashboard: viewDashboard, money: viewMoney, bills: viewBills, vehicles: viewVehicles, properties: viewProperties, family: viewFamily };
+const routes = { dashboard: viewDashboard, money: viewMoney, bills: viewBills, vehicles: viewVehicles, properties: viewProperties, import: viewImport, alerts: viewAlerts, family: viewFamily };
 window.addEventListener('hashchange', render);
+
+/* ---------- site notifications: polling, badge, browser notifications ---------- */
+let NOTIF = { unread: 0, items: [] };
+function browserNotifOn() { return localStorage.getItem('fh_notif') === '1' && 'Notification' in window && Notification.permission === 'granted'; }
+async function pollNotifications() {
+  if (!ME) return;
+  try {
+    NOTIF = await api('/notifications');
+    const badge = $('#notifbadge');
+    if (badge) { badge.textContent = NOTIF.unread; badge.hidden = NOTIF.unread === 0; }
+    // fire browser notifications for anything newer than the last one we showed
+    const lastShown = Number(localStorage.getItem('fh_last_notif') || 0);
+    const fresh = NOTIF.items.filter((n) => !n.read && n.id > lastShown);
+    if (fresh.length) {
+      localStorage.setItem('fh_last_notif', String(Math.max(...fresh.map((n) => n.id))));
+      if (browserNotifOn()) for (const n of fresh.slice(0, 3)) new Notification(n.title, { body: n.body || '' });
+    }
+  } catch { /* signed out or offline; badge just stays */ }
+}
+setInterval(pollNotifications, 60000);
 
 async function boot() {
   try {
@@ -49,11 +69,14 @@ function render() {
   app.innerHTML = shell(page);
   $('#logout').onclick = async () => { await api('/auth/logout', { method: 'POST' }); ME = null; renderAuth(); };
   fn($('#page'));
+  pollNotifications();
 }
 function shell(active) {
   const links = [
     ['dashboard', '⌂', 'Dashboard'], ['money', '₤', 'Budget & expenses'], ['bills', '☰', 'Bills'],
-    ['vehicles', '⛟', 'Vehicles'], ['properties', '⌂', 'Properties'], ['family', '☺', 'Family'],
+    ['vehicles', '⛟', 'Vehicles'], ['properties', '⌂', 'Properties'], ['import', '⇪', 'Bank import'],
+    ['alerts', '◉', `Alerts<span id="notifbadge" class="notifbadge" ${NOTIF.unread ? '' : 'hidden'}>${NOTIF.unread}</span>`],
+    ['family', '☺', 'Family'],
   ];
   return `<div class="shell">
     <nav class="sidebar">
@@ -436,6 +459,181 @@ function entityCard(item, cfg) {
     };
   });
   return wrap;
+}
+
+/* ---------- bank import ---------- */
+const CAT_RULES = [
+  [/kaufland|lidl|carrefour|mega image|profi|auchan|penny|selgros|piata|market/i, 'Groceries'],
+  [/omv|petrom|mol |rompetrol|lukoil|socar|uber|bolt|autostrad|cfr|stb|metrorex|parcare|parking/i, 'Transportation'],
+  [/enel|ppc|engie|e-on|eon|electrica|digi|rcs|rds|orange|vodafone|telekom|apa nova|hidroelectrica|nuclearelectrica/i, 'Utilities'],
+  [/farmacie|catena|helpnet|sensiblu|dr\.?max|medlife|regina maria|sanador|clinic|dent/i, 'Healthcare'],
+  [/netflix|hbo|spotify|disney|cinema|steam|playstation|xbox|restaurant|glovo|tazz|foodpanda|mcdonald|kfc/i, 'Entertainment'],
+  [/anaf|impozit|taxa|trezorer/i, 'Taxes'],
+  [/scoala|gradinita|kids|curs|udemy|carte|librari/i, 'Education'],
+];
+const guessCategory = (desc) => (CAT_RULES.find(([re]) => re.test(desc)) || [null, 'Other'])[1];
+
+function parseCSV(text) {
+  // detect delimiter on first non-empty line
+  const firstLine = text.split(/\r?\n/).find((l) => l.trim());
+  const delim = [';', ',', '\t'].map((d) => [d, (firstLine.match(new RegExp('\\' + d, 'g')) || []).length])
+    .sort((a, b) => b[1] - a[1])[0][0];
+  const rows = []; let row = [], cell = '', q = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) {
+      if (c === '"' && text[i + 1] === '"') { cell += '"'; i++; }
+      else if (c === '"') q = false;
+      else cell += c;
+    } else if (c === '"') q = true;
+    else if (c === delim) { row.push(cell); cell = ''; }
+    else if (c === '\n' || c === '\r') {
+      if (c === '\r' && text[i + 1] === '\n') i++;
+      row.push(cell); cell = '';
+      if (row.some((x) => x.trim() !== '')) rows.push(row);
+      row = [];
+    } else cell += c;
+  }
+  if (cell !== '' || row.length) { row.push(cell); if (row.some((x) => x.trim() !== '')) rows.push(row); }
+  return rows;
+}
+function parseAmount(s) {
+  if (s == null) return NaN;
+  let t = String(s).replace(/[^\d.,\-]/g, '');
+  if (!t) return NaN;
+  const lastComma = t.lastIndexOf(','), lastDot = t.lastIndexOf('.');
+  if (lastComma > lastDot) t = t.replace(/\./g, '').replace(',', '.');   // 1.234,56 → 1234.56
+  else t = t.replace(/,/g, '');                                          // 1,234.56 → 1234.56
+  return Number(t);
+}
+function parseDateAny(s) {
+  const t = String(s || '').trim();
+  let m;
+  if ((m = t.match(/^(\d{4})-(\d{2})-(\d{2})/))) return `${m[1]}-${m[2]}-${m[3]}`;
+  if ((m = t.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})/))) return `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;
+  return null;
+}
+let IMPORT_STATE = null;
+
+async function viewImport(el) {
+  el.innerHTML = `<div class="pagehead"><div><h1>Bank import</h1>
+    <p>Export a CSV statement from your bank (BT, BCR, ING, Revolut…) and import it here. Already-imported transactions are skipped automatically, so re-uploading is safe.</p></div></div>
+    ${canWrite() ? `
+    <div class="card"><h3>1 · Choose statement file</h3>
+      <input type="file" id="csvfile" accept=".csv,text/csv" style="max-width:340px">
+      <p class="muted" style="margin-bottom:0">Tip: in your banking app look for "Export" or "Extras de cont" → CSV.</p></div>
+    <div id="mapbox"></div><div id="prevbox"></div>` : `<div class="card empty"><b>View-only account</b>Ask an adult or admin to import statements.</div>`}`;
+  const file = $('#csvfile'); if (!file) return;
+  file.onchange = async () => {
+    const text = await file.files[0].text();
+    const rows = parseCSV(text);
+    if (rows.length < 2) return toast('Could not read any rows from this file');
+    const header = rows[0].map((h) => h.trim());
+    const find = (re) => { const i = header.findIndex((h) => re.test(h)); return i === -1 ? 0 : i; };
+    IMPORT_STATE = { header, rows: rows.slice(1) };
+    const opts = (sel) => header.map((h, i) => `<option value="${i}" ${i === sel ? 'selected' : ''}>${esc(h) || 'column ' + (i + 1)}</option>`).join('');
+    const hasDebitCredit = header.some((h) => /debit/i.test(h)) && header.some((h) => /credit/i.test(h));
+    $('#mapbox').innerHTML = `<div class="card" style="margin-top:16px"><h3>2 · Map columns</h3>
+      <div class="formgrid">
+        <div><label>Date column</label><select id="c_date">${opts(find(/dat[aă]|date|booking/i))}</select></div>
+        <div><label>Description column</label><select id="c_desc">${opts(find(/descriere|detalii|description|details|beneficiar|payee|merchant/i))}</select></div>
+        <div><label>Amount layout</label><select id="c_mode">
+          <option value="single" ${hasDebitCredit ? '' : 'selected'}>One amount column (negative = expense)</option>
+          <option value="split" ${hasDebitCredit ? 'selected' : ''}>Separate debit / credit columns</option></select></div>
+        <div id="c_single"><label>Amount column</label><select id="c_amt">${opts(find(/sum[aă]|amount|valoare/i))}</select></div>
+        <div id="c_split1" hidden><label>Debit (money out)</label><select id="c_deb">${opts(find(/debit/i))}</select></div>
+        <div id="c_split2" hidden><label>Credit (money in)</label><select id="c_cred">${opts(find(/credit/i))}</select></div>
+        <button class="btn" id="preview">Preview</button>
+      </div></div>`;
+    const syncMode = () => {
+      const split = $('#c_mode').value === 'split';
+      $('#c_single').hidden = split; $('#c_split1').hidden = !split; $('#c_split2').hidden = !split;
+    };
+    $('#c_mode').onchange = syncMode; syncMode();
+    $('#preview').onclick = buildPreview;
+  };
+  function buildPreview() {
+    const gi = (id) => Number($(id).value);
+    const split = $('#c_mode').value === 'split';
+    const txs = [];
+    for (const r of IMPORT_STATE.rows) {
+      const date = parseDateAny(r[gi('#c_date')]);
+      const description = String(r[gi('#c_desc')] || '').trim();
+      let amount, type;
+      if (split) {
+        const deb = parseAmount(r[gi('#c_deb')]), cred = parseAmount(r[gi('#c_cred')]);
+        if (deb > 0) { amount = deb; type = 'expense'; }
+        else if (cred > 0) { amount = cred; type = 'income'; }
+      } else {
+        const a = parseAmount(r[gi('#c_amt')]);
+        if (!isNaN(a) && a !== 0) { amount = Math.abs(a); type = a < 0 ? 'expense' : 'income'; }
+      }
+      if (date && amount > 0) txs.push({ date, description, amount, type, category: guessCategory(description), include: true });
+    }
+    if (!txs.length) return toast('No valid transactions found — check the column mapping');
+    IMPORT_STATE.txs = txs;
+    $('#prevbox').innerHTML = `<div class="card" style="margin-top:16px"><h3>3 · Review & import</h3>
+      <p class="muted">${txs.length} transactions found. Untick anything you don't want; fix categories where the guess is wrong.</p>
+      <div style="max-height:420px;overflow:auto"><table><thead><tr><th></th><th>Date</th><th>Description</th><th>Type</th><th>Category</th><th class="right">Amount</th></tr></thead><tbody>
+      ${txs.map((t, i) => `<tr>
+        <td><input type="checkbox" data-inc="${i}" checked style="width:auto"></td>
+        <td>${fdate(t.date)}</td><td>${esc(t.description.slice(0, 60))}</td>
+        <td>${t.type === 'expense' ? '<span class="badge unpaid">out</span>' : '<span class="badge paid">in</span>'}</td>
+        <td>${t.type === 'expense' ? `<select data-cat="${i}" style="width:150px">${CATEGORIES.map((c) => `<option ${c === t.category ? 'selected' : ''}>${c}</option>`).join('')}</select>` : '<span class="muted">income</span>'}</td>
+        <td class="right amount">${money(t.amount)}</td></tr>`).join('')}
+      </tbody></table></div>
+      <div style="margin-top:12px"><button class="btn" id="doimport">Import selected</button></div></div>`;
+    $('#prevbox').querySelectorAll('[data-inc]').forEach((c) => (c.onchange = () => (IMPORT_STATE.txs[c.dataset.inc].include = c.checked)));
+    $('#prevbox').querySelectorAll('[data-cat]').forEach((s) => (s.onchange = () => (IMPORT_STATE.txs[s.dataset.cat].category = s.value)));
+    $('#doimport').onclick = async () => {
+      const rows = IMPORT_STATE.txs.filter((t) => t.include).map(({ include, ...t }) => t);
+      try {
+        const r = await api('/import/transactions', { method: 'POST', body: { rows } });
+        $('#prevbox').innerHTML = `<div class="card" style="margin-top:16px"><h3>Done</h3>
+          <p><b>${r.imported}</b> imported · <b>${r.skipped}</b> skipped (already imported before) · <b>${r.errors}</b> invalid.</p>
+          <p><a href="#money">See them in Budget & expenses →</a></p></div>`;
+      } catch (err) { toast(err.message); }
+    };
+  }
+}
+
+/* ---------- alerts (site notifications) ---------- */
+async function viewAlerts(el) {
+  const data = await api('/notifications');
+  NOTIF = data;
+  const perm = 'Notification' in window ? Notification.permission : 'unsupported';
+  const enabled = browserNotifOn();
+  el.innerHTML = `<div class="pagehead"><div><h1>Alerts</h1>
+    <p>Generated automatically when a bill or deadline gets within 30, 14, 7 or 1 days — or goes overdue. Shared by the whole family; read status is yours.</p></div>
+    ${data.items.some((n) => !n.read) ? `<button class="btn ghost small" id="readall">Mark all as read</button>` : ''}</div>
+    <div class="card">
+      <div class="row" style="justify-content:space-between">
+        <div><h3 style="margin:0">Browser notifications</h3>
+        <p class="muted" style="margin:4px 0 0">While Family Hub is open in a tab, new alerts also pop up as system notifications.</p></div>
+        ${perm === 'unsupported' ? `<span class="muted">Not supported by this browser</span>`
+          : perm === 'denied' ? `<span class="muted">Blocked in browser settings</span>`
+          : `<button class="btn ${enabled ? 'ghost' : ''} small" id="togglenotif">${enabled ? 'Turn off' : 'Turn on'}</button>`}
+      </div></div>
+    <div class="card" style="margin-top:16px">
+      ${data.items.length ? `<table><tbody>${data.items.map((n) => `
+        <tr style="${n.read ? 'opacity:.55' : ''}"><td style="width:20px">${n.read ? '' : '<span class="dot"></span>'}</td>
+        <td><b>${esc(n.title)}</b><br><span class="muted">${esc(n.body || '')}</span></td>
+        <td class="right muted" style="white-space:nowrap">${new Date(n.created_at + 'Z').toLocaleDateString('ro-RO')}</td></tr>`).join('')}
+      </tbody></table>` : `<div class="empty"><b>No alerts yet</b>They appear here as your bills and deadlines get close.</div>`}
+    </div>`;
+  $('#readall')?.addEventListener('click', async () => {
+    await api('/notifications/read', { method: 'POST', body: {} }); viewAlerts(el); pollNotifications();
+  });
+  $('#togglenotif')?.addEventListener('click', async () => {
+    if (enabled) { localStorage.setItem('fh_notif', '0'); }
+    else {
+      const p = await Notification.requestPermission();
+      if (p !== 'granted') return toast('Permission was not granted');
+      localStorage.setItem('fh_notif', '1');
+      new Notification('Family Hub', { body: 'Browser notifications are on.' });
+    }
+    viewAlerts(el);
+  });
 }
 
 /* ---------- family ---------- */
