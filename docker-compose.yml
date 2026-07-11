@@ -1,0 +1,16 @@
+services:
+  familyhub:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      # Set your own long random secret (optional; one is generated and persisted if omitted)
+      # - JWT_SECRET=change-me-to-a-long-random-string
+      # If you run WITHOUT HTTPS on a home server / LAN, uncomment so login cookies work:
+      # - INSECURE_COOKIES=1
+    volumes:
+      - familyhub-data:/data
+    restart: unless-stopped
+volumes:
+  familyhub-data:
