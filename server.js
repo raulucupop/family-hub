@@ -22,6 +22,16 @@ if (!JWT_SECRET) {
   JWT_SECRET = fs.readFileSync(secretFile, 'utf8').trim();
 }
 
+// behind the host's proxy (Passenger, nginx…) redirect plain http to https —
+// the login cookie is Secure in production, so http sessions would silently fail
+app.set('trust proxy', 1);
+if (process.env.NODE_ENV === 'production' && process.env.INSECURE_COOKIES !== '1') {
+  app.use((req, res, next) => {
+    if (req.secure) return next();
+    res.redirect(301, `https://${req.headers.host}${req.originalUrl}`);
+  });
+}
+
 app.use(express.json());
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public')));
