@@ -22,12 +22,27 @@ CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   family_id INTEGER NOT NULL REFERENCES families(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
-  email TEXT UNIQUE NOT NULL,
-  password_hash TEXT NOT NULL,
+  email TEXT UNIQUE,      -- NULL for admin-added children without a login
+  password_hash TEXT,     -- NULL for members who can't sign in
   role TEXT NOT NULL CHECK (role IN ('admin','adult','child','tenant')),
   tenant_property_id INTEGER REFERENCES properties(id) ON DELETE SET NULL, -- tenants only: the rented property
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- acte: documents linked to a person, vehicle, property, or the family in general
+CREATE TABLE IF NOT EXISTS documents (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  family_id INTEGER NOT NULL REFERENCES families(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,                -- 'Carte de identitate', 'Pasaport', 'Talon auto'...
+  number TEXT,                       -- series / number
+  user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+  vehicle_id INTEGER REFERENCES vehicles(id) ON DELETE CASCADE,
+  property_id INTEGER REFERENCES properties(id) ON DELETE CASCADE,
+  expiry_date TEXT,                  -- optional; feeds reminders & alerts
+  attachment TEXT,                   -- stored filename of uploaded scan
+  notes TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_documents_family ON documents(family_id);
 
 CREATE TABLE IF NOT EXISTS expenses (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -215,9 +230,13 @@ if (!propCols.includes('rent_amount')) db.exec('ALTER TABLE properties ADD COLUM
 if (!propCols.includes('rent_due_day')) db.exec('ALTER TABLE properties ADD COLUMN rent_due_day INTEGER');
 if (!propCols.includes('tenant_invite_code')) db.exec('ALTER TABLE properties ADD COLUMN tenant_invite_code TEXT');
 
-// users: older CHECK constraint lacks the 'tenant' role — rebuild once, keeping ids
+// users: older schemas lack the 'tenant' role or force NOT NULL email/password
+// (children added by the admin have neither) — rebuild once, keeping ids
 const usersSql = (db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='users'").get() || {}).sql || '';
-if (usersSql && !usersSql.includes("'tenant'")) {
+const usersInfo = db.prepare('PRAGMA table_info(users)').all();
+const emailNotNull = (usersInfo.find((c) => c.name === 'email') || {}).notnull === 1;
+const hasTenantPropCol = usersInfo.some((c) => c.name === 'tenant_property_id');
+if (usersSql && (!usersSql.includes("'tenant'") || emailNotNull)) {
   db.exec(`
     PRAGMA foreign_keys=OFF;
     PRAGMA legacy_alter_table=ON;
@@ -227,14 +246,14 @@ if (usersSql && !usersSql.includes("'tenant'")) {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       family_id INTEGER NOT NULL REFERENCES families(id) ON DELETE CASCADE,
       name TEXT NOT NULL,
-      email TEXT UNIQUE NOT NULL,
-      password_hash TEXT NOT NULL,
+      email TEXT UNIQUE,
+      password_hash TEXT,
       role TEXT NOT NULL CHECK (role IN ('admin','adult','child','tenant')),
       tenant_property_id INTEGER REFERENCES properties(id) ON DELETE SET NULL,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
-    INSERT INTO users (id, family_id, name, email, password_hash, role, created_at)
-      SELECT id, family_id, name, email, password_hash, role, created_at FROM users_old;
+    INSERT INTO users (id, family_id, name, email, password_hash, role, tenant_property_id, created_at)
+      SELECT id, family_id, name, email, password_hash, role, ${hasTenantPropCol ? 'tenant_property_id' : 'NULL'}, created_at FROM users_old;
     DROP TABLE users_old;
     COMMIT;
     PRAGMA legacy_alter_table=OFF;

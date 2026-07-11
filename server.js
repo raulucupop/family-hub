@@ -119,7 +119,7 @@ app.post('/api/auth/register', (req, res) => {
 app.post('/api/auth/login', (req, res) => {
   const { email, password } = req.body || {};
   const user = db.prepare('SELECT * FROM users WHERE email = ?').get(String(email || '').trim().toLowerCase());
-  if (!user || !bcrypt.compareSync(String(password || ''), user.password_hash)) {
+  if (!user || !user.password_hash || !bcrypt.compareSync(String(password || ''), user.password_hash)) {
     return res.status(401).json({ error: 'Wrong email or password' });
   }
   setAuthCookie(res, signToken(user));
@@ -142,6 +142,13 @@ app.get('/api/family/members', auth, (req, res) => {
   const members = db.prepare("SELECT id, name, email, role, created_at FROM users WHERE family_id = ? AND role != 'tenant' ORDER BY created_at").all(req.user.family_id);
   res.json(members);
 });
+// admin adds a child by name only — no email, no login; can still be linked to acte and expenses
+app.post('/api/family/members', auth, adminOnly, (req, res) => {
+  const name = str(req.body?.name);
+  if (!name) return res.status(400).json({ error: 'Name is required' });
+  const info = db.prepare("INSERT INTO users (family_id, name, role) VALUES (?,?,'child')").run(req.user.family_id, name);
+  res.json(db.prepare('SELECT id, name, email, role, created_at FROM users WHERE id = ?').get(info.lastInsertRowid));
+});
 app.patch('/api/family/members/:id', auth, adminOnly, (req, res) => {
   const { role } = req.body || {};
   if (!['admin', 'adult', 'child'].includes(role)) return res.status(400).json({ error: 'Invalid role' });
@@ -149,6 +156,7 @@ app.patch('/api/family/members/:id', auth, adminOnly, (req, res) => {
   if (!target) return res.status(404).json({ error: 'Member not found' });
   if (target.id === req.user.id) return res.status(400).json({ error: "You can't change your own role" });
   if (target.role === 'tenant') return res.status(400).json({ error: 'Tenants are managed from their property' });
+  if (!target.email) return res.status(400).json({ error: 'Members without a login stay children' });
   db.prepare('UPDATE users SET role = ? WHERE id = ?').run(role, target.id);
   res.json({ ok: true });
 });
@@ -489,6 +497,73 @@ app.get('/api/bills/:id/attachment', auth, (req, res) => {
   res.sendFile(path.join(UPLOAD_DIR, bill.attachment));
 });
 
+// ---------- documents (acte) ----------
+function validateDocument(b, fid) {
+  if (!b.name) return 'Document name is required';
+  if (['user_id', 'vehicle_id', 'property_id'].filter((k) => num(b[k]) != null).length > 1) {
+    return 'Link the document to a single person, vehicle or property';
+  }
+  if (num(b.user_id) != null && !db.prepare("SELECT id FROM users WHERE id = ? AND family_id = ? AND role != 'tenant'").get(num(b.user_id), fid)) {
+    return 'Person must be a member of the family';
+  }
+  if (num(b.vehicle_id) != null && !db.prepare('SELECT id FROM vehicles WHERE id = ? AND family_id = ?').get(num(b.vehicle_id), fid)) {
+    return 'Vehicle not found';
+  }
+  if (num(b.property_id) != null && !db.prepare('SELECT id FROM properties WHERE id = ? AND family_id = ?').get(num(b.property_id), fid)) {
+    return 'Property not found';
+  }
+  if (b.expiry_date && !isDate(b.expiry_date)) return 'Expiry date must be YYYY-MM-DD';
+  return null;
+}
+const DOC_SELECT = `
+  SELECT d.*, u.name AS person_name, v.name AS vehicle_name, p.name AS property_name
+  FROM documents d
+  LEFT JOIN users u ON u.id = d.user_id
+  LEFT JOIN vehicles v ON v.id = d.vehicle_id
+  LEFT JOIN properties p ON p.id = d.property_id
+`;
+app.get('/api/documents', auth, (req, res) => {
+  res.json(db.prepare(`${DOC_SELECT} WHERE d.family_id = ? ORDER BY d.expiry_date IS NULL, d.expiry_date, d.name`).all(req.user.family_id));
+});
+app.post('/api/documents', auth, canWrite, (req, res) => {
+  const b = req.body || {};
+  const err = validateDocument(b, req.user.family_id);
+  if (err) return res.status(400).json({ error: err });
+  const info = db.prepare('INSERT INTO documents (family_id, name, number, user_id, vehicle_id, property_id, expiry_date, notes) VALUES (?,?,?,?,?,?,?,?)')
+    .run(req.user.family_id, str(b.name), str(b.number), num(b.user_id), num(b.vehicle_id), num(b.property_id), b.expiry_date || null, str(b.notes));
+  res.json(db.prepare(`${DOC_SELECT} WHERE d.id = ?`).get(info.lastInsertRowid));
+});
+app.put('/api/documents/:id', auth, canWrite, (req, res) => {
+  const row = db.prepare('SELECT * FROM documents WHERE id = ? AND family_id = ?').get(req.params.id, req.user.family_id);
+  if (!row) return res.status(404).json({ error: 'Not found' });
+  const b = { ...row, ...req.body };
+  const err = validateDocument(b, req.user.family_id);
+  if (err) return res.status(400).json({ error: err });
+  db.prepare('UPDATE documents SET name=?, number=?, user_id=?, vehicle_id=?, property_id=?, expiry_date=?, notes=? WHERE id=?')
+    .run(str(b.name), str(b.number), num(b.user_id), num(b.vehicle_id), num(b.property_id), b.expiry_date || null, str(b.notes), row.id);
+  res.json(db.prepare(`${DOC_SELECT} WHERE d.id = ?`).get(row.id));
+});
+app.delete('/api/documents/:id', auth, canWrite, (req, res) => {
+  const row = db.prepare('SELECT * FROM documents WHERE id = ? AND family_id = ?').get(req.params.id, req.user.family_id);
+  if (!row) return res.status(404).json({ error: 'Not found' });
+  if (row.attachment) { try { fs.unlinkSync(path.join(UPLOAD_DIR, row.attachment)); } catch {} }
+  db.prepare('DELETE FROM documents WHERE id = ?').run(row.id);
+  res.json({ ok: true });
+});
+app.post('/api/documents/:id/attachment', auth, canWrite, upload.single('file'), (req, res) => {
+  const doc = db.prepare('SELECT * FROM documents WHERE id = ? AND family_id = ?').get(req.params.id, req.user.family_id);
+  if (!doc) return res.status(404).json({ error: 'Not found' });
+  if (!req.file) return res.status(400).json({ error: 'No file received' });
+  if (doc.attachment) { try { fs.unlinkSync(path.join(UPLOAD_DIR, doc.attachment)); } catch {} }
+  db.prepare('UPDATE documents SET attachment = ? WHERE id = ?').run(req.file.filename, doc.id);
+  res.json({ attachment: req.file.filename });
+});
+app.get('/api/documents/:id/attachment', auth, (req, res) => {
+  const doc = db.prepare('SELECT * FROM documents WHERE id = ? AND family_id = ?').get(req.params.id, req.user.family_id);
+  if (!doc || !doc.attachment) return res.status(404).json({ error: 'No attachment' });
+  res.sendFile(path.join(UPLOAD_DIR, doc.attachment));
+});
+
 // ---------- vehicle & property records ----------
 function subRecords(route, table, parentTable, parentKey, types) {
   app.get(`/api/${route}/:pid/records`, auth, (req, res) => {
@@ -645,6 +720,9 @@ function collectReminders(fid, horizon) {
   for (const p of db.prepare('SELECT * FROM properties WHERE family_id = ?').all(fid)) {
     push('property_insurance', 'Property insurance (PAD)', p.name, p.insurance_expiry, p.id);
     push('property_tax', 'Property tax', p.name, p.property_tax_due, p.id);
+  }
+  for (const d of db.prepare(`${DOC_SELECT} WHERE d.family_id = ? AND d.expiry_date IS NOT NULL`).all(fid)) {
+    push('document', `Act: ${d.name}`, d.person_name || d.vehicle_name || d.property_name || 'Family', d.expiry_date, d.id);
   }
   const today = new Date().toISOString().slice(0, 10);
   const limit = new Date(Date.now() + horizon * 86400000).toISOString().slice(0, 10);

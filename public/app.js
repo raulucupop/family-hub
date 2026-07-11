@@ -32,7 +32,7 @@ function daysClass(d) { return d < 0 ? 'late' : d <= 14 ? 'warn' : ''; }
 function daysLabel(d) { return d < 0 ? `${-d}d overdue` : d === 0 ? 'today' : `in ${d}d`; }
 
 /* ---------- router ---------- */
-const routes = { dashboard: viewDashboard, money: viewMoney, bills: viewBills, vehicles: viewVehicles, properties: viewProperties, import: viewImport, alerts: viewAlerts, family: viewFamily };
+const routes = { dashboard: viewDashboard, money: viewMoney, bills: viewBills, vehicles: viewVehicles, properties: viewProperties, acte: viewActe, import: viewImport, alerts: viewAlerts, family: viewFamily };
 window.addEventListener('hashchange', render);
 
 /* ---------- site notifications: polling, badge, browser notifications ---------- */
@@ -75,7 +75,7 @@ function render() {
 function shell(active) {
   const links = [
     ['dashboard', '⌂', 'Dashboard'], ['money', '₤', 'Budget & expenses'], ['bills', '☰', 'Bills'],
-    ['vehicles', '⛟', 'Vehicles'], ['properties', '⌂', 'Properties'], ['import', '⇪', 'Bank import'],
+    ['vehicles', '⛟', 'Vehicles'], ['properties', '⌂', 'Properties'], ['acte', '❏', 'Acte'], ['import', '⇪', 'Bank import'],
     ['alerts', '◉', `Alerts<span id="notifbadge" class="notifbadge" ${NOTIF.unread ? '' : 'hidden'}>${NOTIF.unread}</span>`],
     ['family', '☺', 'Family'],
   ];
@@ -704,6 +704,60 @@ function entityCard(item, cfg) {
   return wrap;
 }
 
+/* ---------- acte (documents) ---------- */
+async function viewActe(el) {
+  const [docs, members, vehicles, properties] = await Promise.all([api('/documents'), api('/family/members'), api('/vehicles'), api('/properties')]);
+  const t = today();
+  const linkOpts = [['', 'Family (general)'],
+    ...members.map((m) => ['user:' + m.id, 'Person: ' + m.name]),
+    ...vehicles.map((v) => ['vehicle:' + v.id, 'Vehicle: ' + v.name]),
+    ...properties.map((p) => ['property:' + p.id, 'Property: ' + p.name])];
+  const belongsTo = (d) => d.person_name ? `Person: ${esc(d.person_name)}` : d.vehicle_name ? `Vehicle: ${esc(d.vehicle_name)}` : d.property_name ? `Property: ${esc(d.property_name)}` : 'Family';
+  el.innerHTML = `<div class="pagehead"><div><h1>Acte</h1><p>ID cards, passports, certificates, talon auto, contracts — linked to a person, vehicle or property, with expiry reminders and scans.</p></div></div>
+    ${canWrite() ? `<div class="card"><h3>Add document</h3><form id="docform" class="formgrid">
+      <div><label>Name</label><input name="name" placeholder="Carte de identitate, Pasaport…" required></div>
+      <div><label>Series / number</label><input name="number" placeholder="optional"></div>
+      <div><label>Belongs to</label><select name="link">${linkOpts.map(([v, l]) => `<option value="${v}">${esc(l)}</option>`).join('')}</select></div>
+      <div><label>Expiry date</label><input name="expiry_date" type="date"></div>
+      <div><label>Notes</label><input name="notes" placeholder="optional"></div>
+      <button class="btn">Add document</button></form></div>` : ''}
+    <div class="card" style="margin-top:16px">
+      ${docs.length ? `<table><thead><tr><th>Document</th><th>Belongs to</th><th>Expires</th><th>Scan</th><th></th></tr></thead><tbody>
+        ${docs.map((d) => {
+          let exp = '<span class="muted">—</span>';
+          if (d.expiry_date) {
+            const days = Math.ceil((new Date(d.expiry_date) - new Date(t)) / 86400000);
+            exp = `<span class="${days < 0 ? 'badge late' : days <= 30 ? 'badge unpaid' : ''}">${fdate(d.expiry_date)} · ${daysLabel(days)}</span>`;
+          }
+          return `<tr>
+            <td><b>${esc(d.name)}</b>${d.number ? ` <span class="muted">${esc(d.number)}</span>` : ''}${d.notes ? `<br><span class="muted">${esc(d.notes)}</span>` : ''}</td>
+            <td>${belongsTo(d)}</td>
+            <td>${exp}</td>
+            <td>${d.attachment ? `<a href="/api/documents/${d.id}/attachment" target="_blank">view</a>` : canWrite() ? `<label class="btn ghost small" style="display:inline-block">attach<input type="file" data-attach="${d.id}" accept=".pdf,image/*" hidden></label>` : '—'}</td>
+            <td class="right">${canWrite() ? `<button class="btn danger small" data-del="${d.id}">Delete</button>` : ''}</td>
+          </tr>`;
+        }).join('')}</tbody></table>`
+      : `<div class="empty"><b>No acte yet</b>Add ID cards, passports and other documents — the ones with an expiry date show up in reminders and alerts.</div>`}
+    </div>`;
+  $('#docform')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const raw = Object.fromEntries(new FormData(e.target));
+    const body = { name: raw.name, number: raw.number, expiry_date: raw.expiry_date, notes: raw.notes };
+    if (raw.link) { const [kind, id] = raw.link.split(':'); body[kind + '_id'] = Number(id); }
+    try { await api('/documents', { method: 'POST', body }); toast('Document added'); viewActe(el); }
+    catch (err) { toast(err.message); }
+  });
+  el.querySelectorAll('[data-del]').forEach((b) => (b.onclick = async () => {
+    if (!confirm('Delete this document (and its scan)?')) return;
+    await api('/documents/' + b.dataset.del, { method: 'DELETE' }); viewActe(el);
+  }));
+  el.querySelectorAll('[data-attach]').forEach((inp) => (inp.onchange = async () => {
+    const fd = new FormData(); fd.append('file', inp.files[0]);
+    try { await api(`/documents/${inp.dataset.attach}/attachment`, { method: 'POST', body: fd }); toast('Scan attached'); viewActe(el); }
+    catch (err) { toast(err.message); }
+  }));
+}
+
 /* ---------- bank import ---------- */
 const CAT_RULES = [
   [/kaufland|lidl|carrefour|mega image|profi|auchan|penny|selgros|piata|market/i, 'Groceries'],
@@ -889,10 +943,14 @@ async function viewFamily(el) {
       <p class="row"><span class="amount" style="font-size:22px;letter-spacing:.12em">${esc(FAMILY.invite_code)}</span>
       <button class="btn ghost small" id="rotate">Generate new code</button></p>
       <p class="muted">New members join as adults. Change their role below after they join.</p></div>` : ''}
+    ${isAdmin ? `<div class="card" style="margin-top:16px"><h3>Add a child (no account)</h3>
+      <p class="muted">For kids without an email — they show up in the family and can have acte and expenses linked to them, but can't sign in.</p>
+      <form id="childform" class="formgrid"><div><label>Name</label><input name="name" required></div>
+      <button class="btn">Add child</button></form></div>` : ''}
     <div class="card" style="margin-top:16px"><h3>Members</h3>
       <table><thead><tr><th>Name</th><th>Email</th><th>Role</th>${isAdmin ? '<th></th>' : ''}</tr></thead><tbody>
-      ${members.map((m) => `<tr><td>${esc(m.name)}${m.id === ME.id ? ' <span class="muted">(you)</span>' : ''}</td><td>${esc(m.email)}</td>
-        <td>${isAdmin && m.id !== ME.id ? `<select data-role="${m.id}">${['admin', 'adult', 'child'].map((r) => `<option ${r === m.role ? 'selected' : ''}>${r}</option>`).join('')}</select>` : `<span class="badge role">${m.role}</span>`}</td>
+      ${members.map((m) => `<tr><td>${esc(m.name)}${m.id === ME.id ? ' <span class="muted">(you)</span>' : ''}</td><td>${m.email ? esc(m.email) : '<span class="muted">no login</span>'}</td>
+        <td>${isAdmin && m.id !== ME.id && m.email ? `<select data-role="${m.id}">${['admin', 'adult', 'child'].map((r) => `<option ${r === m.role ? 'selected' : ''}>${r}</option>`).join('')}</select>` : `<span class="badge role">${m.role}</span>`}</td>
         ${isAdmin ? `<td class="right">${m.id !== ME.id ? `<button class="btn danger small" data-del="${m.id}">Remove</button>` : ''}</td>` : ''}</tr>`).join('')}
       </tbody></table></div>
     ${isAdmin ? `<div class="card" style="margin-top:16px"><h3>Family settings</h3>
@@ -903,6 +961,11 @@ async function viewFamily(el) {
   $('#rotate')?.addEventListener('click', async () => {
     const r = await api('/family/invite/rotate', { method: 'POST' });
     FAMILY.invite_code = r.invite_code; viewFamily(el);
+  });
+  $('#childform')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try { await api('/family/members', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) }); toast('Child added'); viewFamily(el); }
+    catch (err) { toast(err.message); }
   });
   el.querySelectorAll('[data-role]').forEach((s) => (s.onchange = async () => {
     try { await api('/family/members/' + s.dataset.role, { method: 'PATCH', body: { role: s.value } }); toast('Role updated'); }
