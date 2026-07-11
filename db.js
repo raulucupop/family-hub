@@ -1,13 +1,39 @@
-const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 fs.mkdirSync(DATA_DIR, { recursive: true });
 
-const db = new Database(path.join(DATA_DIR, 'familyhub.db'));
-db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
+// better-sqlite3 when its native binding loads; otherwise Node's built-in SQLite
+// (shared hosts with an old glibc and no compiler can't run the prebuilt binding).
+// FORCE_NODE_SQLITE=1 forces the fallback, e.g. for testing it locally.
+function openDatabase(file) {
+  if (process.env.FORCE_NODE_SQLITE !== '1') {
+    try {
+      const Database = require('better-sqlite3');
+      const d = new Database(file);
+      d.pragma('journal_mode = WAL');
+      d.pragma('foreign_keys = ON');
+      return d;
+    } catch { /* fall through to node:sqlite */ }
+  }
+  const { DatabaseSync } = require('node:sqlite');
+  const raw = new DatabaseSync(file);
+  raw.exec('PRAGMA journal_mode = WAL');
+  raw.exec('PRAGMA foreign_keys = ON');
+  return {
+    exec: (sql) => raw.exec(sql),
+    pragma: (p) => raw.exec(`PRAGMA ${p}`),
+    prepare: (sql) => raw.prepare(sql),
+    transaction: (fn) => (...args) => {
+      raw.exec('BEGIN');
+      try { const result = fn(...args); raw.exec('COMMIT'); return result; }
+      catch (err) { try { raw.exec('ROLLBACK'); } catch {} throw err; }
+    },
+  };
+}
+
+const db = openDatabase(path.join(DATA_DIR, 'familyhub.db'));
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS families (
