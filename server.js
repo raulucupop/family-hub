@@ -229,6 +229,22 @@ app.post('/api/family/invite/rotate', auth, adminOnly, (req, res) => {
   db.prepare('UPDATE families SET invite_code = ? WHERE id = ?').run(code, req.user.family_id);
   res.json({ invite_code: code });
 });
+// email an invite with the family code and a register link
+app.post('/api/family/invite/email', auth, adminOnly, async (req, res) => {
+  const email = String(req.body?.email || '').trim().toLowerCase();
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return res.status(400).json({ error: 'Enter a valid email address' });
+  if (!process.env.MAIL_FROM) return res.status(500).json({ error: 'Email is not configured on this server' });
+  const family = db.prepare('SELECT * FROM families WHERE id = ?').get(req.user.family_id);
+  const base = `${req.protocol}://${req.get('host')}`;
+  try {
+    await sendMail([email], `${req.user.name} invited you to ${family.name} on Family Hub`,
+      `Hello,\n\n${req.user.name} invited you to join "${family.name}" on Family Hub — a shared place for the household's budget, bills, cars and property deadlines.\n\nTo join:\n1. Open ${base}\n2. Choose "Register"\n3. Enter this invite code: ${family.invite_code}\n\nSee you there!\n`);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('invite email:', err.message);
+    res.status(500).json({ error: 'Could not send the email — try again in a few minutes' });
+  }
+});
 app.patch('/api/family', auth, adminOnly, (req, res) => {
   const { name, currency } = req.body || {};
   if (name) db.prepare('UPDATE families SET name = ? WHERE id = ?').run(String(name).trim(), req.user.family_id);

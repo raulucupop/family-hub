@@ -18,6 +18,13 @@ function toast(msg) {
   t.textContent = msg; t.hidden = false;
   clearTimeout(t._h); t._h = setTimeout(() => (t.hidden = true), 2600);
 }
+async function copyText(text) {
+  try {
+    if (navigator.clipboard) await navigator.clipboard.writeText(text);
+    else { const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); }
+    toast('Copied: ' + text);
+  } catch { toast('Copy failed — select it manually'); }
+}
 async function api(path, opts = {}) {
   const res = await fetch('/api' + path, {
     headers: opts.body instanceof FormData ? {} : { 'Content-Type': 'application/json' },
@@ -577,7 +584,8 @@ async function renderTenantBox(box, p) {
   box.innerHTML = `<h3 style="margin-top:16px">Tenant & rent</h3>
     <p class="muted">${p.rent_amount ? `Rent: <b>${money(p.rent_amount)}</b> / month, due day ${p.rent_due_day || 1} — this month's rent charge is generated automatically once a tenant has joined.` : 'No rent set — use <b>Edit</b> to set the monthly rent and due day.'}</p>
     ${canWrite() ? `<p class="row" style="flex-wrap:wrap">
-      ${tinfo.invite_code ? `<span>Tenant code: <b class="amount" style="font-size:18px;letter-spacing:.12em">${esc(tinfo.invite_code)}</b></span>` : `<span class="muted">No tenant code yet.</span>`}
+      ${tinfo.invite_code ? `<span>Tenant code: <b class="amount" style="font-size:18px;letter-spacing:.12em">${esc(tinfo.invite_code)}</b></span>
+      <button class="btn ghost small" data-copy="${esc(tinfo.invite_code)}">Copy</button>` : `<span class="muted">No tenant code yet.</span>`}
       <button class="btn ghost small" data-tcode>${tinfo.invite_code ? 'Generate new code' : 'Generate code'}</button>
       <span class="muted">Your tenant registers with it on the sign-in screen → <b>Register</b> tab. They only see the charges below — nothing else.</span></p>` : ''}
     ${tinfo.tenants.length ? `<p>Tenant${tinfo.tenants.length > 1 ? 's' : ''}: ${tinfo.tenants.map((x) => `<b>${esc(x.name)}</b> <span class="muted">(${esc(x.email)})</span>${canWrite() ? ` <button class="btn danger small" data-tdel="${x.id}">Remove</button>` : ''}`).join(' · ')}</p>`
@@ -605,6 +613,7 @@ async function renderTenantBox(box, p) {
         </tr>`;
       }).join('')}</tbody></table>` : `<p class="muted">Nothing shared with the tenant yet.</p>`}`;
   const reload = () => renderTenantBox(box, p);
+  box.querySelectorAll('[data-copy]').forEach((b) => (b.onclick = () => copyText(b.dataset.copy)));
   box.querySelector('[data-tcode]')?.addEventListener('click', async () => {
     await api(`/properties/${p.id}/tenant/invite`, { method: 'POST' }); toast('Tenant code generated'); reload();
   });
@@ -754,6 +763,7 @@ async function viewActe(el) {
       <div><label>Belongs to</label><select name="link">${linkOpts.map(([v, l]) => `<option value="${v}">${esc(l)}</option>`).join('')}</select></div>
       <div><label>Expiry date</label><input name="expiry_date" type="date"></div>
       <div><label>Notes</label><input name="notes" placeholder="optional"></div>
+      <div><label>Scan (PDF or photo)</label><input name="file" type="file" accept=".pdf,image/*"></div>
       <button class="btn">Add document</button></form></div>` : ''}
     <div class="card" style="margin-top:16px">
       ${docs.length ? `<table><thead><tr><th>Document</th><th>Belongs to</th><th>Expires</th><th>Scan</th><th></th></tr></thead><tbody>
@@ -775,11 +785,21 @@ async function viewActe(el) {
     </div>`;
   $('#docform')?.addEventListener('submit', async (e) => {
     e.preventDefault();
-    const raw = Object.fromEntries(new FormData(e.target));
+    const form = e.target;
+    const raw = Object.fromEntries(new FormData(form));
     const body = { name: raw.name, number: raw.number, expiry_date: raw.expiry_date, notes: raw.notes };
     if (raw.link) { const [kind, id] = raw.link.split(':'); body[kind + '_id'] = Number(id); }
-    try { await api('/documents', { method: 'POST', body }); toast('Document added'); viewActe(el); }
-    catch (err) { toast(err.message); }
+    const fileInput = form.querySelector('input[name="file"]');
+    const file = fileInput?.files?.[0];
+    try {
+      const doc = await api('/documents', { method: 'POST', body });
+      if (file) {
+        const fd = new FormData(); fd.append('file', file);
+        try { await api(`/documents/${doc.id}/attachment`, { method: 'POST', body: fd }); }
+        catch (err) { toast('Document saved, but the scan failed: ' + err.message); viewActe(el); return; }
+      }
+      toast('Document added'); viewActe(el);
+    } catch (err) { toast(err.message); }
   });
   el.querySelectorAll('[data-del]').forEach((b) => (b.onclick = async () => {
     if (!confirm('Delete this document (and its scan)?')) return;
@@ -974,9 +994,13 @@ async function viewFamily(el) {
   el.innerHTML = `<div class="pagehead"><div><h1>Family</h1><p>Everyone shares the same data. Admins manage members, adults can edit, children can only view.</p></div></div>
     ${isAdmin ? `<div class="card"><h3>Invite someone</h3>
       <p>Share this code — they choose <b>Register</b> on the sign-in screen:</p>
-      <p class="row"><span class="amount" style="font-size:22px;letter-spacing:.12em">${esc(FAMILY.invite_code)}</span>
+      <p class="row"><span class="amount" id="invcode" style="font-size:22px;letter-spacing:.12em">${esc(FAMILY.invite_code)}</span>
+      <button class="btn ghost small" data-copy="${esc(FAMILY.invite_code)}">Copy</button>
       <button class="btn ghost small" id="rotate">Generate new code</button></p>
-      <p class="muted">New members join as adults. Change their role below after they join.</p></div>` : ''}
+      <p class="muted">New members join as adults. Change their role below after they join.</p>
+      <form id="inviteform" class="row" style="margin-top:12px;align-items:flex-end">
+        <div style="flex:1;min-width:180px"><label>Or email an invite</label><input name="email" type="email" placeholder="person@email.com" required></div>
+        <button class="btn small">Send invite</button></form></div>` : ''}
     ${isAdmin ? `<div class="card" style="margin-top:16px"><h3>Add a child (no account)</h3>
       <p class="muted">For kids without an email — they show up in the family and can have acte and expenses linked to them, but can't sign in.</p>
       <form id="childform" class="formgrid"><div><label>Name</label><input name="name" required></div>
@@ -995,6 +1019,13 @@ async function viewFamily(el) {
   $('#rotate')?.addEventListener('click', async () => {
     const r = await api('/family/invite/rotate', { method: 'POST' });
     FAMILY.invite_code = r.invite_code; viewFamily(el);
+  });
+  el.querySelectorAll('[data-copy]').forEach((b) => (b.onclick = () => copyText(b.dataset.copy)));
+  $('#inviteform')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const email = new FormData(e.target).get('email');
+    try { await api('/family/invite/email', { method: 'POST', body: { email } }); toast('Invite sent to ' + email); e.target.reset(); }
+    catch (err) { toast(err.message); }
   });
   $('#childform')?.addEventListener('submit', async (e) => {
     e.preventDefault();
