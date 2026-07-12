@@ -102,18 +102,26 @@ app.post('/api/auth/register', (req, res) => {
   }
   const hash = bcrypt.hashSync(String(password), 10);
   let familyId, role, tenantPropertyId = null;
-  if (tenantCode) {
-    const prop = db.prepare('SELECT * FROM properties WHERE tenant_invite_code = ?').get(String(tenantCode).trim().toUpperCase());
-    if (!prop) return res.status(400).json({ error: 'Tenant code not recognized' });
-    familyId = prop.family_id;
-    role = 'tenant';
-    tenantPropertyId = prop.id;
-  } else if (code) {
-    const fam = db.prepare('SELECT id FROM families WHERE invite_code = ?').get(String(code).trim().toUpperCase());
-    if (!fam) return res.status(400).json({ error: 'Invite code not recognized' });
-    familyId = fam.id;
-    role = 'adult'; // admin can demote to child afterwards
+  // one register code: a family invite joins as adult, a landlord's tenant code joins as tenant
+  const anyCode = str(req.body.code) || str(code) || str(tenantCode);
+  if (anyCode) {
+    const norm = anyCode.toUpperCase();
+    const fam = db.prepare('SELECT id FROM families WHERE invite_code = ?').get(norm);
+    if (fam) {
+      familyId = fam.id;
+      role = 'adult'; // admin can demote to child afterwards
+    } else {
+      const prop = db.prepare('SELECT * FROM properties WHERE tenant_invite_code = ?').get(norm);
+      if (!prop) return res.status(400).json({ error: 'Code not recognized — ask your family admin or landlord for a fresh one' });
+      familyId = prop.family_id;
+      role = 'tenant';
+      tenantPropertyId = prop.id;
+    }
   } else {
+    // creating a family is only possible on a fresh, empty installation
+    if (db.prepare('SELECT COUNT(*) AS c FROM families').get().c > 0) {
+      return res.status(400).json({ error: 'Registration needs an invite code' });
+    }
     if (!familyName) return res.status(400).json({ error: 'Family name is required to create a family' });
     const info = db.prepare('INSERT INTO families (name, invite_code) VALUES (?, ?)').run(String(familyName).trim(), inviteCode());
     familyId = info.lastInsertRowid;
@@ -134,6 +142,45 @@ app.post('/api/auth/login', (req, res) => {
   }
   setAuthCookie(res, signToken(user));
   res.json({ user: { id: user.id, family_id: user.family_id, name: user.name, email: user.email, role: user.role } });
+});
+
+// the sign-in screen only offers "New family" while the installation is empty
+app.get('/api/auth/bootstrap', (req, res) => {
+  res.json({ setup: db.prepare('SELECT COUNT(*) AS c FROM families').get().c === 0 });
+});
+
+// ---------- password reset ----------
+app.post('/api/auth/forgot', async (req, res) => {
+  const email = String(req.body?.email || '').trim().toLowerCase();
+  const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
+  if (user && user.password_hash) {
+    if (!process.env.MAIL_FROM) return res.status(500).json({ error: 'Email is not configured on this server — ask the admin to reset your password' });
+    const token = crypto.randomBytes(32).toString('hex');
+    db.prepare("INSERT INTO password_resets (user_id, token_hash, expires_at) VALUES (?,?,datetime('now','+1 hour'))")
+      .run(user.id, crypto.createHash('sha256').update(token).digest('hex'));
+    const base = `${req.protocol}://${req.get('host')}`;
+    try {
+      await sendMail([user.email], 'Family Hub — password reset',
+        `Hello ${user.name},\n\nSomeone (hopefully you) asked to reset your Family Hub password.\nOpen this link to choose a new one — it works for 1 hour:\n\n${base}/#reset=${token}\n\nIf this wasn't you, just ignore this email and nothing changes.\n`);
+    } catch (err) {
+      console.error('password reset email:', err.message);
+      return res.status(500).json({ error: 'Could not send the email — try again in a few minutes' });
+    }
+  }
+  // same answer whether the email exists or not
+  res.json({ ok: true });
+});
+app.post('/api/auth/reset', (req, res) => {
+  const { token, password } = req.body || {};
+  if (String(password || '').length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
+  const hash = crypto.createHash('sha256').update(String(token || '')).digest('hex');
+  const row = db.prepare("SELECT * FROM password_resets WHERE token_hash = ? AND used = 0 AND expires_at > datetime('now')").get(hash);
+  if (!row) return res.status(400).json({ error: 'This reset link is invalid or expired — request a new one' });
+  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(bcrypt.hashSync(String(password), 10), row.user_id);
+  db.prepare('UPDATE password_resets SET used = 1 WHERE id = ?').run(row.id);
+  const user = db.prepare('SELECT id, family_id, name, email, role FROM users WHERE id = ?').get(row.user_id);
+  setAuthCookie(res, signToken(user));
+  res.json({ user });
 });
 
 app.post('/api/auth/logout', (req, res) => {

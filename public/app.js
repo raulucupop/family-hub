@@ -63,6 +63,7 @@ async function boot() {
   } catch { renderAuth(); }
 }
 function render() {
+  if (location.hash.startsWith('#reset=')) return renderReset();
   if (!ME) return renderAuth();
   if (ME.role === 'tenant') return renderTenantPortal();
   const page = (location.hash || '#dashboard').slice(1);
@@ -92,34 +93,67 @@ function shell(active) {
 }
 
 /* ---------- auth ---------- */
-function renderAuth(mode = 'login') {
+let AUTH_INFO = null;
+async function renderAuth(mode = 'login') {
+  if (location.hash.startsWith('#reset=')) return renderReset();
+  if (!AUTH_INFO) { try { AUTH_INFO = await api('/auth/bootstrap'); } catch { AUTH_INFO = { setup: false }; } }
+  const tabs = [['login', 'Sign in'], ['register', 'Register'], ...(AUTH_INFO.setup ? [['create', 'New family']] : [])];
+  const btnLabel = { login: 'Sign in', register: 'Register', create: 'Create family', forgot: 'Send reset link' }[mode];
   app.innerHTML = `<div class="authwrap"><div class="card authcard">
     <div class="brandmark">Family<span>Hub</span></div>
     <p class="muted">One place for the household: budget, bills, cars and property deadlines — RCA, rovinietă, ITP, PAD included.</p>
-    <div class="tabs">
-      <button data-m="login" class="${mode === 'login' ? 'active' : ''}">Sign in</button>
-      <button data-m="create" class="${mode === 'create' ? 'active' : ''}">New family</button>
-      <button data-m="join" class="${mode === 'join' ? 'active' : ''}">Join family</button>
-      <button data-m="tenant" class="${mode === 'tenant' ? 'active' : ''}">Tenant</button>
-    </div>
+    ${mode === 'forgot' ? '' : `<div class="tabs">${tabs.map(([m, l]) => `<button data-m="${m}" class="${mode === m ? 'active' : ''}">${l}</button>`).join('')}</div>`}
     <form id="authform">
-      ${mode !== 'login' ? `<div class="field"><label>Your name</label><input name="name" required></div>` : ''}
+      ${mode === 'forgot' ? `<p class="muted">Tell us your account email and we'll send a link to choose a new password.</p>` : ''}
+      ${mode === 'register' || mode === 'create' ? `<div class="field"><label>Your name</label><input name="name" required></div>` : ''}
       ${mode === 'create' ? `<div class="field"><label>Family name</label><input name="familyName" placeholder="Familia Popescu" required></div>` : ''}
-      ${mode === 'join' ? `<div class="field"><label>Invite code</label><input name="inviteCode" placeholder="8-character code from your admin" required></div>` : ''}
-      ${mode === 'tenant' ? `<div class="field"><label>Tenant code</label><input name="tenantCode" placeholder="code from your landlord" required></div>` : ''}
+      ${mode === 'register' ? `<div class="field"><label>Invite code</label><input name="code" placeholder="from your family admin or landlord" required></div>` : ''}
       <div class="field"><label>Email</label><input name="email" type="email" required></div>
-      <div class="field"><label>Password ${mode !== 'login' ? '(min. 8 characters)' : ''}</label><input name="password" type="password" required minlength="${mode === 'login' ? 1 : 8}"></div>
-      <button class="btn" style="width:100%">${mode === 'login' ? 'Sign in' : mode === 'create' ? 'Create family' : mode === 'tenant' ? 'Register as tenant' : 'Join family'}</button>
+      ${mode === 'forgot' ? '' : `<div class="field"><label>Password ${mode !== 'login' ? '(min. 8 characters)' : ''}</label><input name="password" type="password" required minlength="${mode === 'login' ? 1 : 8}"></div>`}
+      <button class="btn" style="width:100%">${btnLabel}</button>
+      ${mode === 'login' ? `<p class="muted" style="text-align:center;margin:12px 0 0"><a href="" data-forgot>Forgot password?</a></p>` : ''}
+      ${mode === 'forgot' ? `<p class="muted" style="text-align:center;margin:12px 0 0"><a href="" data-back>Back to sign in</a></p>` : ''}
     </form>
   </div></div>`;
   app.querySelectorAll('.tabs button').forEach((b) => (b.onclick = () => renderAuth(b.dataset.m)));
+  app.querySelector('[data-forgot]')?.addEventListener('click', (e) => { e.preventDefault(); renderAuth('forgot'); });
+  app.querySelector('[data-back]')?.addEventListener('click', (e) => { e.preventDefault(); renderAuth('login'); });
   $('#authform').onsubmit = async (e) => {
     e.preventDefault();
     const body = Object.fromEntries(new FormData(e.target));
     try {
+      if (mode === 'forgot') {
+        await api('/auth/forgot', { method: 'POST', body });
+        toast('If that email has an account, the reset link is on its way');
+        renderAuth('login');
+        return;
+      }
       const r = await api(mode === 'login' ? '/auth/login' : '/auth/register', { method: 'POST', body });
       ME = r.user;
       const me = await api('/me'); FAMILY = me.family;
+      location.hash = '#dashboard'; render();
+    } catch (err) { toast(err.message); }
+  };
+}
+function renderReset() {
+  const token = location.hash.slice('#reset='.length);
+  app.innerHTML = `<div class="authwrap"><div class="card authcard">
+    <div class="brandmark">Family<span>Hub</span></div>
+    <h2 style="margin-top:14px">Choose a new password</h2>
+    <form id="resetform">
+      <div class="field"><label>New password (min. 8 characters)</label><input name="password" type="password" required minlength="8"></div>
+      <button class="btn" style="width:100%">Save new password</button>
+    </form>
+    <p class="muted" style="text-align:center;margin:12px 0 0"><a href="" data-back>Back to sign in</a></p>
+  </div></div>`;
+  app.querySelector('[data-back]').addEventListener('click', (e) => { e.preventDefault(); location.hash = ''; renderAuth('login'); });
+  $('#resetform').onsubmit = async (e) => {
+    e.preventDefault();
+    try {
+      const r = await api('/auth/reset', { method: 'POST', body: { token, password: new FormData(e.target).get('password') } });
+      ME = r.user;
+      const me = await api('/me'); FAMILY = me.family;
+      toast('Password changed — you are signed in');
       location.hash = '#dashboard'; render();
     } catch (err) { toast(err.message); }
   };
@@ -545,7 +579,7 @@ async function renderTenantBox(box, p) {
     ${canWrite() ? `<p class="row" style="flex-wrap:wrap">
       ${tinfo.invite_code ? `<span>Tenant code: <b class="amount" style="font-size:18px;letter-spacing:.12em">${esc(tinfo.invite_code)}</b></span>` : `<span class="muted">No tenant code yet.</span>`}
       <button class="btn ghost small" data-tcode>${tinfo.invite_code ? 'Generate new code' : 'Generate code'}</button>
-      <span class="muted">Your tenant registers with it on the sign-in screen → <b>Tenant</b> tab. They only see the charges below — nothing else.</span></p>` : ''}
+      <span class="muted">Your tenant registers with it on the sign-in screen → <b>Register</b> tab. They only see the charges below — nothing else.</span></p>` : ''}
     ${tinfo.tenants.length ? `<p>Tenant${tinfo.tenants.length > 1 ? 's' : ''}: ${tinfo.tenants.map((x) => `<b>${esc(x.name)}</b> <span class="muted">(${esc(x.email)})</span>${canWrite() ? ` <button class="btn danger small" data-tdel="${x.id}">Remove</button>` : ''}`).join(' · ')}</p>`
       : `<p class="muted">No tenant has joined yet.</p>`}
     ${canWrite() ? `<form data-chform class="formgrid">
@@ -939,7 +973,7 @@ async function viewFamily(el) {
   const isAdmin = ME.role === 'admin';
   el.innerHTML = `<div class="pagehead"><div><h1>Family</h1><p>Everyone shares the same data. Admins manage members, adults can edit, children can only view.</p></div></div>
     ${isAdmin ? `<div class="card"><h3>Invite someone</h3>
-      <p>Share this code — they choose <b>Join family</b> on the sign-in screen:</p>
+      <p>Share this code — they choose <b>Register</b> on the sign-in screen:</p>
       <p class="row"><span class="amount" style="font-size:22px;letter-spacing:.12em">${esc(FAMILY.invite_code)}</span>
       <button class="btn ghost small" id="rotate">Generate new code</button></p>
       <p class="muted">New members join as adults. Change their role below after they join.</p></div>` : ''}
