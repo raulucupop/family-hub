@@ -463,15 +463,27 @@ async function moneyCredits(body) {
     };
   }
   const list = $('#credlist');
-  for (const c of credits) list.appendChild(creditCard(c, () => moneyCredits(body)));
+  for (const c of credits) list.appendChild(creditCard(c, members, properties, () => moneyCredits(body)));
 }
-function creditCard(c, refresh) {
+function creditFormFields(members, properties, c = {}) {
+  return `
+    <div><label>Name</label><input name="name" placeholder="Credit ipotecar" value="${esc(c.name || '')}" required></div>
+    <div><label>Lender</label><input name="lender" placeholder="BT, BCR, ING…" value="${esc(c.lender || '')}"></div>
+    <div><label>Principal (${cur()})</label><input name="principal" type="number" step="0.01" min="0.01" value="${c.principal ?? ''}" required></div>
+    <div><label>Dobândă (% / year)</label><input name="interest_rate" type="number" step="0.01" min="0" value="${c.interest_rate ?? ''}" required></div>
+    <div><label>Term (months)</label><input name="term_months" type="number" step="1" min="1" value="${c.term_months ?? ''}" required></div>
+    <div><label>Commission (${cur()}/mo, fixed)</label><input name="commission" type="number" step="0.01" min="0" value="${c.commission ?? 0}"></div>
+    <div><label>Start date</label><input name="start_date" type="date" value="${c.start_date || today()}" required></div>
+    <div><label>Holder</label><select name="user_id"><option value="">Whole family</option>${members.map((m) => `<option value="${m.id}" ${String(c.user_id) === String(m.id) ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}</select></div>
+    <div><label>Linked property</label><select name="property_id"><option value="">None</option>${properties.map((p) => `<option value="${p.id}" ${String(c.property_id) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></div>`;
+}
+function creditCard(c, members, properties, refresh) {
   const wrap = document.createElement('details');
   wrap.className = 'entity';
   const saved = c.interest_saved > 0.005;
   wrap.innerHTML = `<summary><span><b>${esc(c.name)}</b> <span class="muted">${[c.lender, c.user_name || 'Whole family', c.property_name, `${money(c.monthly_total)}/mo`].filter(Boolean).map(esc).join(' · ')}</span>
       ${saved ? `<span class="badge paid">saved ${money(c.interest_saved)}</span>` : ''}</span>
-    ${canWrite() ? `<span class="row"><button class="btn danger small" data-del>Delete</button></span>` : ''}</summary>
+    ${canWrite() ? `<span class="row"><button class="btn ghost small" data-edit>Edit</button><button class="btn danger small" data-del>Delete</button></span>` : ''}</summary>
     <div class="body">
       <div class="deadgrid">
         <div class="dead"><span class="muted">Holder</span><div class="d">${esc(c.user_name || 'Whole family')}</div></div>
@@ -483,6 +495,7 @@ function creditCard(c, refresh) {
         <div class="dead"><span class="muted">Money saved (interest)</span><div class="d" style="color:#2f6b5a">${money(c.interest_saved)}</div></div>
         <div class="dead"><span class="muted">Total interest projected</span><div class="d">${money(c.total_interest)} <span class="muted">vs ${money(c.base_total_interest)} without</span></div></div>
       </div>
+      <div data-editbox hidden style="margin-top:12px"></div>
       <h3 style="margin-top:16px">Anticipated payments</h3>
       <p class="muted">Extra payments on top of the monthly one. The payment stays the same, the credit ends earlier — the interest you skip is your money saved.</p>
       ${canWrite() ? `<form data-payform class="formgrid">
@@ -513,6 +526,18 @@ function creditCard(c, refresh) {
     e.preventDefault();
     if (!confirm(`Delete ${c.name} and its payment history?`)) return;
     await api('/credits/' + c.id, { method: 'DELETE' }); refresh();
+  });
+  wrap.querySelector('[data-edit]')?.addEventListener('click', (e) => {
+    e.preventDefault(); wrap.open = true;
+    const box = wrap.querySelector('[data-editbox]');
+    if (!box.hidden) { box.hidden = true; return; }
+    box.hidden = false;
+    box.innerHTML = `<form class="formgrid">${creditFormFields(members, properties, c)}<button class="btn small">Save changes</button></form>`;
+    box.querySelector('form').onsubmit = async (ev) => {
+      ev.preventDefault();
+      try { await api('/credits/' + c.id, { method: 'PUT', body: Object.fromEntries(new FormData(ev.target)) }); toast('Credit updated'); refresh(); }
+      catch (err) { toast(err.message); }
+    };
   });
   return wrap;
 }
