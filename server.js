@@ -509,7 +509,7 @@ app.delete('/api/credits/:id/payments/:pid', auth, canWrite, (req, res) => {
 });
 
 // ---------- bills ----------
-const BILL_CAT_MAP = { electricity: 'Utilities', gas: 'Utilities', water: 'Utilities', internet: 'Utilities', mobile: 'Utilities', property_tax: 'Taxes', other: 'Other' };
+const BILL_CAT_MAP = { electricity: 'Utilities', gas: 'Utilities', water: 'Utilities', internet: 'Utilities', mobile: 'Utilities', subscription: 'Subscriptions', property_tax: 'Taxes', other: 'Other' };
 const BILL_SELECT = `
   SELECT b.*, u.name AS owner_name, p.name AS property_name
   FROM bills b
@@ -585,9 +585,8 @@ app.post('/api/bills/:id/pay', auth, canWrite, (req, res) => {
   const tx = db.transaction(() => {
     db.prepare('INSERT INTO bill_payments (bill_id, family_id, amount, paid_at, paid_by) VALUES (?,?,?,?,?)')
       .run(bill.id, bill.family_id, amount, today, req.user.id);
-    const catMap = { electricity: 'Utilities', gas: 'Utilities', water: 'Utilities', internet: 'Utilities', mobile: 'Utilities', property_tax: 'Taxes', other: 'Other' };
     db.prepare('INSERT INTO expenses (family_id, user_id, category, amount, note, date) VALUES (?,?,?,?,?,?)')
-      .run(bill.family_id, req.user.id, catMap[bill.category] || 'Utilities', amount, `Bill: ${bill.name}`, today);
+      .run(bill.family_id, req.user.id, BILL_CAT_MAP[bill.category] || 'Utilities', amount, `Bill: ${bill.name}`, today);
     if (bill.recur_months > 0) {
       db.prepare('UPDATE bills SET due_date = ?, status = ?, amount = ? WHERE id = ?')
         .run(addMonths(bill.due_date, bill.recur_months), 'unpaid', bill.amount, bill.id);
@@ -1162,7 +1161,7 @@ app.post('/api/import/transactions', auth, canWrite, (req, res) => {
   tx();
   res.json({ imported, skipped, errors });
 });
-const CATEGORY_SET = new Set(['Groceries', 'Utilities', 'Transportation', 'Entertainment', 'Healthcare', 'Education', 'Taxes', 'Credit', 'Other']);
+const CATEGORY_SET = new Set(['Groceries', 'Utilities', 'Transportation', 'Entertainment', 'Healthcare', 'Education', 'Taxes', 'Credit', 'Subscriptions', 'Other']);
 
 // ---------- dashboard stats ----------
 app.get('/api/stats', auth, (req, res) => {
