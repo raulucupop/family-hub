@@ -238,7 +238,7 @@ app.post('/api/family/invite/email', auth, adminOnly, async (req, res) => {
   const base = `${req.protocol}://${req.get('host')}`;
   try {
     await sendMail([email], `${req.user.name} invited you to ${family.name} on Family Hub`,
-      `Hello,\n\n${req.user.name} invited you to join "${family.name}" on Family Hub — a shared place for the household's budget, bills, cars and property deadlines.\n\nTo join:\n1. Open ${base}\n2. Choose "Register"\n3. Enter this invite code: ${family.invite_code}\n\nSee you there!\n`);
+      `Hello,\n\n${req.user.name} invited you to join "${family.name}" on Family Hub — a shared place for the household's budget, bills, cars and property deadlines.\n\nJust open this link and pick a password:\n${base}/#register=${family.invite_code}\n\nOr go to ${base}, choose "Register" and enter the code manually: ${family.invite_code}\n\nSee you there!\n`);
     res.json({ ok: true });
   } catch (err) {
     console.error('invite email:', err.message);

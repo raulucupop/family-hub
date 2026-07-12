@@ -18,6 +18,8 @@ function toast(msg) {
   t.textContent = msg; t.hidden = false;
   clearTimeout(t._h); t._h = setTimeout(() => (t.hidden = true), 2600);
 }
+const registerLink = (code) => `${location.origin}/#register=${encodeURIComponent(code)}`;
+const inviteLink = () => registerLink(FAMILY.invite_code);
 async function copyText(text) {
   try {
     if (navigator.clipboard) await navigator.clipboard.writeText(text);
@@ -100,9 +102,15 @@ function shell(active) {
 }
 
 /* ---------- auth ---------- */
-let AUTH_INFO = null;
+let AUTH_INFO = null, REG_PREFILL = '';
 async function renderAuth(mode = 'login') {
   if (location.hash.startsWith('#reset=')) return renderReset();
+  // shareable invite link: /#register=CODE opens Register with the code filled in
+  if (location.hash.startsWith('#register=')) {
+    REG_PREFILL = decodeURIComponent(location.hash.slice('#register='.length));
+    history.replaceState(null, '', location.pathname + location.search);
+    mode = 'register';
+  }
   if (!AUTH_INFO) { try { AUTH_INFO = await api('/auth/bootstrap'); } catch { AUTH_INFO = { setup: false }; } }
   const tabs = [['login', 'Sign in'], ['register', 'Register'], ...(AUTH_INFO.setup ? [['create', 'New family']] : [])];
   const btnLabel = { login: 'Sign in', register: 'Register', create: 'Create family', forgot: 'Send reset link' }[mode];
@@ -114,7 +122,7 @@ async function renderAuth(mode = 'login') {
       ${mode === 'forgot' ? `<p class="muted">Tell us your account email and we'll send a link to choose a new password.</p>` : ''}
       ${mode === 'register' || mode === 'create' ? `<div class="field"><label>Your name</label><input name="name" required></div>` : ''}
       ${mode === 'create' ? `<div class="field"><label>Family name</label><input name="familyName" placeholder="Familia Popescu" required></div>` : ''}
-      ${mode === 'register' ? `<div class="field"><label>Invite code</label><input name="code" placeholder="from your family admin or landlord" required></div>` : ''}
+      ${mode === 'register' ? `<div class="field"><label>Invite code</label><input name="code" value="${esc(REG_PREFILL)}" placeholder="from your family admin or landlord" required></div>` : ''}
       <div class="field"><label>Email</label><input name="email" type="email" required></div>
       ${mode === 'forgot' ? '' : `<div class="field"><label>Password ${mode !== 'login' ? '(min. 8 characters)' : ''}</label><input name="password" type="password" required minlength="${mode === 'login' ? 1 : 8}"></div>`}
       <button class="btn" style="width:100%">${btnLabel}</button>
@@ -585,7 +593,8 @@ async function renderTenantBox(box, p) {
     <p class="muted">${p.rent_amount ? `Rent: <b>${money(p.rent_amount)}</b> / month, due day ${p.rent_due_day || 1} — this month's rent charge is generated automatically once a tenant has joined.` : 'No rent set — use <b>Edit</b> to set the monthly rent and due day.'}</p>
     ${canWrite() ? `<p class="row" style="flex-wrap:wrap">
       ${tinfo.invite_code ? `<span>Tenant code: <b class="amount" style="font-size:18px;letter-spacing:.12em">${esc(tinfo.invite_code)}</b></span>
-      <button class="btn ghost small" data-copy="${esc(tinfo.invite_code)}">Copy</button>` : `<span class="muted">No tenant code yet.</span>`}
+      <button class="btn ghost small" data-copy="${esc(tinfo.invite_code)}">Copy code</button>
+      <button class="btn ghost small" data-copy="${esc(registerLink(tinfo.invite_code))}">Copy link</button>` : `<span class="muted">No tenant code yet.</span>`}
       <button class="btn ghost small" data-tcode>${tinfo.invite_code ? 'Generate new code' : 'Generate code'}</button>
       <span class="muted">Your tenant registers with it on the sign-in screen → <b>Register</b> tab. They only see the charges below — nothing else.</span></p>` : ''}
     ${tinfo.tenants.length ? `<p>Tenant${tinfo.tenants.length > 1 ? 's' : ''}: ${tinfo.tenants.map((x) => `<b>${esc(x.name)}</b> <span class="muted">(${esc(x.email)})</span>${canWrite() ? ` <button class="btn danger small" data-tdel="${x.id}">Remove</button>` : ''}`).join(' · ')}</p>`
@@ -995,8 +1004,11 @@ async function viewFamily(el) {
     ${isAdmin ? `<div class="card"><h3>Invite someone</h3>
       <p>Share this code — they choose <b>Register</b> on the sign-in screen:</p>
       <p class="row"><span class="amount" id="invcode" style="font-size:22px;letter-spacing:.12em">${esc(FAMILY.invite_code)}</span>
-      <button class="btn ghost small" data-copy="${esc(FAMILY.invite_code)}">Copy</button>
+      <button class="btn ghost small" data-copy="${esc(FAMILY.invite_code)}">Copy code</button>
       <button class="btn ghost small" id="rotate">Generate new code</button></p>
+      <p style="margin:6px 0"><label>Or send this link — it opens Register with the code filled in:</label>
+      <span class="row"><input readonly value="${esc(inviteLink())}" onclick="this.select()" style="flex:1;min-width:200px;font-size:13px">
+      <button class="btn ghost small" data-copy="${esc(inviteLink())}">Copy link</button></span></p>
       <p class="muted">New members join as adults. Change their role below after they join.</p>
       <form id="inviteform" class="row" style="margin-top:12px;align-items:flex-end">
         <div style="flex:1;min-width:180px"><label>Or email an invite</label><input name="email" type="email" placeholder="person@email.com" required></div>
