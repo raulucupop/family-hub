@@ -66,6 +66,7 @@ CREATE TABLE IF NOT EXISTS documents (
   user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
   vehicle_id INTEGER REFERENCES vehicles(id) ON DELETE CASCADE,
   property_id INTEGER REFERENCES properties(id) ON DELETE CASCADE,
+  slot TEXT,                         -- links the doc to an entity deadline (e.g. 'insurance_expiry','rca_expiry') so it isn't a duplicate reminder
   expiry_date TEXT,                  -- optional; feeds reminders & alerts
   attachment TEXT,                   -- stored filename of uploaded scan
   notes TEXT
@@ -186,7 +187,8 @@ CREATE TABLE IF NOT EXISTS properties (
   family_id INTEGER NOT NULL REFERENCES families(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
   address TEXT,
-  insurance_expiry TEXT,  -- PAD / facultative property insurance
+  insurance_expiry TEXT,  -- PAD (mandatory home insurance)
+  insurance2_expiry TEXT, -- additional / facultative home insurance
   property_tax_due TEXT,  -- local property tax deadline
   mortgage_lender TEXT,
   mortgage_payment REAL,
@@ -223,8 +225,22 @@ CREATE TABLE IF NOT EXISTS property_records (
   type TEXT NOT NULL CHECK (type IN ('maintenance','renovation','utility','rent','other_income','other')),
   date TEXT NOT NULL,
   amount REAL,
+  note TEXT,
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,  -- who the spend is attributed to
+  expense_id INTEGER REFERENCES expenses(id) ON DELETE SET NULL -- linked budget expense (cost records)
+);
+
+-- family savings / economy account: members deposit or withdraw funds
+CREATE TABLE IF NOT EXISTS savings (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  family_id INTEGER NOT NULL REFERENCES families(id) ON DELETE CASCADE,
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('deposit','withdrawal')),
+  amount REAL NOT NULL,
+  date TEXT NOT NULL,
   note TEXT
 );
+CREATE INDEX IF NOT EXISTS idx_savings_family ON savings(family_id);
 
 -- bank import: remembers what was already imported so re-uploading a statement is safe
 CREATE TABLE IF NOT EXISTS imported_tx (
@@ -291,6 +307,16 @@ if (!userCols.includes('theme')) db.exec("ALTER TABLE users ADD COLUMN theme TEX
 
 const notifCols = db.prepare('PRAGMA table_info(notifications)').all().map((c) => c.name);
 if (!notifCols.includes('owner_id')) db.exec('ALTER TABLE notifications ADD COLUMN owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL');
+
+const propCols2 = db.prepare('PRAGMA table_info(properties)').all().map((c) => c.name);
+if (!propCols2.includes('insurance2_expiry')) db.exec('ALTER TABLE properties ADD COLUMN insurance2_expiry TEXT');
+
+const docCols = db.prepare('PRAGMA table_info(documents)').all().map((c) => c.name);
+if (!docCols.includes('slot')) db.exec('ALTER TABLE documents ADD COLUMN slot TEXT');
+
+const prCols2 = db.prepare('PRAGMA table_info(property_records)').all().map((c) => c.name);
+if (!prCols2.includes('user_id')) db.exec('ALTER TABLE property_records ADD COLUMN user_id INTEGER REFERENCES users(id) ON DELETE SET NULL');
+if (!prCols2.includes('expense_id')) db.exec('ALTER TABLE property_records ADD COLUMN expense_id INTEGER REFERENCES expenses(id) ON DELETE SET NULL');
 
 const propCols = db.prepare('PRAGMA table_info(properties)').all().map((c) => c.name);
 if (!propCols.includes('owner_id')) db.exec('ALTER TABLE properties ADD COLUMN owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL');

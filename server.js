@@ -320,7 +320,7 @@ crud({
 });
 crud({
   route: 'properties', table: 'properties',
-  fields: ['name', 'address', 'insurance_expiry', 'property_tax_due', 'mortgage_lender', 'mortgage_payment', 'mortgage_due_day', 'owner_id', 'rent_amount', 'rent_due_day', 'notes'],
+  fields: ['name', 'address', 'insurance_expiry', 'insurance2_expiry', 'property_tax_due', 'mortgage_lender', 'mortgage_payment', 'mortgage_due_day', 'owner_id', 'rent_amount', 'rent_due_day', 'notes'],
   orderBy: 'name',
   validate: (b, req) => {
     if (!b.name) return 'Property name is required';
@@ -696,6 +696,16 @@ const DOC_SELECT = `
   LEFT JOIN vehicles v ON v.id = d.vehicle_id
   LEFT JOIN properties p ON p.id = d.property_id
 `;
+// which deadline slots exist per entity kind (a slotted document replaces that field's reminder)
+const PROPERTY_SLOTS = ['insurance_expiry', 'insurance2_expiry', 'property_tax_due'];
+const VEHICLE_SLOTS = ['rca_expiry', 'casco_expiry', 'vignette_expiry', 'itp_expiry', 'road_tax_due'];
+function cleanSlot(b) {
+  const s = str(b.slot);
+  if (!s) return null;
+  if (num(b.property_id) != null && PROPERTY_SLOTS.includes(s)) return s;
+  if (num(b.vehicle_id) != null && VEHICLE_SLOTS.includes(s)) return s;
+  return null; // slot only valid when it matches the linked entity kind
+}
 app.get('/api/documents', auth, (req, res) => {
   res.json(db.prepare(`${DOC_SELECT} WHERE d.family_id = ? ORDER BY d.expiry_date IS NULL, d.expiry_date, d.name`).all(req.user.family_id));
 });
@@ -703,8 +713,8 @@ app.post('/api/documents', auth, canWrite, (req, res) => {
   const b = req.body || {};
   const err = validateDocument(b, req.user.family_id);
   if (err) return res.status(400).json({ error: err });
-  const info = db.prepare('INSERT INTO documents (family_id, name, number, user_id, vehicle_id, property_id, expiry_date, notes) VALUES (?,?,?,?,?,?,?,?)')
-    .run(req.user.family_id, str(b.name), str(b.number), num(b.user_id), num(b.vehicle_id), num(b.property_id), b.expiry_date || null, str(b.notes));
+  const info = db.prepare('INSERT INTO documents (family_id, name, number, user_id, vehicle_id, property_id, slot, expiry_date, notes) VALUES (?,?,?,?,?,?,?,?,?)')
+    .run(req.user.family_id, str(b.name), str(b.number), num(b.user_id), num(b.vehicle_id), num(b.property_id), cleanSlot(b), b.expiry_date || null, str(b.notes));
   res.json(db.prepare(`${DOC_SELECT} WHERE d.id = ?`).get(info.lastInsertRowid));
 });
 app.put('/api/documents/:id', auth, canWrite, (req, res) => {
@@ -713,8 +723,8 @@ app.put('/api/documents/:id', auth, canWrite, (req, res) => {
   const b = { ...row, ...req.body };
   const err = validateDocument(b, req.user.family_id);
   if (err) return res.status(400).json({ error: err });
-  db.prepare('UPDATE documents SET name=?, number=?, user_id=?, vehicle_id=?, property_id=?, expiry_date=?, notes=? WHERE id=?')
-    .run(str(b.name), str(b.number), num(b.user_id), num(b.vehicle_id), num(b.property_id), b.expiry_date || null, str(b.notes), row.id);
+  db.prepare('UPDATE documents SET name=?, number=?, user_id=?, vehicle_id=?, property_id=?, slot=?, expiry_date=?, notes=? WHERE id=?')
+    .run(str(b.name), str(b.number), num(b.user_id), num(b.vehicle_id), num(b.property_id), cleanSlot(b), b.expiry_date || null, str(b.notes), row.id);
   res.json(db.prepare(`${DOC_SELECT} WHERE d.id = ?`).get(row.id));
 });
 app.delete('/api/documents/:id', auth, canWrite, (req, res) => {
@@ -764,7 +774,53 @@ function subRecords(route, table, parentTable, parentKey, types) {
   });
 }
 subRecords('vehicles', 'vehicle_records', 'vehicles', 'vehicle_id', ['service', 'tires', 'fuel', 'other']);
-subRecords('properties', 'property_records', 'properties', 'property_id', ['maintenance', 'renovation', 'utility', 'rent', 'other_income', 'other']);
+
+// property records: cost entries also become a family expense (attributed to a member) or a tenant invoice;
+// income entries (rent / other income) are property-summary records only.
+const PROP_REC_TYPES = ['maintenance', 'renovation', 'utility', 'rent', 'other_income', 'other'];
+const PROP_COST_TYPES = ['maintenance', 'renovation', 'utility', 'other'];
+const PR_SELECT = 'SELECT r.*, u.name AS user_name FROM property_records r LEFT JOIN users u ON u.id = r.user_id';
+app.get('/api/properties/:pid/records', auth, (req, res) => {
+  res.json(db.prepare(`${PR_SELECT} WHERE r.property_id = ? AND r.family_id = ? ORDER BY r.date DESC, r.id DESC`).all(req.params.pid, req.user.family_id));
+});
+app.post('/api/properties/:pid/records', auth, canWrite, (req, res) => {
+  const prop = db.prepare('SELECT * FROM properties WHERE id = ? AND family_id = ?').get(req.params.pid, req.user.family_id);
+  if (!prop) return res.status(404).json({ error: 'Not found' });
+  const b = req.body || {};
+  if (!PROP_REC_TYPES.includes(b.type)) return res.status(400).json({ error: 'Invalid record type' });
+  if (!isDate(b.date)) return res.status(400).json({ error: 'Date must be YYYY-MM-DD' });
+  const isCost = PROP_COST_TYPES.includes(b.type) && Number(b.amount) > 0;
+  const tenant = db.prepare("SELECT id FROM users WHERE role = 'tenant' AND tenant_property_id = ?").get(prop.id);
+  let expenseId = null, attributedUser = null;
+  const rid = db.transaction(() => {
+    if (isCost) {
+      if (b.attribute === 'tenant' && tenant) {
+        // bill the tenant instead of counting it as a family expense
+        db.prepare('INSERT INTO tenant_charges (family_id, property_id, type, title, amount, due_date, note) VALUES (?,?,?,?,?,?,?)')
+          .run(prop.family_id, prop.id, 'invoice', `${b.type}${b.note ? ' — ' + b.note : ''}`.slice(0, 120), Number(b.amount), b.date, str(b.note));
+      } else {
+        attributedUser = (num(b.attribute) != null && db.prepare('SELECT id FROM users WHERE id = ? AND family_id = ?').get(num(b.attribute), prop.family_id))
+          ? num(b.attribute) : (prop.owner_id || null);
+        const category = b.type === 'utility' ? 'Utilities' : 'Other';
+        const ei = db.prepare('INSERT INTO expenses (family_id, user_id, category, amount, note, date) VALUES (?,?,?,?,?,?)')
+          .run(prop.family_id, attributedUser, category, Number(b.amount), `Property: ${prop.name} — ${b.type}${b.note ? ': ' + b.note : ''}`, b.date);
+        expenseId = ei.lastInsertRowid;
+      }
+    }
+    return db.prepare('INSERT INTO property_records (property_id, family_id, type, date, amount, note, user_id, expense_id) VALUES (?,?,?,?,?,?,?,?)')
+      .run(prop.id, prop.family_id, b.type, b.date, num(b.amount), str(b.note), attributedUser, expenseId).lastInsertRowid;
+  })();
+  res.json(db.prepare(`${PR_SELECT} WHERE r.id = ?`).get(rid));
+});
+app.delete('/api/properties/:pid/records/:rid', auth, canWrite, (req, res) => {
+  const row = db.prepare('SELECT * FROM property_records WHERE id = ? AND family_id = ?').get(req.params.rid, req.user.family_id);
+  if (!row) return res.json({ ok: true });
+  db.transaction(() => {
+    if (row.expense_id) db.prepare('DELETE FROM expenses WHERE id = ? AND family_id = ?').run(row.expense_id, req.user.family_id);
+    db.prepare('DELETE FROM property_records WHERE id = ?').run(row.id);
+  })();
+  res.json({ ok: true });
+});
 
 // ---------- tenants & shared charges ----------
 // Rent is generated once per month automatically when the property has rent_amount set and a tenant.
@@ -886,16 +942,25 @@ function collectReminders(fid, horizon, scopeUserId = null) {
   for (const b of db.prepare("SELECT * FROM bills WHERE family_id = ? AND status = 'unpaid'").all(fid)) {
     push('bill', b.name, b.provider || b.category, b.due_date, b.id, b.owner_id, { amount: b.amount });
   }
+  // a document tied to an entity slot (e.g. property PAD) replaces that field's reminder — no duplicates
+  const covered = new Set();
+  for (const d of db.prepare("SELECT property_id, vehicle_id, slot FROM documents WHERE family_id = ? AND slot IS NOT NULL AND expiry_date IS NOT NULL").all(fid)) {
+    if (d.property_id) covered.add(`property:${d.property_id}:${d.slot}`);
+    if (d.vehicle_id) covered.add(`vehicle:${d.vehicle_id}:${d.slot}`);
+  }
+  const vpush = (id, slot, kind, label, entity, date, owner) => { if (!covered.has(`vehicle:${id}:${slot}`)) push(kind, label, entity, date, id, owner); };
+  const ppush = (id, slot, kind, label, entity, date, owner) => { if (!covered.has(`property:${id}:${slot}`)) push(kind, label, entity, date, id, owner); };
   for (const v of db.prepare('SELECT * FROM vehicles WHERE family_id = ?').all(fid)) {
-    push('rca', 'RCA insurance', v.name, v.rca_expiry, v.id, v.owner_id);
-    push('casco', 'Casco insurance', v.name, v.casco_expiry, v.id, v.owner_id);
-    push('vignette', 'Rovinieta (vignette)', v.name, v.vignette_expiry, v.id, v.owner_id);
-    push('itp', 'ITP inspection', v.name, v.itp_expiry, v.id, v.owner_id);
-    push('road_tax', 'Vehicle tax', v.name, v.road_tax_due, v.id, v.owner_id);
+    vpush(v.id, 'rca_expiry', 'rca', 'RCA insurance', v.name, v.rca_expiry, v.owner_id);
+    vpush(v.id, 'casco_expiry', 'casco', 'Casco insurance', v.name, v.casco_expiry, v.owner_id);
+    vpush(v.id, 'vignette_expiry', 'vignette', 'Rovinieta (vignette)', v.name, v.vignette_expiry, v.owner_id);
+    vpush(v.id, 'itp_expiry', 'itp', 'ITP inspection', v.name, v.itp_expiry, v.owner_id);
+    vpush(v.id, 'road_tax_due', 'road_tax', 'Vehicle tax', v.name, v.road_tax_due, v.owner_id);
   }
   for (const p of db.prepare('SELECT * FROM properties WHERE family_id = ?').all(fid)) {
-    push('property_insurance', 'Property insurance (PAD)', p.name, p.insurance_expiry, p.id, p.owner_id);
-    push('property_tax', 'Property tax', p.name, p.property_tax_due, p.id, p.owner_id);
+    ppush(p.id, 'insurance_expiry', 'property_insurance', 'Property insurance (PAD)', p.name, p.insurance_expiry, p.owner_id);
+    ppush(p.id, 'insurance2_expiry', 'property_insurance', 'Additional home insurance', p.name, p.insurance2_expiry, p.owner_id);
+    ppush(p.id, 'property_tax_due', 'property_tax', 'Property tax', p.name, p.property_tax_due, p.owner_id);
   }
   for (const d of db.prepare(`${DOC_SELECT} WHERE d.family_id = ? AND d.expiry_date IS NOT NULL`).all(fid)) {
     push('document', `Act: ${d.name}`, d.person_name || d.vehicle_name || d.property_name || 'Family', d.expiry_date, d.id, d.user_id);
@@ -1104,27 +1169,52 @@ app.get('/api/stats', auth, (req, res) => {
   autoPayBills(); autoLogCreditExpenses();
   const fid = req.user.family_id;
   const month = req.query.month || new Date().toISOString().slice(0, 7);
+  // ?months=1|3|6|12 sets the KPI/category window (default 1 = current month); trend spans the same window
+  const months = [1, 3, 6, 12].includes(Number(req.query.months)) ? Number(req.query.months) : 1;
+  const start = new Date(); start.setUTCDate(1); start.setUTCMonth(start.getUTCMonth() - (months - 1));
+  const startMonth = start.toISOString().slice(0, 7); // inclusive lower bound YYYY-MM
   // optional ?user=<id> narrows the numbers to one member's expenses/income
   const uid = req.query.user && req.query.user !== 'all' && !isNaN(Number(req.query.user)) ? Number(req.query.user) : null;
   const uf = uid != null ? ' AND user_id = ?' : '';
   const ua = uid != null ? [uid] : [];
   const byCategory = db.prepare(`
     SELECT category, SUM(amount) AS total FROM expenses
-    WHERE family_id = ? AND substr(date,1,7) = ?${uf} GROUP BY category ORDER BY total DESC
-  `).all(fid, month, ...ua);
-  const income = db.prepare(`SELECT COALESCE(SUM(amount),0) AS total FROM incomes WHERE family_id = ? AND substr(date,1,7) = ?${uf}`).get(fid, month, ...ua).total;
-  const spent = db.prepare(`SELECT COALESCE(SUM(amount),0) AS total FROM expenses WHERE family_id = ? AND substr(date,1,7) = ?${uf}`).get(fid, month, ...ua).total;
+    WHERE family_id = ? AND substr(date,1,7) >= ?${uf} GROUP BY category ORDER BY total DESC
+  `).all(fid, startMonth, ...ua);
+  const income = db.prepare(`SELECT COALESCE(SUM(amount),0) AS total FROM incomes WHERE family_id = ? AND substr(date,1,7) >= ?${uf}`).get(fid, startMonth, ...ua).total;
+  const spent = db.prepare(`SELECT COALESCE(SUM(amount),0) AS total FROM expenses WHERE family_id = ? AND substr(date,1,7) >= ?${uf}`).get(fid, startMonth, ...ua).total;
   const trend = db.prepare(`
     SELECT substr(date,1,7) AS m, SUM(amount) AS total FROM expenses
-    WHERE family_id = ? AND date >= date('now','start of month','-5 months')${uf}
-    GROUP BY m ORDER BY m
-  `).all(fid, ...ua);
+    WHERE family_id = ? AND substr(date,1,7) >= ?${uf} GROUP BY m ORDER BY m
+  `).all(fid, startMonth, ...ua);
   const incomeTrend = db.prepare(`
     SELECT substr(date,1,7) AS m, SUM(amount) AS total FROM incomes
-    WHERE family_id = ? AND date >= date('now','start of month','-5 months')${uf}
-    GROUP BY m ORDER BY m
-  `).all(fid, ...ua);
-  res.json({ month, byCategory, income, spent, trend, incomeTrend });
+    WHERE family_id = ? AND substr(date,1,7) >= ?${uf} GROUP BY m ORDER BY m
+  `).all(fid, startMonth, ...ua);
+  res.json({ month, months, startMonth, byCategory, income, spent, trend, incomeTrend });
+});
+
+// ---------- savings / economy account ----------
+app.get('/api/savings', auth, (req, res) => {
+  const fid = req.user.family_id;
+  const rows = db.prepare('SELECT s.*, u.name AS user_name FROM savings s LEFT JOIN users u ON u.id = s.user_id WHERE s.family_id = ? ORDER BY s.date DESC, s.id DESC').all(fid);
+  const balance = rows.reduce((t, r) => t + (r.kind === 'deposit' ? r.amount : -r.amount), 0);
+  const byUser = {};
+  for (const r of rows) { const k = r.user_name || '—'; byUser[k] = (byUser[k] || 0) + (r.kind === 'deposit' ? r.amount : -r.amount); }
+  res.json({ balance: Math.round(balance * 100) / 100, byUser, entries: rows });
+});
+app.post('/api/savings', auth, canWrite, (req, res) => {
+  const b = req.body || {};
+  if (!['deposit', 'withdrawal'].includes(b.kind)) return res.status(400).json({ error: 'Kind must be deposit or withdrawal' });
+  if (!(Number(b.amount) > 0)) return res.status(400).json({ error: 'Amount must be greater than 0' });
+  if (!isDate(b.date)) return res.status(400).json({ error: 'Date must be YYYY-MM-DD' });
+  const info = db.prepare('INSERT INTO savings (family_id, user_id, kind, amount, date, note) VALUES (?,?,?,?,?,?)')
+    .run(req.user.family_id, req.user.id, b.kind, Number(b.amount), b.date, str(b.note));
+  res.json(db.prepare('SELECT * FROM savings WHERE id = ?').get(info.lastInsertRowid));
+});
+app.delete('/api/savings/:id', auth, canWrite, (req, res) => {
+  db.prepare('DELETE FROM savings WHERE id = ? AND family_id = ?').run(req.params.id, req.user.family_id);
+  res.json({ ok: true });
 });
 
 // ---------- CSV export ----------
