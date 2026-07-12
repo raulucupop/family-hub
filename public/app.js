@@ -2,7 +2,7 @@
 const $ = (sel, el = document) => el.querySelector(sel);
 const app = $('#app');
 let ME = null, FAMILY = null;
-const CATEGORIES = ['Groceries', 'Utilities', 'Transportation', 'Entertainment', 'Healthcare', 'Education', 'Taxes', 'Other'];
+const CATEGORIES = ['Groceries', 'Utilities', 'Transportation', 'Entertainment', 'Healthcare', 'Education', 'Taxes', 'Credit', 'Other'];
 const BILL_CATS = { electricity: 'Electricity', gas: 'Gas', internet: 'Internet', mobile: 'Mobile', water: 'Water', property_tax: 'Property tax', other: 'Other' };
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -294,7 +294,7 @@ let PENDING_MONEY_TAB = null;
 function drawCharts(stats) {
   const c0 = getComputedStyle(document.documentElement).getPropertyValue('--ink-soft').trim();
   if (window.Chart) { Chart.defaults.color = c0 || '#666'; Chart.defaults.borderColor = getComputedStyle(document.documentElement).getPropertyValue('--line').trim() || '#ddd'; }
-  const colors = ['#2f6b5a', '#c98a2d', '#5b7fa6', '#b23a2e', '#7c5ba6', '#3e7c4f', '#8a6d3b', '#45565f'];
+  const colors = ['#2f6b5a', '#c98a2d', '#5b7fa6', '#b23a2e', '#7c5ba6', '#3e7c4f', '#8a6d3b', '#45565f', '#a0522d'];
   const cc = $('#catChart'); if (cc && stats.byCategory.length) new Chart(cc, {
     type: 'doughnut',
     data: { labels: stats.byCategory.map((c) => c.category), datasets: [{ data: stats.byCategory.map((c) => c.total), backgroundColor: colors }] },

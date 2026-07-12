@@ -424,7 +424,7 @@ function autoLogCreditExpenses() {
     const total = Math.round((stats.monthly_payment + (Number(c.commission) || 0)) * 100) / 100;
     const dueDate = `${period}-${String(Math.min(dueDay, 28)).padStart(2, '0')}`;
     db.prepare('INSERT INTO expenses (family_id, user_id, category, amount, note, date) VALUES (?,?,?,?,?,?)')
-      .run(c.family_id, c.user_id, 'Other', total, `Credit: ${c.name} ${period}`, dueDate);
+      .run(c.family_id, c.user_id, 'Credit', total, `Credit: ${c.name} ${period}`, dueDate);
     db.prepare('UPDATE credits SET auto_expense_period = ? WHERE id = ?').run(period, c.id);
   }
 }
@@ -1097,7 +1097,7 @@ app.post('/api/import/transactions', auth, canWrite, (req, res) => {
   tx();
   res.json({ imported, skipped, errors });
 });
-const CATEGORY_SET = new Set(['Groceries', 'Utilities', 'Transportation', 'Entertainment', 'Healthcare', 'Education', 'Taxes', 'Other']);
+const CATEGORY_SET = new Set(['Groceries', 'Utilities', 'Transportation', 'Entertainment', 'Healthcare', 'Education', 'Taxes', 'Credit', 'Other']);
 
 // ---------- dashboard stats ----------
 app.get('/api/stats', auth, (req, res) => {
