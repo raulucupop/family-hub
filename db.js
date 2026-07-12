@@ -52,6 +52,8 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash TEXT,     -- NULL for members who can't sign in
   role TEXT NOT NULL CHECK (role IN ('admin','adult','child','tenant')),
   tenant_property_id INTEGER REFERENCES properties(id) ON DELETE SET NULL, -- tenants only: the rented property
+  avatar TEXT,                       -- stored filename of a profile picture
+  theme TEXT NOT NULL DEFAULT 'light', -- 'light' | 'dark'
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -111,8 +113,10 @@ CREATE TABLE IF NOT EXISTS credits (
   interest_rate REAL NOT NULL, -- dobanda, % per year
   term_months INTEGER NOT NULL,
   start_date TEXT NOT NULL,
+  commission REAL NOT NULL DEFAULT 0, -- fixed monthly admin commission added to each payment
   user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,       -- holder; NULL = whole family
   property_id INTEGER REFERENCES properties(id) ON DELETE SET NULL,
+  auto_expense_period TEXT, -- YYYY-MM of the last month whose payment was auto-logged as an expense
   notes TEXT
 );
 
@@ -136,6 +140,9 @@ CREATE TABLE IF NOT EXISTS bills (
   due_date TEXT NOT NULL,
   recur_months INTEGER NOT NULL DEFAULT 0, -- 0 = one-off, 1 = monthly, 12 = yearly...
   status TEXT NOT NULL DEFAULT 'unpaid' CHECK (status IN ('unpaid','paid')),
+  auto_pay INTEGER NOT NULL DEFAULT 0, -- subscription paid automatically: on/after due date it's counted as paid
+  owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL,       -- responsible person; NULL = whole family
+  property_id INTEGER REFERENCES properties(id) ON DELETE SET NULL,
   attachment TEXT, -- stored filename of uploaded invoice
   notes TEXT
 );
@@ -159,6 +166,7 @@ CREATE TABLE IF NOT EXISTS vehicles (
   vignette_expiry TEXT,   -- Rovinieta
   itp_expiry TEXT,        -- technical inspection (ITP)
   road_tax_due TEXT,      -- local vehicle tax
+  owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL, -- responsible person; NULL = whole family
   notes TEXT
 );
 
@@ -234,6 +242,7 @@ CREATE TABLE IF NOT EXISTS notifications (
   key TEXT NOT NULL,
   title TEXT NOT NULL,
   body TEXT,
+  owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL, -- responsible person; NULL = whole family
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE(family_id, key)
 );
@@ -265,6 +274,23 @@ CREATE TABLE IF NOT EXISTS notification_reads (
 const creditCols = db.prepare('PRAGMA table_info(credits)').all().map((c) => c.name);
 if (!creditCols.includes('user_id')) db.exec('ALTER TABLE credits ADD COLUMN user_id INTEGER REFERENCES users(id) ON DELETE SET NULL');
 if (!creditCols.includes('property_id')) db.exec('ALTER TABLE credits ADD COLUMN property_id INTEGER REFERENCES properties(id) ON DELETE SET NULL');
+if (!creditCols.includes('commission')) db.exec('ALTER TABLE credits ADD COLUMN commission REAL NOT NULL DEFAULT 0');
+if (!creditCols.includes('auto_expense_period')) db.exec('ALTER TABLE credits ADD COLUMN auto_expense_period TEXT');
+
+const billCols = db.prepare('PRAGMA table_info(bills)').all().map((c) => c.name);
+if (!billCols.includes('auto_pay')) db.exec('ALTER TABLE bills ADD COLUMN auto_pay INTEGER NOT NULL DEFAULT 0');
+if (!billCols.includes('owner_id')) db.exec('ALTER TABLE bills ADD COLUMN owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL');
+if (!billCols.includes('property_id')) db.exec('ALTER TABLE bills ADD COLUMN property_id INTEGER REFERENCES properties(id) ON DELETE SET NULL');
+
+const vehCols = db.prepare('PRAGMA table_info(vehicles)').all().map((c) => c.name);
+if (!vehCols.includes('owner_id')) db.exec('ALTER TABLE vehicles ADD COLUMN owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL');
+
+const userCols = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name);
+if (!userCols.includes('avatar')) db.exec('ALTER TABLE users ADD COLUMN avatar TEXT');
+if (!userCols.includes('theme')) db.exec("ALTER TABLE users ADD COLUMN theme TEXT NOT NULL DEFAULT 'light'");
+
+const notifCols = db.prepare('PRAGMA table_info(notifications)').all().map((c) => c.name);
+if (!notifCols.includes('owner_id')) db.exec('ALTER TABLE notifications ADD COLUMN owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL');
 
 const propCols = db.prepare('PRAGMA table_info(properties)').all().map((c) => c.name);
 if (!propCols.includes('owner_id')) db.exec('ALTER TABLE properties ADD COLUMN owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL');

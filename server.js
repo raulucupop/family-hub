@@ -54,7 +54,7 @@ function auth(req, res, next) {
   if (!token) return res.status(401).json({ error: 'Not signed in' });
   try {
     const payload = jwt.verify(token, JWT_SECRET);
-    const user = db.prepare('SELECT id, family_id, name, email, role, tenant_property_id FROM users WHERE id = ?').get(payload.uid);
+    const user = db.prepare('SELECT id, family_id, name, email, role, tenant_property_id, avatar, theme FROM users WHERE id = ?').get(payload.uid);
     if (!user) return res.status(401).json({ error: 'Account no longer exists' });
     // tenants only ever see their own charges — never the family's data
     if (user.role === 'tenant' && req.path !== '/api/me' && !req.path.startsWith('/api/tenant')) {
@@ -196,7 +196,7 @@ app.get('/api/me', auth, (req, res) => {
 
 // ---------- family ----------
 app.get('/api/family/members', auth, (req, res) => {
-  const members = db.prepare("SELECT id, name, email, role, created_at FROM users WHERE family_id = ? AND role != 'tenant' ORDER BY created_at").all(req.user.family_id);
+  const members = db.prepare("SELECT id, name, email, role, avatar, created_at FROM users WHERE family_id = ? AND role != 'tenant' ORDER BY created_at").all(req.user.family_id);
   res.json(members);
 });
 // admin adds a child by name only — no email, no login; can still be linked to acte and expenses
@@ -308,9 +308,15 @@ crud({
 });
 crud({
   route: 'vehicles', table: 'vehicles',
-  fields: ['name', 'plate', 'rca_expiry', 'casco_expiry', 'vignette_expiry', 'itp_expiry', 'road_tax_due', 'notes'],
+  fields: ['name', 'plate', 'rca_expiry', 'casco_expiry', 'vignette_expiry', 'itp_expiry', 'road_tax_due', 'owner_id', 'notes'],
   orderBy: 'name',
-  validate: (b) => (!b.name ? 'Vehicle name is required' : null),
+  validate: (b, req) => {
+    if (!b.name) return 'Vehicle name is required';
+    if (num(b.owner_id) != null && !db.prepare('SELECT id FROM users WHERE id = ? AND family_id = ?').get(num(b.owner_id), req.user.family_id)) {
+      return 'Owner must be a member of the family';
+    }
+    return null;
+  },
 });
 crud({
   route: 'properties', table: 'properties',
@@ -388,8 +394,11 @@ function creditStats(credit, prepays) {
   }
   if (balanceNow === null) balanceNow = bal; // already paid off before today
 
+  const commission = Number(credit.commission) || 0;
   return {
     monthly_payment: Math.round(payment * 100) / 100,
+    commission: Math.round(commission * 100) / 100,
+    monthly_total: Math.round((payment + commission) * 100) / 100, // rate + fixed commission
     base_total_interest: Math.round(baseTotalInterest * 100) / 100,
     total_interest: Math.round(totalInterest * 100) / 100,
     interest_saved: Math.round(Math.max(0, baseTotalInterest - totalInterest) * 100) / 100,
@@ -399,11 +408,32 @@ function creditStats(credit, prepays) {
     payoff_date: addMonths(credit.start_date, months),
   };
 }
+// once a month, on/after each credit's payment day, log its monthly payment (rate + commission) as an expense
+function autoLogCreditExpenses() {
+  const period = new Date().toISOString().slice(0, 7);
+  const todayDay = new Date().getUTCDate();
+  for (const c of db.prepare('SELECT * FROM credits').all()) {
+    if (c.auto_expense_period === period) continue;
+    const dueDay = Number(String(c.start_date).slice(8, 10)) || 1;
+    if (todayDay < dueDay) continue; // payment not due yet this month
+    const stats = creditStats(c, db.prepare('SELECT * FROM credit_payments WHERE credit_id = ?').all(c.id));
+    if (!(stats.months_left > 0) && stats.balance <= 0.005) { // already paid off
+      db.prepare('UPDATE credits SET auto_expense_period = ? WHERE id = ?').run(period, c.id);
+      continue;
+    }
+    const total = Math.round((stats.monthly_payment + (Number(c.commission) || 0)) * 100) / 100;
+    const dueDate = `${period}-${String(Math.min(dueDay, 28)).padStart(2, '0')}`;
+    db.prepare('INSERT INTO expenses (family_id, user_id, category, amount, note, date) VALUES (?,?,?,?,?,?)')
+      .run(c.family_id, c.user_id, 'Other', total, `Credit: ${c.name} ${period}`, dueDate);
+    db.prepare('UPDATE credits SET auto_expense_period = ? WHERE id = ?').run(period, c.id);
+  }
+}
 function validateCredit(b, fid) {
   if (!b.name) return 'Credit name is required';
   if (!(Number(b.principal) > 0)) return 'Principal must be greater than 0';
   if (!(Number(b.interest_rate) >= 0)) return 'Dobanda (interest %) must be 0 or more';
   if (!(Number(b.term_months) >= 1)) return 'Term must be at least 1 month';
+  if (b.commission != null && b.commission !== '' && !(Number(b.commission) >= 0)) return 'Commission must be 0 or more';
   if (!isDate(b.start_date)) return 'Start date must be YYYY-MM-DD';
   if (num(b.user_id) != null && !db.prepare('SELECT id FROM users WHERE id = ? AND family_id = ?').get(num(b.user_id), fid)) {
     return 'Holder must be a member of the family';
@@ -429,10 +459,10 @@ app.post('/api/credits', auth, canWrite, (req, res) => {
   const err = validateCredit(b, req.user.family_id);
   if (err) return res.status(400).json({ error: err });
   const info = db.prepare(`
-    INSERT INTO credits (family_id, name, lender, principal, interest_rate, term_months, start_date, user_id, property_id, notes)
-    VALUES (?,?,?,?,?,?,?,?,?,?)
+    INSERT INTO credits (family_id, name, lender, principal, interest_rate, term_months, start_date, commission, user_id, property_id, notes)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?)
   `).run(req.user.family_id, str(b.name), str(b.lender), Number(b.principal), Number(b.interest_rate),
-    Math.round(Number(b.term_months)), b.start_date, num(b.user_id), num(b.property_id), str(b.notes));
+    Math.round(Number(b.term_months)), b.start_date, Number(b.commission) || 0, num(b.user_id), num(b.property_id), str(b.notes));
   const row = db.prepare(`${CREDIT_SELECT} WHERE c.id = ?`).get(info.lastInsertRowid);
   res.json({ ...row, ...creditStats(row, []) });
 });
@@ -442,9 +472,9 @@ app.put('/api/credits/:id', auth, canWrite, (req, res) => {
   const b = { ...row, ...req.body };
   const err = validateCredit(b, req.user.family_id);
   if (err) return res.status(400).json({ error: err });
-  db.prepare('UPDATE credits SET name=?, lender=?, principal=?, interest_rate=?, term_months=?, start_date=?, user_id=?, property_id=?, notes=? WHERE id=?')
+  db.prepare('UPDATE credits SET name=?, lender=?, principal=?, interest_rate=?, term_months=?, start_date=?, commission=?, user_id=?, property_id=?, notes=? WHERE id=?')
     .run(str(b.name), str(b.lender), Number(b.principal), Number(b.interest_rate), Math.round(Number(b.term_months)), b.start_date,
-      num(b.user_id), num(b.property_id), str(b.notes), row.id);
+      Number(b.commission) || 0, num(b.user_id), num(b.property_id), str(b.notes), row.id);
   const updated = db.prepare(`${CREDIT_SELECT} WHERE c.id = ?`).get(row.id);
   const pays = db.prepare('SELECT * FROM credit_payments WHERE credit_id = ?').all(row.id);
   res.json({ ...updated, ...creditStats(updated, pays) });
@@ -479,29 +509,63 @@ app.delete('/api/credits/:id/payments/:pid', auth, canWrite, (req, res) => {
 });
 
 // ---------- bills ----------
+const BILL_CAT_MAP = { electricity: 'Utilities', gas: 'Utilities', water: 'Utilities', internet: 'Utilities', mobile: 'Utilities', property_tax: 'Taxes', other: 'Other' };
+const BILL_SELECT = `
+  SELECT b.*, u.name AS owner_name, p.name AS property_name
+  FROM bills b
+  LEFT JOIN users u ON u.id = b.owner_id
+  LEFT JOIN properties p ON p.id = b.property_id
+`;
+function validateBillLinks(b, fid) {
+  if (num(b.owner_id) != null && !db.prepare('SELECT id FROM users WHERE id = ? AND family_id = ?').get(num(b.owner_id), fid)) return 'Owner must be a member of the family';
+  if (num(b.property_id) != null && !db.prepare('SELECT id FROM properties WHERE id = ? AND family_id = ?').get(num(b.property_id), fid)) return 'Linked property not found';
+  return null;
+}
+// auto-pay subscriptions: once due, count them as paid (log payment + expense, roll recurring forward)
+function autoPayBills() {
+  const today = new Date().toISOString().slice(0, 10);
+  const due = db.prepare("SELECT * FROM bills WHERE auto_pay = 1 AND status = 'unpaid' AND due_date <= ? AND amount > 0").all(today);
+  for (const bill of due) {
+    const tx = db.transaction(() => {
+      db.prepare('INSERT INTO bill_payments (bill_id, family_id, amount, paid_at, paid_by) VALUES (?,?,?,?,?)')
+        .run(bill.id, bill.family_id, bill.amount, today, bill.owner_id);
+      db.prepare('INSERT INTO expenses (family_id, user_id, category, amount, note, date) VALUES (?,?,?,?,?,?)')
+        .run(bill.family_id, bill.owner_id, BILL_CAT_MAP[bill.category] || 'Utilities', bill.amount, `Bill (auto): ${bill.name}`, today);
+      if (bill.recur_months > 0) db.prepare("UPDATE bills SET due_date = ?, status = 'unpaid' WHERE id = ?").run(addMonths(bill.due_date, bill.recur_months), bill.id);
+      else db.prepare("UPDATE bills SET status = 'paid' WHERE id = ?").run(bill.id);
+    });
+    tx();
+  }
+}
 app.get('/api/bills', auth, (req, res) => {
-  const bills = db.prepare('SELECT * FROM bills WHERE family_id = ? ORDER BY due_date').all(req.user.family_id);
+  autoPayBills();
+  const bills = db.prepare(`${BILL_SELECT} WHERE b.family_id = ? ORDER BY b.due_date`).all(req.user.family_id);
   res.json(bills);
 });
 app.post('/api/bills', auth, canWrite, (req, res) => {
   const b = req.body || {};
   if (!b.name || !b.category || !isDate(b.due_date)) return res.status(400).json({ error: 'Name, category and due date are required' });
+  const err = validateBillLinks(b, req.user.family_id);
+  if (err) return res.status(400).json({ error: err });
   const info = db.prepare(`
-    INSERT INTO bills (family_id, name, provider, category, amount, due_date, recur_months, notes)
-    VALUES (?,?,?,?,?,?,?,?)
-  `).run(req.user.family_id, str(b.name), str(b.provider), str(b.category), num(b.amount), b.due_date, Number(b.recur_months) || 0, str(b.notes));
-  res.json(db.prepare('SELECT * FROM bills WHERE id = ?').get(info.lastInsertRowid));
+    INSERT INTO bills (family_id, name, provider, category, amount, due_date, recur_months, auto_pay, owner_id, property_id, notes)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?)
+  `).run(req.user.family_id, str(b.name), str(b.provider), str(b.category), num(b.amount), b.due_date, Number(b.recur_months) || 0,
+    b.auto_pay ? 1 : 0, num(b.owner_id), num(b.property_id), str(b.notes));
+  res.json(db.prepare(`${BILL_SELECT} WHERE b.id = ?`).get(info.lastInsertRowid));
 });
 app.put('/api/bills/:id', auth, canWrite, (req, res) => {
   const row = db.prepare('SELECT * FROM bills WHERE id = ? AND family_id = ?').get(req.params.id, req.user.family_id);
   if (!row) return res.status(404).json({ error: 'Not found' });
   const b = { ...row, ...req.body };
   if (!b.name || !b.category || !isDate(b.due_date)) return res.status(400).json({ error: 'Name, category and due date are required' });
+  const err = validateBillLinks(b, req.user.family_id);
+  if (err) return res.status(400).json({ error: err });
   db.prepare(`
-    UPDATE bills SET name=?, provider=?, category=?, amount=?, due_date=?, recur_months=?, status=?, notes=? WHERE id=?
+    UPDATE bills SET name=?, provider=?, category=?, amount=?, due_date=?, recur_months=?, status=?, auto_pay=?, owner_id=?, property_id=?, notes=? WHERE id=?
   `).run(str(b.name), str(b.provider), str(b.category), num(b.amount), b.due_date, Number(b.recur_months) || 0,
-    b.status === 'paid' ? 'paid' : 'unpaid', str(b.notes), row.id);
-  res.json(db.prepare('SELECT * FROM bills WHERE id = ?').get(row.id));
+    b.status === 'paid' ? 'paid' : 'unpaid', b.auto_pay ? 1 : 0, num(b.owner_id), num(b.property_id), str(b.notes), row.id);
+  res.json(db.prepare(`${BILL_SELECT} WHERE b.id = ?`).get(row.id));
 });
 app.delete('/api/bills/:id', auth, canWrite, (req, res) => {
   const row = db.prepare('SELECT * FROM bills WHERE id = ? AND family_id = ?').get(req.params.id, req.user.family_id);
@@ -568,6 +632,43 @@ app.get('/api/bills/:id/attachment', auth, (req, res) => {
   const bill = db.prepare('SELECT * FROM bills WHERE id = ? AND family_id = ?').get(req.params.id, req.user.family_id);
   if (!bill || !bill.attachment) return res.status(404).json({ error: 'No attachment' });
   res.sendFile(path.join(UPLOAD_DIR, bill.attachment));
+});
+
+// ---------- user settings & profile pictures ----------
+// theme + display name for the signed-in member
+app.post('/api/settings', auth, (req, res) => {
+  const { theme, name } = req.body || {};
+  if (theme && !['light', 'dark'].includes(theme)) return res.status(400).json({ error: 'Unknown theme' });
+  if (theme) db.prepare('UPDATE users SET theme = ? WHERE id = ?').run(theme, req.user.id);
+  if (name && String(name).trim() && req.user.role !== 'child') db.prepare('UPDATE users SET name = ? WHERE id = ?').run(String(name).trim(), req.user.id);
+  res.json(db.prepare('SELECT id, family_id, name, email, role, avatar, theme FROM users WHERE id = ?').get(req.user.id));
+});
+// who may set a given member's picture: yourself (adult/admin), or a child if you can write
+function canEditAvatar(reqUser, target) {
+  if (!target || target.family_id !== reqUser.family_id) return false;
+  if (target.id === reqUser.id) return reqUser.role === 'admin' || reqUser.role === 'adult';
+  return (reqUser.role === 'admin' || reqUser.role === 'adult') && target.role === 'child';
+}
+app.post('/api/users/:id/avatar', auth, upload.single('file'), (req, res) => {
+  const target = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
+  if (!canEditAvatar(req.user, target)) return res.status(403).json({ error: 'Not allowed to change this picture' });
+  if (!req.file) return res.status(400).json({ error: 'No file received' });
+  if (!/\.(png|jpg|jpeg|webp)$/i.test(req.file.filename)) { try { fs.unlinkSync(path.join(UPLOAD_DIR, req.file.filename)); } catch {} return res.status(400).json({ error: 'Profile picture must be an image' }); }
+  if (target.avatar) { try { fs.unlinkSync(path.join(UPLOAD_DIR, target.avatar)); } catch {} }
+  db.prepare('UPDATE users SET avatar = ? WHERE id = ?').run(req.file.filename, target.id);
+  res.json({ avatar: req.file.filename });
+});
+app.delete('/api/users/:id/avatar', auth, (req, res) => {
+  const target = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
+  if (!canEditAvatar(req.user, target)) return res.status(403).json({ error: 'Not allowed' });
+  if (target.avatar) { try { fs.unlinkSync(path.join(UPLOAD_DIR, target.avatar)); } catch {} }
+  db.prepare('UPDATE users SET avatar = NULL WHERE id = ?').run(target.id);
+  res.json({ ok: true });
+});
+app.get('/api/users/:id/avatar', auth, (req, res) => {
+  const target = db.prepare('SELECT avatar, family_id FROM users WHERE id = ?').get(req.params.id);
+  if (!target || target.family_id !== req.user.family_id || !target.avatar) return res.status(404).json({ error: 'No picture' });
+  res.sendFile(path.join(UPLOAD_DIR, target.avatar));
 });
 
 // ---------- documents (acte) ----------
@@ -774,56 +875,64 @@ app.post('/api/tenant/charges/:cid/pay', auth, (req, res) => {
 });
 
 // ---------- reminders (aggregated deadlines) ----------
-function collectReminders(fid, horizon) {
+function collectReminders(fid, horizon, scopeUserId = null) {
   const items = [];
-  const push = (kind, label, entity, date, id, extra) => {
+  // priority: cars & documents rank above property, above bills (used as a tiebreaker on same date)
+  const PRIO = { document: 3, rca: 3, casco: 3, vignette: 3, itp: 3, road_tax: 3, property_insurance: 2, property_tax: 2, bill: 1 };
+  const push = (kind, label, entity, date, id, owner, extra) => {
     if (!date) return;
-    items.push({ kind, label, entity, date, ref_id: id, ...extra });
+    items.push({ kind, label, entity, date, ref_id: id, owner_id: owner ?? null, priority: PRIO[kind] || 1, ...extra });
   };
   for (const b of db.prepare("SELECT * FROM bills WHERE family_id = ? AND status = 'unpaid'").all(fid)) {
-    push('bill', b.name, b.provider || b.category, b.due_date, b.id, { amount: b.amount });
+    push('bill', b.name, b.provider || b.category, b.due_date, b.id, b.owner_id, { amount: b.amount });
   }
   for (const v of db.prepare('SELECT * FROM vehicles WHERE family_id = ?').all(fid)) {
-    push('rca', 'RCA insurance', v.name, v.rca_expiry, v.id);
-    push('casco', 'Casco insurance', v.name, v.casco_expiry, v.id);
-    push('vignette', 'Rovinieta (vignette)', v.name, v.vignette_expiry, v.id);
-    push('itp', 'ITP inspection', v.name, v.itp_expiry, v.id);
-    push('road_tax', 'Vehicle tax', v.name, v.road_tax_due, v.id);
+    push('rca', 'RCA insurance', v.name, v.rca_expiry, v.id, v.owner_id);
+    push('casco', 'Casco insurance', v.name, v.casco_expiry, v.id, v.owner_id);
+    push('vignette', 'Rovinieta (vignette)', v.name, v.vignette_expiry, v.id, v.owner_id);
+    push('itp', 'ITP inspection', v.name, v.itp_expiry, v.id, v.owner_id);
+    push('road_tax', 'Vehicle tax', v.name, v.road_tax_due, v.id, v.owner_id);
   }
   for (const p of db.prepare('SELECT * FROM properties WHERE family_id = ?').all(fid)) {
-    push('property_insurance', 'Property insurance (PAD)', p.name, p.insurance_expiry, p.id);
-    push('property_tax', 'Property tax', p.name, p.property_tax_due, p.id);
+    push('property_insurance', 'Property insurance (PAD)', p.name, p.insurance_expiry, p.id, p.owner_id);
+    push('property_tax', 'Property tax', p.name, p.property_tax_due, p.id, p.owner_id);
   }
   for (const d of db.prepare(`${DOC_SELECT} WHERE d.family_id = ? AND d.expiry_date IS NOT NULL`).all(fid)) {
-    push('document', `Act: ${d.name}`, d.person_name || d.vehicle_name || d.property_name || 'Family', d.expiry_date, d.id);
+    push('document', `Act: ${d.name}`, d.person_name || d.vehicle_name || d.property_name || 'Family', d.expiry_date, d.id, d.user_id);
   }
   const today = new Date().toISOString().slice(0, 10);
   const limit = new Date(Date.now() + horizon * 86400000).toISOString().slice(0, 10);
-  return items
-    .filter((i) => i.date <= limit)
+  let out = items.filter((i) => i.date <= limit);
+  // person scope: a member sees only what they're responsible for, plus family-wide (unowned) items
+  if (scopeUserId != null) out = out.filter((i) => i.owner_id == null || i.owner_id === scopeUserId);
+  return out
     .map((i) => ({ ...i, days_left: Math.ceil((new Date(i.date) - new Date(today)) / 86400000) }))
-    .sort((a, b) => a.date.localeCompare(b.date));
+    .sort((a, b) => a.date.localeCompare(b.date) || b.priority - a.priority);
 }
 app.get('/api/reminders', auth, (req, res) => {
   const horizon = Math.min(Number(req.query.days) || 60, 365);
-  res.json(collectReminders(req.user.family_id, horizon));
+  // ?user=me limits to what the signed-in member is responsible for (admins may pass a member id)
+  let scope = null;
+  if (req.query.user === 'me' && req.user.role !== 'admin') scope = req.user.id;
+  else if (req.query.user && req.query.user !== 'all' && !isNaN(Number(req.query.user))) scope = Number(req.query.user);
+  res.json(collectReminders(req.user.family_id, horizon, scope));
 });
 
 // ---------- site notifications ----------
 const THRESHOLDS = [30, 14, 7, 1, 0];
 function generateNotifications(fid) {
-  const ins = db.prepare('INSERT OR IGNORE INTO notifications (family_id, key, title, body) VALUES (?,?,?,?)');
+  const ins = db.prepare('INSERT OR IGNORE INTO notifications (family_id, key, title, body, owner_id) VALUES (?,?,?,?,?)');
   for (const r of collectReminders(fid, 31)) {
     if (r.days_left < 0) {
       ins.run(fid, `${r.kind}:${r.ref_id}:${r.date}:overdue`,
-        `Overdue: ${r.label}`, `${r.entity || ''} — was due ${r.date}${r.amount ? `, ${r.amount}` : ''}`.trim());
+        `Overdue: ${r.label}`, `${r.entity || ''} — was due ${r.date}${r.amount ? `, ${r.amount}` : ''}`.trim(), r.owner_id);
       continue;
     }
     for (const t of THRESHOLDS) {
       if (r.days_left <= t) {
         ins.run(fid, `${r.kind}:${r.ref_id}:${r.date}:${t}`,
           t === 0 ? `Due today: ${r.label}` : `${r.label} — ${r.days_left} day${r.days_left === 1 ? '' : 's'} left`,
-          `${r.entity || ''} — due ${r.date}${r.amount ? `, ${r.amount}` : ''}`.trim());
+          `${r.entity || ''} — due ${r.date}${r.amount ? `, ${r.amount}` : ''}`.trim(), r.owner_id);
         break; // only the tightest threshold crossed right now
       }
     }
@@ -831,14 +940,16 @@ function generateNotifications(fid) {
 }
 app.get('/api/notifications', auth, (req, res) => {
   generateNotifications(req.user.family_id);
+  // admins see every alert; other members only ones they're responsible for (plus family-wide)
+  const isAdmin = req.user.role === 'admin';
   const rows = db.prepare(`
     SELECT n.id, n.title, n.body, n.created_at,
            CASE WHEN r.user_id IS NULL THEN 0 ELSE 1 END AS read
     FROM notifications n
     LEFT JOIN notification_reads r ON r.notification_id = n.id AND r.user_id = ?
-    WHERE n.family_id = ?
+    WHERE n.family_id = ? ${isAdmin ? '' : 'AND (n.owner_id IS NULL OR n.owner_id = ?)'}
     ORDER BY n.id DESC LIMIT 100
-  `).all(req.user.id, req.user.family_id);
+  `).all(...(isAdmin ? [req.user.id, req.user.family_id] : [req.user.id, req.user.family_id, req.user.id]));
   res.json({ items: rows, unread: rows.filter((x) => !x.read).length });
 });
 app.post('/api/notifications/read', auth, (req, res) => {
@@ -947,6 +1058,8 @@ async function runEmailReminders() {
 // runs shortly after every start (visits wake the app) and every 6 hours while it stays alive;
 // a cron hitting /api/cron/email-reminders guarantees a daily check even with zero visits
 async function emailReminderTick() {
+  try { autoPayBills(); } catch (err) { console.error('auto-pay bills:', err.message); }
+  try { autoLogCreditExpenses(); } catch (err) { console.error('auto credit expense:', err.message); }
   try { await runEmailReminders(); } catch (err) { console.error('email reminders:', err.message); }
 }
 setTimeout(emailReminderTick, 30 * 1000);
@@ -988,24 +1101,29 @@ const CATEGORY_SET = new Set(['Groceries', 'Utilities', 'Transportation', 'Enter
 
 // ---------- dashboard stats ----------
 app.get('/api/stats', auth, (req, res) => {
+  autoPayBills(); autoLogCreditExpenses();
   const fid = req.user.family_id;
   const month = req.query.month || new Date().toISOString().slice(0, 7);
+  // optional ?user=<id> narrows the numbers to one member's expenses/income
+  const uid = req.query.user && req.query.user !== 'all' && !isNaN(Number(req.query.user)) ? Number(req.query.user) : null;
+  const uf = uid != null ? ' AND user_id = ?' : '';
+  const ua = uid != null ? [uid] : [];
   const byCategory = db.prepare(`
     SELECT category, SUM(amount) AS total FROM expenses
-    WHERE family_id = ? AND substr(date,1,7) = ? GROUP BY category ORDER BY total DESC
-  `).all(fid, month);
-  const income = db.prepare('SELECT COALESCE(SUM(amount),0) AS total FROM incomes WHERE family_id = ? AND substr(date,1,7) = ?').get(fid, month).total;
-  const spent = db.prepare('SELECT COALESCE(SUM(amount),0) AS total FROM expenses WHERE family_id = ? AND substr(date,1,7) = ?').get(fid, month).total;
+    WHERE family_id = ? AND substr(date,1,7) = ?${uf} GROUP BY category ORDER BY total DESC
+  `).all(fid, month, ...ua);
+  const income = db.prepare(`SELECT COALESCE(SUM(amount),0) AS total FROM incomes WHERE family_id = ? AND substr(date,1,7) = ?${uf}`).get(fid, month, ...ua).total;
+  const spent = db.prepare(`SELECT COALESCE(SUM(amount),0) AS total FROM expenses WHERE family_id = ? AND substr(date,1,7) = ?${uf}`).get(fid, month, ...ua).total;
   const trend = db.prepare(`
     SELECT substr(date,1,7) AS m, SUM(amount) AS total FROM expenses
-    WHERE family_id = ? AND date >= date('now','start of month','-5 months')
+    WHERE family_id = ? AND date >= date('now','start of month','-5 months')${uf}
     GROUP BY m ORDER BY m
-  `).all(fid);
+  `).all(fid, ...ua);
   const incomeTrend = db.prepare(`
     SELECT substr(date,1,7) AS m, SUM(amount) AS total FROM incomes
-    WHERE family_id = ? AND date >= date('now','start of month','-5 months')
+    WHERE family_id = ? AND date >= date('now','start of month','-5 months')${uf}
     GROUP BY m ORDER BY m
-  `).all(fid);
+  `).all(fid, ...ua);
   res.json({ month, byCategory, income, spent, trend, incomeTrend });
 });
 

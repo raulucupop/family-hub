@@ -8,7 +8,11 @@ const BILL_CATS = { electricity: 'Electricity', gas: 'Gas', internet: 'Internet'
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const cur = () => (FAMILY?.currency || 'RON');
 const money = (n) => n == null ? '—' : `${Number(n).toLocaleString('ro-RO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${cur()}`;
-const fdate = (d) => d ? new Date(d + 'T00:00:00').toLocaleDateString('ro-RO', { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
+// dates: stored/handled as ISO (yyyy-mm-dd), shown to the user as dd/mm/yyyy
+const ISO_RE = /^\d{4}-\d{2}-\d{2}$/;
+const DMY_RE = /^(\d{2})\/(\d{2})\/(\d{4})$/;
+const isoToDMY = (iso) => { const p = String(iso || '').slice(0, 10).split('-'); return p.length === 3 && p[0] ? `${p[2]}/${p[1]}/${p[0]}` : ''; };
+const fdate = (d) => isoToDMY(d) || '—';
 const today = () => new Date().toISOString().slice(0, 10);
 const thisMonth = () => today().slice(0, 7);
 const canWrite = () => ME && ME.role !== 'child';
@@ -27,7 +31,17 @@ async function copyText(text) {
     toast('Copied: ' + text);
   } catch { toast('Copy failed — select it manually'); }
 }
+// turn any dd/mm/yyyy values in a request body back into the ISO the server expects
+function normalizeBodyDates(o) {
+  if (!o || typeof o !== 'object') return o;
+  for (const k in o) {
+    const m = typeof o[k] === 'string' && DMY_RE.exec(o[k]);
+    if (m) o[k] = `${m[3]}-${m[2]}-${m[1]}`;
+  }
+  return o;
+}
 async function api(path, opts = {}) {
+  if (opts.body && !(opts.body instanceof FormData) && typeof opts.body === 'object') normalizeBodyDates(opts.body);
   const res = await fetch('/api' + path, {
     headers: opts.body instanceof FormData ? {} : { 'Content-Type': 'application/json' },
     ...opts,
@@ -41,7 +55,7 @@ function daysClass(d) { return d < 0 ? 'late' : d <= 14 ? 'warn' : ''; }
 function daysLabel(d) { return d < 0 ? `${-d}d overdue` : d === 0 ? 'today' : `in ${d}d`; }
 
 /* ---------- router ---------- */
-const routes = { dashboard: viewDashboard, money: viewMoney, bills: viewBills, vehicles: viewVehicles, properties: viewProperties, acte: viewActe, import: viewImport, alerts: viewAlerts, family: viewFamily };
+const routes = { dashboard: viewDashboard, money: viewMoney, bills: viewBills, vehicles: viewVehicles, properties: viewProperties, acte: viewActe, import: viewImport, alerts: viewAlerts, family: viewFamily, settings: viewSettings };
 window.addEventListener('hashchange', render);
 
 /* ---------- site notifications: polling, badge, browser notifications ---------- */
@@ -64,16 +78,27 @@ async function pollNotifications() {
 }
 setInterval(pollNotifications, 60000);
 
+function applyTheme() { document.documentElement.dataset.theme = (ME && ME.theme) || 'light'; }
+// profile picture: <img> if set, else a coloured circle with the initial
+function avatarHtml(user, cls = 'avatar') {
+  const size = cls === 'avatar-lg' ? 72 : 34;
+  if (user && user.avatar) return `<img class="${cls}" src="/api/users/${user.id}/avatar?v=${encodeURIComponent(user.avatar)}" alt="">`;
+  const initial = esc((user?.name || '?').trim().charAt(0).toUpperCase());
+  return `<span class="${cls} avatar-fallback" style="font-size:${Math.round(size * 0.42)}px">${initial}</span>`;
+}
+
 async function boot() {
   try {
     const me = await api('/me');
     ME = me.user; FAMILY = me.family;
+    applyTheme();
     render();
   } catch { renderAuth(); }
 }
 function render() {
   if (location.hash.startsWith('#reset=')) return renderReset();
   if (!ME) return renderAuth();
+  applyTheme();
   if (ME.role === 'tenant') return renderTenantPortal();
   const page = (location.hash || '#dashboard').slice(1);
   const fn = routes[page] || viewDashboard;
@@ -87,14 +112,14 @@ function shell(active) {
     ['dashboard', '⌂', 'Dashboard'], ['money', '₤', 'Budget & expenses'], ['bills', '☰', 'Bills'],
     ['vehicles', '⛟', 'Vehicles'], ['properties', '⌂', 'Properties'], ['acte', '❏', 'Acte'], ['import', '⇪', 'Bank import'],
     ['alerts', '◉', `Alerts<span id="notifbadge" class="notifbadge" ${NOTIF.unread ? '' : 'hidden'}>${NOTIF.unread}</span>`],
-    ['family', '☺', 'Family'],
+    ['family', '☺', 'Family'], ['settings', '⚙', 'Settings'],
   ];
   return `<div class="shell">
     <nav class="sidebar">
       <div class="brand">Family Hub<small>${esc(FAMILY.name)}</small></div>
       ${links.map(([k, ic, l]) => `<a class="navlink ${k === active ? 'active' : ''}" href="#${k}"><span aria-hidden="true">${ic}</span>${l}</a>`).join('')}
       <div class="spacer"></div>
-      <div class="whoami"><b>${esc(ME.name)}</b>${ME.role} · ${esc(ME.email)}</div>
+      <a class="whoami row" href="#settings" style="text-decoration:none;color:inherit;gap:8px">${avatarHtml(ME)}<span><b>${esc(ME.name)}</b>${ME.role} · ${esc(ME.email || '')}</span></a>
       <button class="navlink" id="logout">↩ Sign out</button>
     </nav>
     <main class="main" id="page"></main>
@@ -216,25 +241,37 @@ async function renderTenantPortal() {
 }
 
 /* ---------- dashboard ---------- */
+let DASH_VIEW = 'all'; // 'all' or a member id (person view)
 async function viewDashboard(el) {
-  el.innerHTML = `<div class="pagehead"><div><h1>Dashboard</h1><p>${new Date().toLocaleDateString('ro-RO', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</p></div></div><div id="dash">Loading…</div>`;
-  const [reminders, stats, budgets] = await Promise.all([api('/reminders?days=60'), api('/stats'), api('/budgets')]);
+  const members = await api('/family/members');
+  const isMe = DASH_VIEW !== 'all' && String(DASH_VIEW) === String(ME.id);
+  el.innerHTML = `<div class="pagehead">
+    <div><h1>Dashboard</h1><p>${new Date().toLocaleDateString('ro-RO', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</p></div>
+    <div><label style="display:inline">View</label><select id="dashview" style="width:200px">
+      <option value="all" ${DASH_VIEW === 'all' ? 'selected' : ''}>Whole family (total)</option>
+      ${members.filter((m) => m.role !== 'child' || true).map((m) => `<option value="${m.id}" ${String(DASH_VIEW) === String(m.id) ? 'selected' : ''}>${esc(m.name)}${m.id === ME.id ? ' (me)' : ''}</option>`).join('')}
+    </select></div></div><div id="dash">Loading…</div>`;
+  $('#dashview').onchange = (e) => { DASH_VIEW = e.target.value; viewDashboard(el); };
+  const q = DASH_VIEW === 'all' ? '' : `?user=${DASH_VIEW}`;
+  const remQ = DASH_VIEW === 'all' ? '?days=60' : `?days=60&user=${DASH_VIEW}`;
+  const [reminders, stats, budgets] = await Promise.all([api('/reminders' + remQ), api('/stats' + q), api('/budgets')]);
   const net = stats.income - stats.spent;
   const spentMap = Object.fromEntries(budgets.spent.map((s) => [s.category, s.spent]));
+  const scopeNote = DASH_VIEW === 'all' ? '' : ` <span class="muted">· ${esc((members.find((m) => String(m.id) === String(DASH_VIEW)) || {}).name || '')}</span>`;
   $('#dash').innerHTML = `
     <section>
-      <h2>Coming up — next 60 days</h2>
+      <h2>Coming up — next 60 days${scopeNote}</h2>
       ${reminders.length ? `<div class="ribbon">${reminders.map((r) => `
         <div class="stub ${daysClass(r.days_left)}">
           <div class="days">${daysLabel(r.days_left)}</div>
           <div class="what">${esc(r.label)}</div>
           <div class="who">${esc(r.entity || '')} · ${fdate(r.date)}${r.amount ? ` · <span class="amount">${money(r.amount)}</span>` : ''}</div>
         </div>`).join('')}</div>`
-      : `<div class="card empty"><b>Nothing due soon</b>Add bills, vehicle or property deadlines and they will line up here.</div>`}
+      : `<div class="card empty"><b>Nothing due soon</b>${DASH_VIEW === 'all' ? 'Add bills, vehicle or property deadlines and they will line up here.' : 'Nothing assigned to this person is coming up.'}</div>`}
     </section>
     <section class="kpi" style="margin-top:18px">
-      <div class="card"><div class="label">Income · ${stats.month}</div><div class="value">${money(stats.income)}</div></div>
-      <div class="card"><div class="label">Spent · ${stats.month}</div><div class="value">${money(stats.spent)}</div></div>
+      <a class="card clickcard" href="#money" data-tab="income"><div class="label">Income · ${stats.month}</div><div class="value">${money(stats.income)}</div></a>
+      <a class="card clickcard" href="#money" data-tab="expenses"><div class="label">Spent · ${stats.month}</div><div class="value">${money(stats.spent)}</div></a>
       <div class="card"><div class="label">Left over</div><div class="value ${net < 0 ? 'neg' : ''}">${money(net)}</div></div>
     </section>
     <section class="grid2" style="margin-top:18px">
@@ -250,9 +287,13 @@ async function viewDashboard(el) {
           <div class="bar"><i class="${s > b.amount ? 'over' : ''}" style="width:${pct}%"></i></div></div>`;
       }).join('') : `<p class="muted">No budgets set for this month yet — set them in <a href="#money">Budget & expenses</a>.</p>`}
     </section>`;
+  $('#dash').querySelectorAll('[data-tab]').forEach((a) => a.addEventListener('click', () => { PENDING_MONEY_TAB = a.dataset.tab; }));
   drawCharts(stats);
 }
+let PENDING_MONEY_TAB = null;
 function drawCharts(stats) {
+  const c0 = getComputedStyle(document.documentElement).getPropertyValue('--ink-soft').trim();
+  if (window.Chart) { Chart.defaults.color = c0 || '#666'; Chart.defaults.borderColor = getComputedStyle(document.documentElement).getPropertyValue('--line').trim() || '#ddd'; }
   const colors = ['#2f6b5a', '#c98a2d', '#5b7fa6', '#b23a2e', '#7c5ba6', '#3e7c4f', '#8a6d3b', '#45565f'];
   const cc = $('#catChart'); if (cc && stats.byCategory.length) new Chart(cc, {
     type: 'doughnut',
@@ -276,7 +317,8 @@ function drawCharts(stats) {
 }
 
 /* ---------- money: expenses / income / budgets ---------- */
-async function viewMoney(el, tab = 'expenses') {
+async function viewMoney(el, tab) {
+  if (tab == null) { tab = PENDING_MONEY_TAB || 'expenses'; PENDING_MONEY_TAB = null; }
   el.innerHTML = `<div class="pagehead"><div><h1>Budget & expenses</h1><p>Track what comes in, what goes out, and set monthly limits.</p></div>
     <a class="btn ghost small" href="/api/export/expenses.csv">Export expenses (CSV)</a></div>
     <div class="tabs" style="max-width:560px">
@@ -394,6 +436,7 @@ async function moneyCredits(body) {
       <div><label>Principal (${cur()})</label><input name="principal" type="number" step="0.01" min="0.01" required></div>
       <div><label>Dobândă (% / year)</label><input name="interest_rate" type="number" step="0.01" min="0" required></div>
       <div><label>Term (months)</label><input name="term_months" type="number" step="1" min="1" required></div>
+      <div><label>Commission (${cur()}/mo, fixed)</label><input name="commission" type="number" step="0.01" min="0" value="0"></div>
       <div><label>Start date</label><input name="start_date" type="date" value="${today()}" required></div>
       <div><label>Holder</label><select name="user_id"><option value="">Whole family</option>
         ${members.map((m) => `<option value="${m.id}">${esc(m.name)}</option>`).join('')}</select></div>
@@ -405,11 +448,11 @@ async function moneyCredits(body) {
   const f = $('#credform');
   if (f) {
     const preview = () => {
-      const P = Number(f.principal.value), rate = f.interest_rate.value, n = Number(f.term_months.value);
+      const P = Number(f.principal.value), rate = f.interest_rate.value, n = Number(f.term_months.value), com = Number(f.commission.value) || 0;
       if (P > 0 && n >= 1 && rate !== '' && Number(rate) >= 0) {
         const r = Number(rate) / 100 / 12;
         const pay = r > 0 ? (P * r) / (1 - Math.pow(1 + r, -n)) : P / n;
-        $('#credpreview').textContent = `Calculated payment: ${money(pay)} / month · total interest over ${n} months: ${money(pay * n - P)}`;
+        $('#credpreview').textContent = `Monthly: ${money(pay + com)}${com ? ` (rate ${money(pay)} + commission ${money(com)})` : ''} · total interest over ${n} months: ${money(pay * n - P)}`;
       } else $('#credpreview').textContent = '';
     };
     f.addEventListener('input', preview);
@@ -426,14 +469,14 @@ function creditCard(c, refresh) {
   const wrap = document.createElement('details');
   wrap.className = 'entity';
   const saved = c.interest_saved > 0.005;
-  wrap.innerHTML = `<summary><span><b>${esc(c.name)}</b> <span class="muted">${[c.lender, c.user_name || 'Whole family', c.property_name, `${money(c.monthly_payment)}/mo`].filter(Boolean).map(esc).join(' · ')}</span>
+  wrap.innerHTML = `<summary><span><b>${esc(c.name)}</b> <span class="muted">${[c.lender, c.user_name || 'Whole family', c.property_name, `${money(c.monthly_total)}/mo`].filter(Boolean).map(esc).join(' · ')}</span>
       ${saved ? `<span class="badge paid">saved ${money(c.interest_saved)}</span>` : ''}</span>
     ${canWrite() ? `<span class="row"><button class="btn danger small" data-del>Delete</button></span>` : ''}</summary>
     <div class="body">
       <div class="deadgrid">
         <div class="dead"><span class="muted">Holder</span><div class="d">${esc(c.user_name || 'Whole family')}</div></div>
         <div class="dead"><span class="muted">Property</span><div class="d">${esc(c.property_name || '—')}</div></div>
-        <div class="dead"><span class="muted">Monthly payment · dobândă ${c.interest_rate}%</span><div class="d">${money(c.monthly_payment)}</div></div>
+        <div class="dead"><span class="muted">Monthly total · dobândă ${c.interest_rate}%</span><div class="d">${money(c.monthly_total)}${c.commission ? ` <span class="muted">(${money(c.monthly_payment)} + ${money(c.commission)} com.)</span>` : ''}</div></div>
         <div class="dead"><span class="muted">Balance today</span><div class="d">${money(c.balance)}</div></div>
         <div class="dead"><span class="muted">Payoff</span><div class="d">${fdate(c.payoff_date)} · ${c.months_left} mo left</div></div>
         <div class="dead"><span class="muted">Anticipated payments</span><div class="d">${money(c.prepaid_total)}</div></div>
@@ -475,36 +518,46 @@ function creditCard(c, refresh) {
 }
 
 /* ---------- bills ---------- */
+function billFormFields(members, properties, b = {}) {
+  return `
+    <div><label>Name</label><input name="name" placeholder="Electricity — apartment" value="${esc(b.name || '')}" required></div>
+    <div><label>Provider</label><input name="provider" placeholder="PPC, Engie, Digi…" value="${esc(b.provider || '')}"></div>
+    <div><label>Category</label><select name="category">${Object.entries(BILL_CATS).map(([k, v]) => `<option value="${k}" ${b.category === k ? 'selected' : ''}>${v}</option>`).join('')}</select></div>
+    <div><label>Amount (${cur()})</label><input name="amount" type="number" step="0.01" min="0" value="${b.amount ?? ''}"></div>
+    <div><label>Due date</label><input name="due_date" type="date" value="${b.due_date || ''}" required></div>
+    <div><label>Repeats</label><select name="recur_months">${[[0, 'One-off'], [1, 'Monthly'], [2, 'Every 2 months'], [3, 'Quarterly'], [6, 'Every 6 months'], [12, 'Yearly']].map(([v, l]) => `<option value="${v}" ${Number(b.recur_months ?? 1) === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+    <div><label>Responsible person</label><select name="owner_id"><option value="">Whole family</option>${members.map((m) => `<option value="${m.id}" ${String(b.owner_id) === String(m.id) ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}</select></div>
+    <div><label>Linked property</label><select name="property_id"><option value="">None</option>${properties.map((p) => `<option value="${p.id}" ${String(b.property_id) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></div>
+    <div style="align-self:center"><label style="display:inline-flex;align-items:center;gap:6px;font-size:13px"><input type="checkbox" name="auto_pay" value="1" ${b.auto_pay ? 'checked' : ''} style="width:auto"> Auto-paid subscription</label></div>`;
+}
 async function viewBills(el) {
-  const bills = await api('/bills');
+  const [bills, members, properties] = await Promise.all([api('/bills'), api('/family/members'), api('/properties')]);
   const t = today();
-  el.innerHTML = `<div class="pagehead"><div><h1>Bills & invoices</h1><p>Electricity, gas, internet, water, taxes — with due dates, attachments and payment history.</p></div></div>
+  el.innerHTML = `<div class="pagehead"><div><h1>Bills & invoices</h1><p>Electricity, gas, internet, water, taxes — with due dates, owner, attachments and payment history. Auto-paid subscriptions are marked paid automatically once due.</p></div></div>
     ${canWrite() ? `<div class="card"><h3>Add bill</h3><form id="billform" class="formgrid">
-      <div><label>Name</label><input name="name" placeholder="Electricity — apartment" required></div>
-      <div><label>Provider</label><input name="provider" placeholder="PPC, Engie, Digi…"></div>
-      <div><label>Category</label><select name="category">${Object.entries(BILL_CATS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select></div>
-      <div><label>Amount (${cur()})</label><input name="amount" type="number" step="0.01" min="0"></div>
-      <div><label>Due date</label><input name="due_date" type="date" required></div>
-      <div><label>Repeats</label><select name="recur_months"><option value="0">One-off</option><option value="1" selected>Monthly</option><option value="2">Every 2 months</option><option value="3">Quarterly</option><option value="6">Every 6 months</option><option value="12">Yearly</option></select></div>
+      ${billFormFields(members, properties)}
       <button class="btn">Add bill</button></form></div>` : ''}
     <div class="card" style="margin-top:16px" id="billlist">
-      ${bills.length ? `<table><thead><tr><th>Bill</th><th>Due</th><th class="right">Amount</th><th>Status</th><th>Invoice</th><th></th></tr></thead><tbody>
+      ${bills.length ? `<table><thead><tr><th>Bill</th><th>Owner</th><th>Due</th><th class="right">Amount</th><th>Status</th><th>Invoice</th><th></th></tr></thead><tbody>
       ${bills.map((b) => {
         const late = b.status === 'unpaid' && b.due_date < t;
         return `<tr>
-          <td><b>${esc(b.name)}</b><br><span class="muted">${esc(b.provider || BILL_CATS[b.category] || '')}${b.recur_months ? ` · repeats every ${b.recur_months} mo` : ''}</span></td>
+          <td><b>${esc(b.name)}</b><br><span class="muted">${esc(b.provider || BILL_CATS[b.category] || '')}${b.recur_months ? ` · every ${b.recur_months} mo` : ''}${b.auto_pay ? ' · auto-pay' : ''}${b.property_name ? ` · ${esc(b.property_name)}` : ''}</span></td>
+          <td>${esc(b.owner_name || 'Family')}</td>
           <td>${fdate(b.due_date)}</td>
           <td class="right amount">${money(b.amount)}</td>
-          <td><span class="badge ${late ? 'late' : b.status}">${late ? 'overdue' : b.status}</span></td>
+          <td><span class="badge ${late ? 'late' : b.status}">${late ? 'overdue' : b.status}</span>${b.auto_pay && b.status === 'unpaid' ? '' : ''}</td>
           <td>${b.attachment ? `<a href="/api/bills/${b.id}/attachment" target="_blank">view</a>` : canWrite() ? `<label class="btn ghost small" style="display:inline-block">attach<input type="file" data-attach="${b.id}" accept=".pdf,image/*" hidden></label>` : '—'}</td>
           <td class="right">${canWrite() ? `
             ${b.status === 'unpaid' ? `<button class="btn small" data-pay="${b.id}" data-amt="${b.amount ?? ''}">Mark paid</button>` : ''}
+            <button class="btn ghost small" data-edit="${b.id}">Edit</button>
             <button class="btn ghost small" data-hist="${b.id}">History</button>
             <button class="btn danger small" data-del="${b.id}">Delete</button>` : `<button class="btn ghost small" data-hist="${b.id}">History</button>`}</td>
-        </tr><tr id="hist-${b.id}" hidden><td colspan="6"></td></tr>`;
+        </tr><tr id="row-${b.id}" hidden><td colspan="7"></td></tr>`;
       }).join('')}</tbody></table>`
       : `<div class="empty"><b>No bills yet</b>Add recurring utilities once — Family Hub rolls the due date forward every time you mark them paid.</div>`}
     </div>`;
+  const billsById = Object.fromEntries(bills.map((b) => [b.id, b]));
   $('#billform')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     try { await api('/bills', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) }); toast('Bill added'); viewBills(el); }
@@ -516,12 +569,26 @@ async function viewBills(el) {
     try { await api(`/bills/${b.dataset.pay}/pay`, { method: 'POST', body: { amount: Number(amt) } }); toast('Payment recorded — expense logged too'); viewBills(el); }
     catch (err) { toast(err.message); }
   }));
+  el.querySelectorAll('[data-edit]').forEach((b) => (b.onclick = () => {
+    const row = $('#row-' + b.dataset.edit);
+    if (!row.hidden) { row.hidden = true; return; }
+    const bill = billsById[b.dataset.edit];
+    row.firstElementChild.innerHTML = `<form class="formgrid" style="padding:6px 0">${billFormFields(members, properties, bill)}<button class="btn small">Save changes</button></form>`;
+    row.hidden = false;
+    row.querySelector('form').onsubmit = async (e) => {
+      e.preventDefault();
+      const body = Object.fromEntries(new FormData(e.target));
+      body.auto_pay = e.target.auto_pay.checked ? 1 : 0;
+      try { await api('/bills/' + b.dataset.edit, { method: 'PUT', body }); toast('Bill updated'); viewBills(el); }
+      catch (err) { toast(err.message); }
+    };
+  }));
   el.querySelectorAll('[data-del]').forEach((b) => (b.onclick = async () => {
     if (!confirm('Delete this bill and its history?')) return;
     await api('/bills/' + b.dataset.del, { method: 'DELETE' }); viewBills(el);
   }));
   el.querySelectorAll('[data-hist]').forEach((b) => (b.onclick = async () => {
-    const row = $('#hist-' + b.dataset.hist);
+    const row = $('#row-' + b.dataset.hist);
     if (!row.hidden) { row.hidden = true; return; }
     const pays = await api(`/bills/${b.dataset.hist}/payments`);
     row.firstElementChild.innerHTML = pays.length
@@ -539,17 +606,22 @@ async function viewBills(el) {
 /* ---------- vehicles ---------- */
 const V_DEADLINES = [['rca_expiry', 'RCA'], ['casco_expiry', 'Casco'], ['vignette_expiry', 'Rovinietă'], ['itp_expiry', 'ITP'], ['road_tax_due', 'Vehicle tax']];
 async function viewVehicles(el) {
-  const vehicles = await api('/vehicles');
+  const [vehicles, members] = await Promise.all([api('/vehicles'), api('/family/members')]);
+  const mname = Object.fromEntries(members.map((m) => [m.id, m.name]));
+  const ownerOpts = [['', 'Whole family'], ...members.map((m) => [m.id, m.name])];
   el.innerHTML = `<div class="pagehead"><div><h1>Vehicles</h1><p>RCA, Casco, rovinietă, ITP and vehicle tax deadlines, plus service, tires and fuel logs.</p></div></div>
     ${canWrite() ? entityForm('vehform', 'Add vehicle', [
       ['name', 'Name', 'text', 'Dacia Duster'], ['plate', 'Plate', 'text', 'B 123 ABC'],
+      ['owner_id', 'Owner', 'select', ownerOpts],
       ...V_DEADLINES.map(([k, l]) => [k, l + ' expires', 'date', '']),
     ]) : ''}
     <div id="vehlist" style="margin-top:16px">${vehicles.length ? '' : `<div class="card empty"><b>No vehicles yet</b>Add your car above to start getting deadline reminders.</div>`}</div>`;
   bindEntityForm('vehform', '/vehicles', () => viewVehicles(el));
   const list = $('#vehlist');
   for (const v of vehicles) list.appendChild(entityCard(v, {
-    subtitle: v.plate, deadlines: V_DEADLINES, route: 'vehicles',
+    subtitle: [v.plate, `Owner: ${mname[v.owner_id] || 'whole family'}`].filter(Boolean).join(' · '),
+    deadlines: V_DEADLINES, route: 'vehicles',
+    editExtra: [['owner_id', 'Owner', 'select', ownerOpts]],
     recordTypes: { fuel: 'Fuel', service: 'Service', tires: 'Tires', other: 'Other' },
     recordFields: [['date', 'Date', 'date'], ['amount', `Amount (${cur()})`, 'number'], ['odometer', 'Odometer (km)', 'number'], ['note', 'Note', 'text']],
     refresh: () => viewVehicles(el),
@@ -1019,7 +1091,7 @@ async function viewFamily(el) {
       <button class="btn">Add child</button></form></div>` : ''}
     <div class="card" style="margin-top:16px"><h3>Members</h3>
       <table><thead><tr><th>Name</th><th>Email</th><th>Role</th>${isAdmin ? '<th></th>' : ''}</tr></thead><tbody>
-      ${members.map((m) => `<tr><td>${esc(m.name)}${m.id === ME.id ? ' <span class="muted">(you)</span>' : ''}</td><td>${m.email ? esc(m.email) : '<span class="muted">no login</span>'}</td>
+      ${members.map((m) => `<tr><td><span class="row" style="gap:8px">${avatarHtml(m)}<span>${esc(m.name)}${m.id === ME.id ? ' <span class="muted">(you)</span>' : ''}</span></span></td><td>${m.email ? esc(m.email) : '<span class="muted">no login</span>'}</td>
         <td>${isAdmin && m.id !== ME.id && m.email ? `<select data-role="${m.id}">${['admin', 'adult', 'child'].map((r) => `<option ${r === m.role ? 'selected' : ''}>${r}</option>`).join('')}</select>` : `<span class="badge role">${m.role}</span>`}</td>
         ${isAdmin ? `<td class="right">${m.id !== ME.id ? `<button class="btn danger small" data-del="${m.id}">Remove</button>` : ''}</td>` : ''}</tr>`).join('')}
       </tbody></table></div>
@@ -1060,5 +1132,88 @@ async function viewFamily(el) {
     toast('Saved'); render();
   });
 }
+
+/* ---------- settings: profile picture, theme, name ---------- */
+async function viewSettings(el) {
+  const members = await api('/family/members');
+  const kids = members.filter((m) => m.role === 'child');
+  const canEditKids = ME.role === 'admin' || ME.role === 'adult';
+  el.innerHTML = `<div class="pagehead"><div><h1>Settings</h1><p>Your profile, theme and family pictures.</p></div></div>
+    <div class="card"><h3>Appearance</h3>
+      <p class="muted" style="margin-top:0">Choose how Family Hub looks on this account.</p>
+      <div class="row">${['light', 'dark'].map((tm) => `<button class="btn ${ME.theme === tm ? '' : 'ghost'} small" data-theme="${tm}">${tm === 'light' ? '☀ Light' : '🌙 Dark'}</button>`).join('')}</div>
+    </div>
+    <div class="card" style="margin-top:16px"><h3>Your profile</h3>
+      <div class="row" style="gap:16px;align-items:center">${avatarHtml(ME, 'avatar-lg')}
+        <div class="row">
+          ${ME.role !== 'child' ? `<label class="btn ghost small" style="display:inline-block">Upload picture<input type="file" data-avatar="${ME.id}" data-self accept="image/*" hidden></label>` : ''}
+          ${ME.avatar ? `<button class="btn danger small" data-avadel="${ME.id}" data-self>Remove</button>` : ''}
+        </div></div>
+      ${ME.role !== 'child' ? `<form id="nameform" class="formgrid" style="margin-top:12px;max-width:380px">
+        <div><label>Display name</label><input name="name" value="${esc(ME.name)}" required></div>
+        <button class="btn small">Save name</button></form>` : ''}
+    </div>
+    ${canEditKids && kids.length ? `<div class="card" style="margin-top:16px"><h3>Children's pictures</h3>
+      <div class="row" style="gap:22px;flex-wrap:wrap">${kids.map((k) => `<div style="text-align:center">${avatarHtml(k, 'avatar-lg')}
+        <div style="margin-top:6px"><b>${esc(k.name)}</b></div>
+        <div class="row" style="justify-content:center;margin-top:4px">
+          <label class="btn ghost small" style="display:inline-block">Upload<input type="file" data-avatar="${k.id}" accept="image/*" hidden></label>
+          ${k.avatar ? `<button class="btn danger small" data-avadel="${k.id}">✕</button>` : ''}</div></div>`).join('')}</div></div>` : ''}`;
+  el.querySelectorAll('[data-theme]').forEach((b) => (b.onclick = async () => {
+    try { const u = await api('/settings', { method: 'POST', body: { theme: b.dataset.theme } }); ME = { ...ME, ...u }; applyTheme(); render(); }
+    catch (err) { toast(err.message); }
+  }));
+  $('#nameform')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try { const u = await api('/settings', { method: 'POST', body: { name: new FormData(e.target).get('name') } }); ME = { ...ME, ...u }; toast('Saved'); render(); }
+    catch (err) { toast(err.message); }
+  });
+  el.querySelectorAll('[data-avatar]').forEach((inp) => (inp.onchange = async () => {
+    if (!inp.files[0]) return;
+    const fd = new FormData(); fd.append('file', inp.files[0]);
+    try {
+      await api(`/users/${inp.dataset.avatar}/avatar`, { method: 'POST', body: fd });
+      if (inp.dataset.self !== undefined) { const me = await api('/me'); ME = me.user; render(); } else viewSettings(el);
+      toast('Picture updated');
+    } catch (err) { toast(err.message); }
+  }));
+  el.querySelectorAll('[data-avadel]').forEach((b) => (b.onclick = async () => {
+    try {
+      await api(`/users/${b.dataset.avadel}/avatar`, { method: 'DELETE' });
+      if (b.dataset.self !== undefined) { const me = await api('/me'); ME = me.user; render(); } else viewSettings(el);
+      toast('Removed');
+    } catch (err) { toast(err.message); }
+  }));
+}
+
+/* ---------- date inputs: show dd/mm/yyyy instead of the browser's locale format ----------
+   Native <input type="date"> is locked to the browser locale, so we turn every date field
+   into a numeric text field (numeric keypad on mobile, auto slashes). Values are converted
+   back to ISO centrally in api(); displayed dates use fdate(). */
+function upgradeDateInput(inp) {
+  const iso = inp.value; // browser normalized a type=date value to yyyy-mm-dd
+  inp.type = 'text';
+  inp.setAttribute('inputmode', 'numeric');
+  inp.setAttribute('maxlength', '10');
+  inp.setAttribute('placeholder', 'dd/mm/yyyy');
+  inp.setAttribute('pattern', '\\d{2}/\\d{2}/\\d{4}');
+  inp.title = 'Format: dd/mm/yyyy';
+  inp.classList.add('dateinput');
+  inp.value = ISO_RE.test(iso) ? isoToDMY(iso) : '';
+}
+function sweepDates(root) { root.querySelectorAll && root.querySelectorAll('input[type="date"]').forEach(upgradeDateInput); }
+new MutationObserver((muts) => {
+  for (const m of muts) for (const n of m.addedNodes) {
+    if (n.nodeType !== 1) continue;
+    if (n.matches && n.matches('input[type="date"]')) upgradeDateInput(n);
+    sweepDates(n);
+  }
+}).observe(app, { childList: true, subtree: true });
+document.addEventListener('input', (e) => {
+  const t = e.target;
+  if (!t.classList || !t.classList.contains('dateinput')) return;
+  const d = t.value.replace(/\D/g, '').slice(0, 8);
+  t.value = d.length > 4 ? `${d.slice(0, 2)}/${d.slice(2, 4)}/${d.slice(4)}` : d.length > 2 ? `${d.slice(0, 2)}/${d.slice(2)}` : d;
+});
 
 boot();
