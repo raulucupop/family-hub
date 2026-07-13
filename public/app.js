@@ -51,6 +51,7 @@ const RO = {
   'Appearance': 'Aspect', 'Choose how Family Hub looks on this account.': 'Alege cum arată Family Hub pentru acest cont.',
   '☀ Light': '☀ Luminos', '🌙 Dark': '🌙 Întunecat', 'Language': 'Limbă', 'Your profile': 'Profilul tău',
   'Upload picture': 'Încarcă poză', 'Remove': 'Elimină', 'Display name': 'Nume afișat', 'Save name': 'Salvează numele',
+  'Save profile': 'Salvează profilul', 'Birthday': 'Zi de naștere', 'Phone number': 'Număr de telefon',
   "Children's pictures": 'Pozele copiilor', 'Upload': 'Încarcă',
   // family
   'Invite someone': 'Invită pe cineva', 'Copy code': 'Copiază codul', 'Copy link': 'Copiază linkul', 'Generate new code': 'Generează cod nou',
@@ -1356,9 +1357,11 @@ async function viewSettings(el) {
           ${ME.role !== 'child' ? `<label class="btn ghost small" style="display:inline-block">Upload picture<input type="file" data-avatar="${ME.id}" data-self accept="image/*" hidden></label>` : ''}
           ${ME.avatar ? `<button class="btn danger small" data-avadel="${ME.id}" data-self>Remove</button>` : ''}
         </div></div>
-      ${ME.role !== 'child' ? `<form id="nameform" class="formgrid" style="margin-top:12px;max-width:380px">
+      ${ME.role !== 'child' ? `<form id="nameform" class="formgrid" style="margin-top:12px;max-width:560px">
         <div><label>Display name</label><input name="name" value="${esc(ME.name)}" required></div>
-        <button class="btn small">Save name</button></form>` : ''}
+        <div><label>Birthday</label><input name="birthday" type="date" value="${esc(ME.birthday || '')}"></div>
+        <div><label>Phone number</label><input name="phone" type="tel" value="${esc(ME.phone || '')}" placeholder="07xx xxx xxx"></div>
+        <button class="btn small">Save profile</button></form>` : ''}
     </div>
     ${canEditKids && kids.length ? `<div class="card" style="margin-top:16px"><h3>Children's pictures</h3>
       <div class="row" style="gap:22px;flex-wrap:wrap">${kids.map((k) => `<div style="text-align:center">${avatarHtml(k, 'avatar-lg')}
@@ -1376,7 +1379,7 @@ async function viewSettings(el) {
   }));
   $('#nameform')?.addEventListener('submit', async (e) => {
     e.preventDefault();
-    try { const u = await api('/settings', { method: 'POST', body: { name: new FormData(e.target).get('name') } }); ME = { ...ME, ...u }; toast('Saved'); render(); }
+    try { const u = await api('/settings', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) }); ME = { ...ME, ...u }; toast('Saved'); render(); }
     catch (err) { toast(err.message); }
   });
   el.querySelectorAll('[data-avatar]').forEach((inp) => (inp.onchange = async () => {

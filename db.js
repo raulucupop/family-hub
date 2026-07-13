@@ -55,6 +55,8 @@ CREATE TABLE IF NOT EXISTS users (
   avatar TEXT,                       -- stored filename of a profile picture
   theme TEXT NOT NULL DEFAULT 'light', -- 'light' | 'dark'
   lang TEXT NOT NULL DEFAULT 'en',     -- 'en' | 'ro'
+  birthday TEXT,                       -- YYYY-MM-DD
+  phone TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -324,6 +326,8 @@ const vrCols = db.prepare('PRAGMA table_info(vehicle_records)').all().map((c) =>
 if (!vrCols.includes('expense_id')) db.exec('ALTER TABLE vehicle_records ADD COLUMN expense_id INTEGER REFERENCES expenses(id) ON DELETE SET NULL');
 
 if (!userCols.includes('lang')) db.exec("ALTER TABLE users ADD COLUMN lang TEXT NOT NULL DEFAULT 'en'");
+if (!userCols.includes('birthday')) db.exec('ALTER TABLE users ADD COLUMN birthday TEXT');
+if (!userCols.includes('phone')) db.exec('ALTER TABLE users ADD COLUMN phone TEXT');
 
 const propCols = db.prepare('PRAGMA table_info(properties)').all().map((c) => c.name);
 if (!propCols.includes('owner_id')) db.exec('ALTER TABLE properties ADD COLUMN owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL');

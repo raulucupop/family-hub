@@ -54,7 +54,7 @@ function auth(req, res, next) {
   if (!token) return res.status(401).json({ error: 'Not signed in' });
   try {
     const payload = jwt.verify(token, JWT_SECRET);
-    const user = db.prepare('SELECT id, family_id, name, email, role, tenant_property_id, avatar, theme, lang FROM users WHERE id = ?').get(payload.uid);
+    const user = db.prepare('SELECT id, family_id, name, email, role, tenant_property_id, avatar, theme, lang, birthday, phone FROM users WHERE id = ?').get(payload.uid);
     if (!user) return res.status(401).json({ error: 'Account no longer exists' });
     // tenants only ever see their own charges — never the family's data
     if (user.role === 'tenant' && req.path !== '/api/me' && !req.path.startsWith('/api/tenant')) {
@@ -636,13 +636,16 @@ app.get('/api/bills/:id/attachment', auth, (req, res) => {
 // ---------- user settings & profile pictures ----------
 // theme + display name for the signed-in member
 app.post('/api/settings', auth, (req, res) => {
-  const { theme, name, lang } = req.body || {};
+  const { theme, name, lang, birthday, phone } = req.body || {};
   if (theme && !['light', 'dark'].includes(theme)) return res.status(400).json({ error: 'Unknown theme' });
   if (lang && !['en', 'ro'].includes(lang)) return res.status(400).json({ error: 'Unknown language' });
+  if (birthday != null && birthday !== '' && !isDate(birthday)) return res.status(400).json({ error: 'Birthday must be a valid date' });
   if (theme) db.prepare('UPDATE users SET theme = ? WHERE id = ?').run(theme, req.user.id);
   if (lang) db.prepare('UPDATE users SET lang = ? WHERE id = ?').run(lang, req.user.id);
   if (name && String(name).trim() && req.user.role !== 'child') db.prepare('UPDATE users SET name = ? WHERE id = ?').run(String(name).trim(), req.user.id);
-  res.json(db.prepare('SELECT id, family_id, name, email, role, avatar, theme, lang FROM users WHERE id = ?').get(req.user.id));
+  if (birthday !== undefined) db.prepare('UPDATE users SET birthday = ? WHERE id = ?').run(birthday || null, req.user.id);
+  if (phone !== undefined) db.prepare('UPDATE users SET phone = ? WHERE id = ?').run(str(phone), req.user.id);
+  res.json(db.prepare('SELECT id, family_id, name, email, role, avatar, theme, lang, birthday, phone FROM users WHERE id = ?').get(req.user.id));
 });
 // who may set a given member's picture: yourself (adult/admin), or a child if you can write
 function canEditAvatar(reqUser, target) {
