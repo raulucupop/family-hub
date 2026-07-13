@@ -966,11 +966,21 @@ app.post('/api/tenant/charges/:cid/pay', auth, (req, res) => {
   res.json({ ok: true });
 });
 
+// next upcoming occurrence of a yearly date (birthday): this year if still ahead, else next year
+function nextBirthday(bday) {
+  const [, mm, dd] = String(bday).split('-');
+  if (!mm || !dd) return null;
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const y = Number(todayStr.slice(0, 4));
+  const thisYear = `${y}-${mm}-${dd}`;
+  return thisYear >= todayStr ? thisYear : `${y + 1}-${mm}-${dd}`;
+}
+
 // ---------- reminders (aggregated deadlines) ----------
 function collectReminders(fid, horizon, scopeUserId = null) {
   const items = [];
-  // priority: cars & documents rank above property, above bills (used as a tiebreaker on same date)
-  const PRIO = { document: 3, rca: 3, casco: 3, vignette: 3, itp: 3, road_tax: 3, property_insurance: 2, property_tax: 2, bill: 1 };
+  // priority: birthdays, cars & documents rank above property, above bills (tiebreaker on same date)
+  const PRIO = { birthday: 3, document: 3, rca: 3, casco: 3, vignette: 3, itp: 3, road_tax: 3, property_insurance: 2, property_tax: 2, bill: 1 };
   const push = (kind, label, entity, date, id, owner, extra) => {
     if (!date) return;
     items.push({ kind, label, entity, date, ref_id: id, owner_id: owner ?? null, priority: PRIO[kind] || 1, ...extra });
@@ -1000,6 +1010,10 @@ function collectReminders(fid, horizon, scopeUserId = null) {
   }
   for (const d of db.prepare(`${DOC_SELECT} WHERE d.family_id = ? AND d.expiry_date IS NOT NULL`).all(fid)) {
     push('document', `Act: ${d.name}`, d.person_name || d.vehicle_name || d.property_name || 'Family', d.expiry_date, d.id, d.user_id);
+  }
+  // birthdays repeat yearly; show the next upcoming one. Family-wide (owner null) so everyone is reminded.
+  for (const u of db.prepare("SELECT id, name, birthday FROM users WHERE family_id = ? AND role != 'tenant' AND birthday IS NOT NULL AND birthday != ''").all(fid)) {
+    push('birthday', `🎂 ${u.name}'s birthday`, '', nextBirthday(u.birthday), u.id, null);
   }
   const today = new Date().toISOString().slice(0, 10);
   const limit = new Date(Date.now() + horizon * 86400000).toISOString().slice(0, 10);
