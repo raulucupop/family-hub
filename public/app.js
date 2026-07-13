@@ -59,6 +59,11 @@ const RO = {
   'Family settings': 'Setări familie', 'Currency': 'Monedă', 'Send invite': 'Trimite invitația', 'Role': 'Rol', 'no login': 'fără cont',
   // alerts
   'Alerts': 'Alerte', 'Mark all as read': 'Marchează toate ca citite', 'Browser notifications': 'Notificări în browser',
+  // lists
+  'Lists': 'Liste', 'Buy wishlist': 'De cumpărat', 'Travel wishlist': 'Călătorii', 'Grocery list': 'Cumpărături',
+  'Personal targets': 'Obiective personale', 'Wishlists, groceries and personal goals for the whole family.': 'Liste de dorințe, cumpărături și obiective personale pentru toată familia.',
+  'Item': 'Articol', 'Target': 'Obiectiv', 'Person': 'Persoană', 'Nothing here yet': 'Nimic aici încă',
+  'Add the first item above.': 'Adaugă primul articol mai sus.',
 };
 let LANG = 'en';
 function applyLang() { LANG = (ME && ME.lang) || 'en'; document.documentElement.lang = LANG; }
@@ -128,7 +133,7 @@ function daysClass(d) { return d < 0 ? 'late' : d <= 14 ? 'warn' : ''; }
 function daysLabel(d) { return d < 0 ? `${-d}d overdue` : d === 0 ? 'today' : `in ${d}d`; }
 
 /* ---------- router ---------- */
-const routes = { dashboard: viewDashboard, money: viewMoney, bills: viewBills, vehicles: viewVehicles, properties: viewProperties, acte: viewActe, import: viewImport, alerts: viewAlerts, family: viewFamily, settings: viewSettings };
+const routes = { dashboard: viewDashboard, money: viewMoney, bills: viewBills, vehicles: viewVehicles, properties: viewProperties, acte: viewActe, lists: viewLists, import: viewImport, alerts: viewAlerts, family: viewFamily, settings: viewSettings };
 window.addEventListener('hashchange', render);
 
 /* ---------- site notifications: polling, badge, browser notifications ---------- */
@@ -183,7 +188,7 @@ function render() {
 function shell(active) {
   const links = [
     ['dashboard', '⌂', 'Dashboard'], ['money', '₤', 'Budget & expenses'], ['bills', '☰', 'Bills'],
-    ['vehicles', '⛟', 'Vehicles'], ['properties', '⌂', 'Properties'], ['acte', '❏', 'Acte'], ['import', '⇪', 'Bank import'],
+    ['vehicles', '⛟', 'Vehicles'], ['properties', '⌂', 'Properties'], ['acte', '❏', 'Acte'], ['lists', '☑', 'Lists'], ['import', '⇪', 'Bank import'],
     ['alerts', '◉', `Alerts<span id="notifbadge" class="notifbadge" ${NOTIF.unread ? '' : 'hidden'}>${NOTIF.unread}</span>`],
     ['family', '☺', 'Family'], ['settings', '⚙', 'Settings'],
   ];
@@ -432,6 +437,7 @@ async function moneyExpenses(body, f = {}) {
       <div><label>Date</label><input name="date" type="date" value="${today()}" required></div>
       <div><label>Category</label><select name="category">${CATEGORIES.map((c) => `<option>${c}</option>`).join('')}</select></div>
       <div><label>Amount (${cur()})</label><input name="amount" type="number" step="0.01" min="0.01" required></div>
+      <div><label>Person</label><select name="user_id">${members.map((m) => `<option value="${m.id}" ${m.id === ME.id ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}</select></div>
       <div><label>Note</label><input name="note" placeholder="optional"></div>
       <button class="btn">Add expense</button></form></div>` : ''}
     <div class="card" style="margin-top:16px">
@@ -1096,6 +1102,51 @@ async function viewActe(el) {
     const fd = new FormData(); fd.append('file', inp.files[0]);
     try { await api(`/documents/${inp.dataset.attach}/attachment`, { method: 'POST', body: fd }); toast('Scan attached'); viewActe(el); }
     catch (err) { toast(err.message); }
+  }));
+}
+
+/* ---------- family lists ---------- */
+const LIST_DEFS = [
+  ['buy', 'Buy wishlist', 'PlayStation 5, canapea nouă…'],
+  ['travel', 'Travel wishlist', 'Roma, Maramureș…'],
+  ['grocery', 'Grocery list', 'Lapte, pâine, ouă…'],
+  ['targets', 'Personal targets', 'Learn to swim, read 12 books…'],
+];
+async function viewLists(el, tab = 'buy') {
+  const [items, members] = await Promise.all([api('/lists'), api('/family/members')]);
+  const def = LIST_DEFS.find((d) => d[0] === tab);
+  const rows = items.filter((i) => i.list === tab);
+  const openCount = rows.filter((i) => !i.done).length;
+  el.innerHTML = `<div class="pagehead"><div><h1>Lists</h1><p>Wishlists, groceries and personal goals for the whole family.</p></div></div>
+    <div class="tabs" style="max-width:680px">${LIST_DEFS.map(([k, l]) => `<button data-t="${k}" class="${k === tab ? 'active' : ''}">${l}</button>`).join('')}</div>
+    <div class="card">
+      ${canWrite() ? `<form id="listform" class="formgrid">
+        <div><label>${tab === 'targets' ? 'Target' : 'Item'}</label><input name="title" placeholder="${esc(def[2])}" required></div>
+        ${tab === 'buy' ? `<div><label>Est. price (${cur()})</label><input name="amount" type="number" step="0.01" min="0"></div>` : ''}
+        ${tab === 'targets' ? `<div><label>Person</label><select name="user_id">${members.map((m) => `<option value="${m.id}" ${m.id === ME.id ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}</select></div>` : ''}
+        <div><label>Note</label><input name="note" placeholder="optional"></div>
+        <button class="btn">Add</button></form>` : ''}
+      ${rows.length ? `<p class="muted" style="margin:12px 0 4px">${openCount} open · ${rows.length - openCount} done</p>
+      <table><tbody>
+        ${rows.map((i) => `<tr style="${i.done ? 'opacity:.55' : ''}">
+          <td style="width:30px">${canWrite() ? `<input type="checkbox" data-tog="${i.id}" ${i.done ? 'checked' : ''} style="width:auto">` : (i.done ? '✓' : '')}</td>
+          <td><b style="${i.done ? 'text-decoration:line-through' : ''}">${esc(i.title)}</b>${i.note ? `<br><span class="muted">${esc(i.note)}</span>` : ''}</td>
+          <td class="muted">${esc(i.user_name || '')}</td>
+          <td class="right amount">${i.amount ? money(i.amount) : ''}</td>
+          <td class="right">${canWrite() ? `<button class="btn danger small" data-del="${i.id}">✕</button>` : ''}</td></tr>`).join('')}
+      </tbody></table>` : `<div class="empty" style="margin-top:10px"><b>Nothing here yet</b>Add the first item above.</div>`}
+    </div>`;
+  el.querySelectorAll('.tabs button').forEach((b) => (b.onclick = () => viewLists(el, b.dataset.t)));
+  $('#listform')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try { await api('/lists', { method: 'POST', body: { ...Object.fromEntries(new FormData(e.target)), list: tab } }); viewLists(el, tab); }
+    catch (err) { toast(err.message); }
+  });
+  el.querySelectorAll('[data-tog]').forEach((c) => (c.onchange = async () => {
+    await api(`/lists/${c.dataset.tog}/toggle`, { method: 'POST' }); viewLists(el, tab);
+  }));
+  el.querySelectorAll('[data-del]').forEach((b) => (b.onclick = async () => {
+    await api('/lists/' + b.dataset.del, { method: 'DELETE' }); viewLists(el, tab);
   }));
 }
 

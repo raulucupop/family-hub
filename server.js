@@ -288,10 +288,14 @@ crud({
   route: 'expenses', table: 'expenses',
   fields: ['user_id', 'category', 'amount', 'note', 'date'],
   orderBy: 'date DESC, id DESC',
-  validate: (b) => {
+  validate: (b, req) => {
     if (!b.category) return 'Category is required';
     if (!(Number(b.amount) > 0)) return 'Amount must be greater than 0';
     if (!isDate(b.date)) return 'Date must be YYYY-MM-DD';
+    // adults can log an expense on behalf of any member, children included
+    if (num(b.user_id) != null && !db.prepare('SELECT id FROM users WHERE id = ? AND family_id = ?').get(num(b.user_id), req.user.family_id)) {
+      return 'Person must be a member of the family';
+    }
     return null;
   },
 });
@@ -975,6 +979,38 @@ function nextBirthday(bday) {
   const thisYear = `${y}-${mm}-${dd}`;
   return thisYear >= todayStr ? thisYear : `${y + 1}-${mm}-${dd}`;
 }
+
+// ---------- family lists (wishlists, groceries, personal targets) ----------
+const LIST_KINDS = ['buy', 'travel', 'grocery', 'targets'];
+app.get('/api/lists', auth, (req, res) => {
+  res.json(db.prepare(`
+    SELECT l.*, u.name AS user_name FROM list_items l
+    LEFT JOIN users u ON u.id = l.user_id
+    WHERE l.family_id = ? ORDER BY l.done, l.id DESC
+  `).all(req.user.family_id));
+});
+app.post('/api/lists', auth, canWrite, (req, res) => {
+  const b = req.body || {};
+  if (!LIST_KINDS.includes(b.list)) return res.status(400).json({ error: 'Unknown list' });
+  if (!str(b.title)) return res.status(400).json({ error: 'Write what it is first' });
+  let uid = num(b.user_id);
+  if (uid != null && !db.prepare('SELECT id FROM users WHERE id = ? AND family_id = ?').get(uid, req.user.family_id)) {
+    return res.status(400).json({ error: 'Person must be a member of the family' });
+  }
+  if (uid == null) uid = req.user.id;
+  const info = db.prepare('INSERT INTO list_items (family_id, list, title, note, amount, user_id) VALUES (?,?,?,?,?,?)')
+    .run(req.user.family_id, b.list, str(b.title), str(b.note), num(b.amount), uid);
+  res.json(db.prepare('SELECT * FROM list_items WHERE id = ?').get(info.lastInsertRowid));
+});
+app.post('/api/lists/:id/toggle', auth, canWrite, (req, res) => {
+  const info = db.prepare('UPDATE list_items SET done = 1 - done WHERE id = ? AND family_id = ?').run(req.params.id, req.user.family_id);
+  if (!info.changes) return res.status(404).json({ error: 'Not found' });
+  res.json({ ok: true });
+});
+app.delete('/api/lists/:id', auth, canWrite, (req, res) => {
+  db.prepare('DELETE FROM list_items WHERE id = ? AND family_id = ?').run(req.params.id, req.user.family_id);
+  res.json({ ok: true });
+});
 
 // ---------- reminders (aggregated deadlines) ----------
 function collectReminders(fid, horizon, scopeUserId = null) {

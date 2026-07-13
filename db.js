@@ -246,6 +246,20 @@ CREATE TABLE IF NOT EXISTS savings (
 );
 CREATE INDEX IF NOT EXISTS idx_savings_family ON savings(family_id);
 
+-- shared family lists: buy/travel wishlists, groceries, personal targets
+CREATE TABLE IF NOT EXISTS list_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  family_id INTEGER NOT NULL REFERENCES families(id) ON DELETE CASCADE,
+  list TEXT NOT NULL CHECK (list IN ('buy','travel','grocery','targets')),
+  title TEXT NOT NULL,
+  note TEXT,
+  amount REAL,                -- estimated price (buy wishlist)
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL, -- who added it / whose target
+  done INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_list_items_family ON list_items(family_id);
+
 -- bank import: remembers what was already imported so re-uploading a statement is safe
 CREATE TABLE IF NOT EXISTS imported_tx (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
