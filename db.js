@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS users (
   tenant_property_id INTEGER REFERENCES properties(id) ON DELETE SET NULL, -- tenants only: the rented property
   avatar TEXT,                       -- stored filename of a profile picture
   theme TEXT NOT NULL DEFAULT 'light', -- 'light' | 'dark'
+  lang TEXT NOT NULL DEFAULT 'en',     -- 'en' | 'ro'
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -179,7 +180,8 @@ CREATE TABLE IF NOT EXISTS vehicle_records (
   date TEXT NOT NULL,
   amount REAL,
   odometer INTEGER,
-  note TEXT
+  note TEXT,
+  expense_id INTEGER REFERENCES expenses(id) ON DELETE SET NULL
 );
 
 CREATE TABLE IF NOT EXISTS properties (
@@ -317,6 +319,11 @@ if (!docCols.includes('slot')) db.exec('ALTER TABLE documents ADD COLUMN slot TE
 const prCols2 = db.prepare('PRAGMA table_info(property_records)').all().map((c) => c.name);
 if (!prCols2.includes('user_id')) db.exec('ALTER TABLE property_records ADD COLUMN user_id INTEGER REFERENCES users(id) ON DELETE SET NULL');
 if (!prCols2.includes('expense_id')) db.exec('ALTER TABLE property_records ADD COLUMN expense_id INTEGER REFERENCES expenses(id) ON DELETE SET NULL');
+
+const vrCols = db.prepare('PRAGMA table_info(vehicle_records)').all().map((c) => c.name);
+if (!vrCols.includes('expense_id')) db.exec('ALTER TABLE vehicle_records ADD COLUMN expense_id INTEGER REFERENCES expenses(id) ON DELETE SET NULL');
+
+if (!userCols.includes('lang')) db.exec("ALTER TABLE users ADD COLUMN lang TEXT NOT NULL DEFAULT 'en'");
 
 const propCols = db.prepare('PRAGMA table_info(properties)').all().map((c) => c.name);
 if (!propCols.includes('owner_id')) db.exec('ALTER TABLE properties ADD COLUMN owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL');

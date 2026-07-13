@@ -6,6 +6,78 @@ const CATEGORIES = ['Groceries', 'Utilities', 'Transportation', 'Entertainment',
 const BILL_CATS = { electricity: 'Electricity', gas: 'Gas', internet: 'Internet', mobile: 'Mobile', water: 'Water', subscription: 'Subscription', property_tax: 'Property tax', other: 'Other' };
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+/* ---------- language (English default, Romanian overlay) ----------
+   The UI is authored in English; when the user's language is Romanian, a post-render pass
+   swaps matching text nodes and placeholders using this dictionary. Unmatched text stays English. */
+const RO = {
+  'Dashboard': 'Panou', 'Budget & expenses': 'Buget și cheltuieli', 'Bills': 'Facturi', 'Vehicles': 'Vehicule',
+  'Properties': 'Proprietăți', 'Acte': 'Acte', 'Bank import': 'Import bancar', 'Family': 'Familie', 'Settings': 'Setări',
+  '↩ Sign out': '↩ Deconectare', 'Sign out': 'Deconectare',
+  'Sign in': 'Autentificare', 'Register': 'Înregistrare', 'New family': 'Familie nouă', 'Tenant': 'Chiriaș',
+  'Forgot password?': 'Ai uitat parola?', 'Back to sign in': 'Înapoi la autentificare', 'Send reset link': 'Trimite linkul de resetare',
+  'Email': 'Email', 'Password': 'Parolă', 'Your name': 'Numele tău', 'Family name': 'Numele familiei', 'Invite code': 'Cod de invitație',
+  'Create family': 'Creează familia', 'Save new password': 'Salvează parola nouă', 'Choose a new password': 'Alege o parolă nouă',
+  // money
+  'Expenses': 'Cheltuieli', 'Income': 'Venituri', 'Budgets': 'Bugete', 'Credits': 'Credite', 'Savings': 'Economii',
+  'Track what comes in, what goes out, and set monthly limits.': 'Urmărește ce intră, ce iese și setează limite lunare.',
+  'Export expenses (CSV)': 'Exportă cheltuieli (CSV)',
+  'Add expense': 'Adaugă cheltuială', 'Add income': 'Adaugă venit', 'Date': 'Data', 'Category': 'Categorie', 'Amount': 'Sumă',
+  'Note': 'Notă', 'optional': 'opțional', 'Source': 'Sursă', 'All categories': 'Toate categoriile', 'All time': 'Tot timpul',
+  'Search note…': 'Caută notă…', 'Whole family': 'Toată familia', 'No matching expenses': 'Nicio cheltuială găsită',
+  'Adjust the filters or add one above.': 'Ajustează filtrele sau adaugă una mai sus.', 'By': 'De', 'Delete': 'Șterge',
+  'Income history': 'Istoric venituri', 'Monthly budgets': 'Bugete lunare', 'Save budgets': 'Salvează bugetele',
+  'Add or remove funds': 'Adaugă sau retrage fonduri', 'Economy account balance': 'Sold cont de economii',
+  'Deposit (add)': 'Depunere (adaugă)', 'Withdraw (remove)': 'Retragere', 'History': 'Istoric', 'Save': 'Salvează',
+  'Add credit (loan)': 'Adaugă credit', 'Add credit': 'Adaugă credit', 'Anticipated payments': 'Plăți anticipate', 'Add payment': 'Adaugă plată',
+  // dashboard
+  'This month': 'Luna aceasta', 'Last 3 months': 'Ultimele 3 luni', 'Last 6 months': 'Ultimele 6 luni', 'Last 12 months': 'Ultimele 12 luni',
+  'Whole family (total)': 'Toată familia (total)', 'Left over': 'Rămas', 'Income vs spending': 'Venituri vs cheltuieli',
+  'Coming up — next 60 days': 'Urmează — următoarele 60 de zile', 'Nothing due soon': 'Nimic scadent curând',
+  // bills
+  'Bills & invoices': 'Facturi', 'Add bill': 'Adaugă factură', 'Name': 'Nume', 'Provider': 'Furnizor', 'Due date': 'Scadență',
+  'Repeats': 'Se repetă', 'Responsible person': 'Persoana responsabilă', 'Linked property': 'Proprietate asociată',
+  'Auto-paid subscription': 'Abonament plătit automat', 'Owner': 'Proprietar', 'Due': 'Scadent', 'Status': 'Stare', 'Invoice': 'Factură',
+  'Mark paid': 'Marchează plătit', 'Edit': 'Editează', 'Save changes': 'Salvează modificările',
+  // vehicles/properties
+  'Add vehicle': 'Adaugă vehicul', 'Add property': 'Adaugă proprietate', 'Add': 'Adaugă', 'Add record': 'Adaugă înregistrare',
+  'History & costs': 'Istoric și costuri', 'History — costs & income': 'Istoric — costuri și venituri', 'Documents & scans': 'Documente și scanări',
+  'Add document': 'Adaugă document', 'Tenant & rent': 'Chiriaș și chirie', 'Type': 'Tip', 'Address': 'Adresă',
+  // acte
+  'ID cards, passports, certificates, talon auto, contracts — linked to a person, vehicle or property, with expiry reminders and scans.':
+    'Buletine, pașapoarte, certificate, talon auto, contracte — legate de o persoană, vehicul sau proprietate, cu memento de expirare și scanări.',
+  'Document': 'Document', 'Belongs to': 'Aparține de', 'Family (general)': 'Familie (general)', 'Expiry date': 'Data expirării', 'Expires': 'Expiră',
+  // settings
+  'Appearance': 'Aspect', 'Choose how Family Hub looks on this account.': 'Alege cum arată Family Hub pentru acest cont.',
+  '☀ Light': '☀ Luminos', '🌙 Dark': '🌙 Întunecat', 'Language': 'Limbă', 'Your profile': 'Profilul tău',
+  'Upload picture': 'Încarcă poză', 'Remove': 'Elimină', 'Display name': 'Nume afișat', 'Save name': 'Salvează numele',
+  "Children's pictures": 'Pozele copiilor', 'Upload': 'Încarcă',
+  // family
+  'Invite someone': 'Invită pe cineva', 'Copy code': 'Copiază codul', 'Copy link': 'Copiază linkul', 'Generate new code': 'Generează cod nou',
+  'Members': 'Membri', 'Add a child (no account)': 'Adaugă un copil (fără cont)', 'Add child': 'Adaugă copil',
+  'Family settings': 'Setări familie', 'Currency': 'Monedă', 'Send invite': 'Trimite invitația', 'Role': 'Rol', 'no login': 'fără cont',
+  // alerts
+  'Alerts': 'Alerte', 'Mark all as read': 'Marchează toate ca citite', 'Browser notifications': 'Notificări în browser',
+};
+let LANG = 'en';
+function applyLang() { LANG = (ME && ME.lang) || 'en'; document.documentElement.lang = LANG; }
+function translateSubtree(root) {
+  if (LANG !== 'ro' || !root) return;
+  // placeholders + option/input values via attributes
+  const els = root.nodeType === 1 ? [root, ...root.querySelectorAll('*')] : [];
+  for (const el of els) {
+    const ph = el.getAttribute && el.getAttribute('placeholder');
+    if (ph && RO[ph.trim()]) el.setAttribute('placeholder', RO[ph.trim()]);
+  }
+  // text nodes (exact-match whole phrase, whitespace preserved)
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const nodes = [];
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) nodes.push(n);
+  for (const n of nodes) {
+    const raw = n.nodeValue; const key = raw.trim();
+    if (key && RO[key]) n.nodeValue = raw.replace(key, RO[key]);
+  }
+}
 const cur = () => (FAMILY?.currency || 'RON');
 const money = (n) => n == null ? '—' : `${Number(n).toLocaleString('ro-RO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${cur()}`;
 // dates: stored/handled as ISO (yyyy-mm-dd), shown to the user as dd/mm/yyyy
@@ -91,14 +163,14 @@ async function boot() {
   try {
     const me = await api('/me');
     ME = me.user; FAMILY = me.family;
-    applyTheme();
+    applyTheme(); applyLang();
     render();
   } catch { renderAuth(); }
 }
 function render() {
   if (location.hash.startsWith('#reset=')) return renderReset();
   if (!ME) return renderAuth();
-  applyTheme();
+  applyTheme(); applyLang();
   if (ME.role === 'tenant') return renderTenantPortal();
   const page = (location.hash || '#dashboard').slice(1);
   const fn = routes[page] || viewDashboard;
@@ -342,11 +414,18 @@ function whoFilter(id, members, who) {
     ${members.map((m) => `<option value="${m.id}" ${String(m.id) === String(who) ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}
   </select>`;
 }
-async function moneyExpenses(body, month = thisMonth(), who = 'all') {
+async function moneyExpenses(body, f = {}) {
+  const flt = { month: thisMonth(), who: 'all', cat: 'all', q: '', ...f };
   const [all, members] = await Promise.all([api('/expenses'), api('/family/members')]);
   const mname = Object.fromEntries(members.map((m) => [m.id, m.name]));
-  const rows = all.filter((e) => e.date.startsWith(month) && (who === 'all' || String(e.user_id) === String(who)));
+  const q = flt.q.trim().toLowerCase();
+  const rows = all.filter((e) =>
+    (flt.month === 'all' || e.date.startsWith(flt.month)) &&
+    (flt.who === 'all' || String(e.user_id) === String(flt.who)) &&
+    (flt.cat === 'all' || e.category === flt.cat) &&
+    (!q || (e.note || '').toLowerCase().includes(q) || e.category.toLowerCase().includes(q)));
   const total = rows.reduce((s, e) => s + e.amount, 0);
+  const reload = (patch) => moneyExpenses(body, { ...flt, ...patch });
   body.innerHTML = `
     ${canWrite() ? `<div class="card"><h3>Add expense</h3><form id="expform" class="formgrid">
       <div><label>Date</label><input name="date" type="date" value="${today()}" required></div>
@@ -355,25 +434,34 @@ async function moneyExpenses(body, month = thisMonth(), who = 'all') {
       <div><label>Note</label><input name="note" placeholder="optional"></div>
       <button class="btn">Add expense</button></form></div>` : ''}
     <div class="card" style="margin-top:16px">
-      <div class="row" style="justify-content:space-between"><h3 style="margin:0">Expenses</h3>
-        <div class="row">${whoFilter('wfilter', members, who)}<input id="mfilter" type="month" value="${month}" style="width:160px">
-        <span class="amount"><b>${money(total)}</b></span></div></div>
+      <div class="row" style="justify-content:space-between;gap:10px"><h3 style="margin:0">Expenses</h3><span class="amount"><b>${money(total)}</b></span></div>
+      <div class="row" style="gap:8px;margin:10px 0;flex-wrap:wrap">
+        ${whoFilter('wfilter', members, flt.who)}
+        <select id="cfilter" style="width:150px"><option value="all" ${flt.cat === 'all' ? 'selected' : ''}>All categories</option>${CATEGORIES.map((c) => `<option ${flt.cat === c ? 'selected' : ''}>${c}</option>`).join('')}</select>
+        <input id="mfilter" type="month" value="${flt.month === 'all' ? '' : flt.month}" style="width:150px">
+        <button class="btn ghost small" id="allmonths">${flt.month === 'all' ? '● All time' : 'All time'}</button>
+        <input id="qfilter" type="search" placeholder="Search note…" value="${esc(flt.q)}" style="width:180px">
+      </div>
       ${rows.length ? `<table><thead><tr><th>Date</th><th>Category</th><th>By</th><th>Note</th><th class="right">Amount</th><th></th></tr></thead><tbody>
         ${rows.map((e) => `<tr><td>${fdate(e.date)}</td><td>${esc(e.category)}</td><td>${esc(mname[e.user_id] || '—')}</td><td>${esc(e.note || '')}</td>
           <td class="right amount">${money(e.amount)}</td>
           <td class="right">${canWrite() ? `<button class="btn danger small" data-del="${e.id}">Delete</button>` : ''}</td></tr>`).join('')}
-      </tbody></table>` : `<div class="empty"><b>No expenses in ${month}${who === 'all' ? '' : ` for ${esc(mname[who] || '')}`}</b>Add one above to start tracking.</div>`}
+      </tbody></table>` : `<div class="empty"><b>No matching expenses</b>Adjust the filters or add one above.</div>`}
     </div>`;
-  $('#mfilter').onchange = (e) => moneyExpenses(body, e.target.value, who);
-  $('#wfilter').onchange = (e) => moneyExpenses(body, month, e.target.value);
+  $('#mfilter').onchange = (e) => reload({ month: e.target.value || thisMonth() });
+  $('#allmonths').onclick = () => reload({ month: flt.month === 'all' ? thisMonth() : 'all' });
+  $('#wfilter').onchange = (e) => reload({ who: e.target.value });
+  $('#cfilter').onchange = (e) => reload({ cat: e.target.value });
+  const qEl = $('#qfilter');
+  qEl.oninput = () => { clearTimeout(qEl._h); qEl._h = setTimeout(() => reload({ q: qEl.value }), 250); };
   $('#expform')?.addEventListener('submit', async (e) => {
     e.preventDefault();
-    try { await api('/expenses', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) }); toast('Expense added'); moneyExpenses(body, month, who); }
+    try { await api('/expenses', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) }); toast('Expense added'); reload(); }
     catch (err) { toast(err.message); }
   });
   body.querySelectorAll('[data-del]').forEach((b) => (b.onclick = async () => {
     if (!confirm('Delete this expense?')) return;
-    await api('/expenses/' + b.dataset.del, { method: 'DELETE' }); moneyExpenses(body, month, who);
+    await api('/expenses/' + b.dataset.del, { method: 'DELETE' }); reload();
   }));
 }
 async function moneyIncome(body, who = 'all') {
@@ -1259,6 +1347,8 @@ async function viewSettings(el) {
     <div class="card"><h3>Appearance</h3>
       <p class="muted" style="margin-top:0">Choose how Family Hub looks on this account.</p>
       <div class="row">${['light', 'dark'].map((tm) => `<button class="btn ${ME.theme === tm ? '' : 'ghost'} small" data-theme="${tm}">${tm === 'light' ? '☀ Light' : '🌙 Dark'}</button>`).join('')}</div>
+      <p class="muted" style="margin:14px 0 6px">Language</p>
+      <div class="row">${[['en', '🇬🇧 English'], ['ro', '🇷🇴 Română']].map(([lg, lb]) => `<button class="btn ${(ME.lang || 'en') === lg ? '' : 'ghost'} small" data-lang="${lg}">${lb}</button>`).join('')}</div>
     </div>
     <div class="card" style="margin-top:16px"><h3>Your profile</h3>
       <div class="row" style="gap:16px;align-items:center">${avatarHtml(ME, 'avatar-lg')}
@@ -1278,6 +1368,10 @@ async function viewSettings(el) {
           ${k.avatar ? `<button class="btn danger small" data-avadel="${k.id}">✕</button>` : ''}</div></div>`).join('')}</div></div>` : ''}`;
   el.querySelectorAll('[data-theme]').forEach((b) => (b.onclick = async () => {
     try { const u = await api('/settings', { method: 'POST', body: { theme: b.dataset.theme } }); ME = { ...ME, ...u }; applyTheme(); render(); }
+    catch (err) { toast(err.message); }
+  }));
+  el.querySelectorAll('[data-lang]').forEach((b) => (b.onclick = async () => {
+    try { const u = await api('/settings', { method: 'POST', body: { lang: b.dataset.lang } }); ME = { ...ME, ...u }; applyLang(); render(); }
     catch (err) { toast(err.message); }
   }));
   $('#nameform')?.addEventListener('submit', async (e) => {
@@ -1324,6 +1418,7 @@ new MutationObserver((muts) => {
     if (n.nodeType !== 1) continue;
     if (n.matches && n.matches('input[type="date"]')) upgradeDateInput(n);
     sweepDates(n);
+    translateSubtree(n);
   }
 }).observe(app, { childList: true, subtree: true });
 document.addEventListener('input', (e) => {

@@ -54,7 +54,7 @@ function auth(req, res, next) {
   if (!token) return res.status(401).json({ error: 'Not signed in' });
   try {
     const payload = jwt.verify(token, JWT_SECRET);
-    const user = db.prepare('SELECT id, family_id, name, email, role, tenant_property_id, avatar, theme FROM users WHERE id = ?').get(payload.uid);
+    const user = db.prepare('SELECT id, family_id, name, email, role, tenant_property_id, avatar, theme, lang FROM users WHERE id = ?').get(payload.uid);
     if (!user) return res.status(401).json({ error: 'Account no longer exists' });
     // tenants only ever see their own charges — never the family's data
     if (user.role === 'tenant' && req.path !== '/api/me' && !req.path.startsWith('/api/tenant')) {
@@ -636,11 +636,13 @@ app.get('/api/bills/:id/attachment', auth, (req, res) => {
 // ---------- user settings & profile pictures ----------
 // theme + display name for the signed-in member
 app.post('/api/settings', auth, (req, res) => {
-  const { theme, name } = req.body || {};
+  const { theme, name, lang } = req.body || {};
   if (theme && !['light', 'dark'].includes(theme)) return res.status(400).json({ error: 'Unknown theme' });
+  if (lang && !['en', 'ro'].includes(lang)) return res.status(400).json({ error: 'Unknown language' });
   if (theme) db.prepare('UPDATE users SET theme = ? WHERE id = ?').run(theme, req.user.id);
+  if (lang) db.prepare('UPDATE users SET lang = ? WHERE id = ?').run(lang, req.user.id);
   if (name && String(name).trim() && req.user.role !== 'child') db.prepare('UPDATE users SET name = ? WHERE id = ?').run(String(name).trim(), req.user.id);
-  res.json(db.prepare('SELECT id, family_id, name, email, role, avatar, theme FROM users WHERE id = ?').get(req.user.id));
+  res.json(db.prepare('SELECT id, family_id, name, email, role, avatar, theme, lang FROM users WHERE id = ?').get(req.user.id));
 });
 // who may set a given member's picture: yourself (adult/admin), or a child if you can write
 function canEditAvatar(reqUser, target) {
@@ -772,7 +774,39 @@ function subRecords(route, table, parentTable, parentKey, types) {
     res.json({ ok: true });
   });
 }
-subRecords('vehicles', 'vehicle_records', 'vehicles', 'vehicle_id', ['service', 'tires', 'fuel', 'other']);
+// vehicle records: each cost (fuel, service, tires…) also becomes a family expense attributed to the car's owner
+const VEH_REC_TYPES = ['service', 'tires', 'fuel', 'other'];
+const VEH_CAT_MAP = { fuel: 'Transportation', service: 'Transportation', tires: 'Transportation', other: 'Other' };
+app.get('/api/vehicles/:pid/records', auth, (req, res) => {
+  res.json(db.prepare('SELECT * FROM vehicle_records WHERE vehicle_id = ? AND family_id = ? ORDER BY date DESC, id DESC').all(req.params.pid, req.user.family_id));
+});
+app.post('/api/vehicles/:pid/records', auth, canWrite, (req, res) => {
+  const veh = db.prepare('SELECT * FROM vehicles WHERE id = ? AND family_id = ?').get(req.params.pid, req.user.family_id);
+  if (!veh) return res.status(404).json({ error: 'Not found' });
+  const b = req.body || {};
+  if (!VEH_REC_TYPES.includes(b.type)) return res.status(400).json({ error: 'Invalid record type' });
+  if (!isDate(b.date)) return res.status(400).json({ error: 'Date must be YYYY-MM-DD' });
+  let expenseId = null;
+  const rid = db.transaction(() => {
+    if (Number(b.amount) > 0) {
+      const ei = db.prepare('INSERT INTO expenses (family_id, user_id, category, amount, note, date) VALUES (?,?,?,?,?,?)')
+        .run(veh.family_id, veh.owner_id, VEH_CAT_MAP[b.type] || 'Transportation', Number(b.amount), `Vehicle: ${veh.name} — ${b.type}${b.note ? ': ' + b.note : ''}`, b.date);
+      expenseId = ei.lastInsertRowid;
+    }
+    return db.prepare('INSERT INTO vehicle_records (vehicle_id, family_id, type, date, amount, odometer, note, expense_id) VALUES (?,?,?,?,?,?,?,?)')
+      .run(veh.id, veh.family_id, b.type, b.date, num(b.amount), num(b.odometer), str(b.note), expenseId).lastInsertRowid;
+  })();
+  res.json(db.prepare('SELECT * FROM vehicle_records WHERE id = ?').get(rid));
+});
+app.delete('/api/vehicles/:pid/records/:rid', auth, canWrite, (req, res) => {
+  const row = db.prepare('SELECT * FROM vehicle_records WHERE id = ? AND family_id = ?').get(req.params.rid, req.user.family_id);
+  if (!row) return res.json({ ok: true });
+  db.transaction(() => {
+    if (row.expense_id) db.prepare('DELETE FROM expenses WHERE id = ? AND family_id = ?').run(row.expense_id, req.user.family_id);
+    db.prepare('DELETE FROM vehicle_records WHERE id = ?').run(row.id);
+  })();
+  res.json({ ok: true });
+});
 
 // property records: cost entries also become a family expense (attributed to a member) or a tenant invoice;
 // income entries (rent / other income) are property-summary records only.
