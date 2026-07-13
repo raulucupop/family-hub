@@ -1071,9 +1071,13 @@ app.get('/api/reminders', auth, (req, res) => {
 
 // ---------- site notifications ----------
 const THRESHOLDS = [30, 14, 7, 1, 0];
+// only the important stuff raises alerts: insurance, car deadlines, PAD and personal papers.
+// regular bills stay visible in the dashboard ribbon but never notify.
+const ALERT_KINDS = new Set(['rca', 'casco', 'vignette', 'itp', 'road_tax', 'property_insurance', 'document', 'birthday']);
 function generateNotifications(fid) {
   const ins = db.prepare('INSERT OR IGNORE INTO notifications (family_id, key, title, body, owner_id) VALUES (?,?,?,?,?)');
   for (const r of collectReminders(fid, 31)) {
+    if (!ALERT_KINDS.has(r.kind)) continue;
     if (r.days_left < 0) {
       ins.run(fid, `${r.kind}:${r.ref_id}:${r.date}:overdue`,
         `Overdue: ${r.label}`, `${r.entity || ''} — was due ${r.date}${r.amount ? `, ${r.amount}` : ''}`.trim(), r.owner_id);
@@ -1280,26 +1284,60 @@ app.get('/api/stats', auth, (req, res) => {
   res.json({ month, months, startMonth, byCategory, income, spent, trend, incomeTrend });
 });
 
-// ---------- savings / economy account ----------
+// ---------- savings / economy account & goals ----------
 app.get('/api/savings', auth, (req, res) => {
   const fid = req.user.family_id;
-  const rows = db.prepare('SELECT s.*, u.name AS user_name FROM savings s LEFT JOIN users u ON u.id = s.user_id WHERE s.family_id = ? ORDER BY s.date DESC, s.id DESC').all(fid);
+  const rows = db.prepare(`
+    SELECT s.*, u.name AS user_name, g.title AS goal_title FROM savings s
+    LEFT JOIN users u ON u.id = s.user_id
+    LEFT JOIN savings_goals g ON g.id = s.goal_id
+    WHERE s.family_id = ? ORDER BY s.date DESC, s.id DESC
+  `).all(fid);
   const balance = rows.reduce((t, r) => t + (r.kind === 'deposit' ? r.amount : -r.amount), 0);
   const byUser = {};
   for (const r of rows) { const k = r.user_name || '—'; byUser[k] = (byUser[k] || 0) + (r.kind === 'deposit' ? r.amount : -r.amount); }
-  res.json({ balance: Math.round(balance * 100) / 100, byUser, entries: rows });
+  const goals = db.prepare(`
+    SELECT g.*, u.name AS user_name,
+      COALESCE((SELECT SUM(CASE WHEN s.kind = 'deposit' THEN s.amount ELSE -s.amount END) FROM savings s WHERE s.goal_id = g.id), 0) AS saved
+    FROM savings_goals g LEFT JOIN users u ON u.id = g.user_id
+    WHERE g.family_id = ? ORDER BY g.done, g.id DESC
+  `).all(fid);
+  res.json({ balance: Math.round(balance * 100) / 100, byUser, goals, entries: rows });
 });
 app.post('/api/savings', auth, canWrite, (req, res) => {
   const b = req.body || {};
   if (!['deposit', 'withdrawal'].includes(b.kind)) return res.status(400).json({ error: 'Kind must be deposit or withdrawal' });
   if (!(Number(b.amount) > 0)) return res.status(400).json({ error: 'Amount must be greater than 0' });
   if (!isDate(b.date)) return res.status(400).json({ error: 'Date must be YYYY-MM-DD' });
-  const info = db.prepare('INSERT INTO savings (family_id, user_id, kind, amount, date, note) VALUES (?,?,?,?,?,?)')
-    .run(req.user.family_id, req.user.id, b.kind, Number(b.amount), b.date, str(b.note));
+  if (num(b.goal_id) != null && !db.prepare('SELECT id FROM savings_goals WHERE id = ? AND family_id = ?').get(num(b.goal_id), req.user.family_id)) {
+    return res.status(400).json({ error: 'Goal not found' });
+  }
+  const info = db.prepare('INSERT INTO savings (family_id, user_id, kind, amount, date, note, goal_id) VALUES (?,?,?,?,?,?,?)')
+    .run(req.user.family_id, req.user.id, b.kind, Number(b.amount), b.date, str(b.note), num(b.goal_id));
   res.json(db.prepare('SELECT * FROM savings WHERE id = ?').get(info.lastInsertRowid));
 });
 app.delete('/api/savings/:id', auth, canWrite, (req, res) => {
   db.prepare('DELETE FROM savings WHERE id = ? AND family_id = ?').run(req.params.id, req.user.family_id);
+  res.json({ ok: true });
+});
+app.post('/api/savings-goals', auth, canWrite, (req, res) => {
+  const b = req.body || {};
+  if (!str(b.title)) return res.status(400).json({ error: 'Give the goal a name' });
+  if (!(Number(b.target) > 0)) return res.status(400).json({ error: 'Target must be greater than 0' });
+  if (num(b.user_id) != null && !db.prepare('SELECT id FROM users WHERE id = ? AND family_id = ?').get(num(b.user_id), req.user.family_id)) {
+    return res.status(400).json({ error: 'Person must be a member of the family' });
+  }
+  const info = db.prepare('INSERT INTO savings_goals (family_id, title, target, user_id) VALUES (?,?,?,?)')
+    .run(req.user.family_id, str(b.title), Number(b.target), num(b.user_id));
+  res.json(db.prepare('SELECT * FROM savings_goals WHERE id = ?').get(info.lastInsertRowid));
+});
+app.post('/api/savings-goals/:id/toggle', auth, canWrite, (req, res) => {
+  const info = db.prepare('UPDATE savings_goals SET done = 1 - done WHERE id = ? AND family_id = ?').run(req.params.id, req.user.family_id);
+  if (!info.changes) return res.status(404).json({ error: 'Not found' });
+  res.json({ ok: true });
+});
+app.delete('/api/savings-goals/:id', auth, canWrite, (req, res) => {
+  db.prepare('DELETE FROM savings_goals WHERE id = ? AND family_id = ?').run(req.params.id, req.user.family_id);
   res.json({ ok: true });
 });
 

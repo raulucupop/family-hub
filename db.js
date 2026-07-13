@@ -242,9 +242,21 @@ CREATE TABLE IF NOT EXISTS savings (
   kind TEXT NOT NULL CHECK (kind IN ('deposit','withdrawal')),
   amount REAL NOT NULL,
   date TEXT NOT NULL,
-  note TEXT
+  note TEXT,
+  goal_id INTEGER REFERENCES savings_goals(id) ON DELETE SET NULL
 );
 CREATE INDEX IF NOT EXISTS idx_savings_family ON savings(family_id);
+
+-- savings goals: deposits/withdrawals can be tagged with a goal to track progress
+CREATE TABLE IF NOT EXISTS savings_goals (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  family_id INTEGER NOT NULL REFERENCES families(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  target REAL NOT NULL,
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL, -- owner; NULL = family goal
+  done INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 
 -- shared family lists: buy/travel wishlists, groceries, personal targets
 CREATE TABLE IF NOT EXISTS list_items (
@@ -338,6 +350,9 @@ if (!prCols2.includes('expense_id')) db.exec('ALTER TABLE property_records ADD C
 
 const vrCols = db.prepare('PRAGMA table_info(vehicle_records)').all().map((c) => c.name);
 if (!vrCols.includes('expense_id')) db.exec('ALTER TABLE vehicle_records ADD COLUMN expense_id INTEGER REFERENCES expenses(id) ON DELETE SET NULL');
+
+const savCols = db.prepare('PRAGMA table_info(savings)').all().map((c) => c.name);
+if (!savCols.includes('goal_id')) db.exec('ALTER TABLE savings ADD COLUMN goal_id INTEGER REFERENCES savings_goals(id) ON DELETE SET NULL');
 
 if (!userCols.includes('lang')) db.exec("ALTER TABLE users ADD COLUMN lang TEXT NOT NULL DEFAULT 'en'");
 if (!userCols.includes('birthday')) db.exec('ALTER TABLE users ADD COLUMN birthday TEXT');

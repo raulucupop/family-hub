@@ -29,6 +29,8 @@ const RO = {
   'Income history': 'Istoric venituri', 'Monthly budgets': 'Bugete lunare', 'Save budgets': 'Salvează bugetele',
   'Add or remove funds': 'Adaugă sau retrage fonduri', 'Economy account balance': 'Sold cont de economii',
   'Deposit (add)': 'Depunere (adaugă)', 'Withdraw (remove)': 'Retragere', 'History': 'Istoric', 'Save': 'Salvează',
+  'Savings goals': 'Obiective de economisire', 'Goal': 'Obiectiv', 'Add goal': 'Adaugă obiectiv',
+  'Mark done': 'Finalizat', 'Reopen': 'Redeschide', 'reached!': 'atins!', '— general —': '— general —',
   'Add credit (loan)': 'Adaugă credit', 'Add credit': 'Adaugă credit', 'Anticipated payments': 'Plăți anticipate', 'Add payment': 'Adaugă plată',
   // dashboard
   'This month': 'Luna aceasta', 'Last 3 months': 'Ultimele 3 luni', 'Last 6 months': 'Ultimele 6 luni', 'Last 12 months': 'Ultimele 12 luni',
@@ -526,28 +528,62 @@ async function moneyBudgets(body, month = thisMonth()) {
   });
 }
 
-/* ---------- savings / economy account ---------- */
+/* ---------- savings / economy account & goals ---------- */
 async function moneySavings(body) {
-  const data = await api('/savings');
+  const [data, members] = await Promise.all([api('/savings'), api('/family/members')]);
+  const openGoals = data.goals.filter((g) => !g.done);
   body.innerHTML = `
     <div class="card"><div class="row" style="justify-content:space-between;flex-wrap:wrap">
       <div><div class="label" style="text-transform:uppercase;font-size:12px;color:var(--ink-soft);font-weight:600">Economy account balance</div>
         <div class="value" style="font-family:var(--mono);font-size:28px;${data.balance < 0 ? 'color:var(--red)' : ''}">${money(data.balance)}</div></div>
       <div class="muted">${Object.entries(data.byUser).map(([n, v]) => `${esc(n)}: <b class="amount">${money(v)}</b>`).join(' · ') || 'No contributions yet.'}</div>
     </div></div>
+    <div class="card" style="margin-top:16px"><h3>Savings goals</h3>
+      ${data.goals.length ? data.goals.map((g) => {
+        const pct = Math.min(100, Math.max(0, (g.saved / g.target) * 100));
+        const reached = g.saved >= g.target;
+        return `<div style="margin-bottom:14px;${g.done ? 'opacity:.55' : ''}">
+          <div class="row" style="justify-content:space-between;flex-wrap:wrap">
+            <span><b style="${g.done ? 'text-decoration:line-through' : ''}">${esc(g.title)}</b> <span class="muted">${g.user_name ? '· ' + esc(g.user_name) : '· family'}</span>
+              ${reached && !g.done ? ' <span class="badge paid">reached!</span>' : ''}</span>
+            <span class="row"><span class="amount muted">${money(g.saved)} / ${money(g.target)} (${Math.round(pct)}%)</span>
+              ${canWrite() ? `<button class="btn ghost small" data-gtog="${g.id}">${g.done ? 'Reopen' : 'Mark done'}</button>
+              <button class="btn danger small" data-gdel="${g.id}">✕</button>` : ''}</span></div>
+          <div class="bar"><i style="width:${pct}%;${reached ? '' : ''}"></i></div>
+        </div>`;
+      }).join('') : `<p class="muted">No goals yet — set one below and tag deposits to it.</p>`}
+      ${canWrite() ? `<form id="goalform" class="formgrid" style="margin-top:10px">
+        <div><label>Goal</label><input name="title" placeholder="Vacanță 2027" required></div>
+        <div><label>Target (${cur()})</label><input name="target" type="number" step="0.01" min="0.01" required></div>
+        <div><label>Person</label><select name="user_id"><option value="">Whole family</option>${members.map((m) => `<option value="${m.id}">${esc(m.name)}</option>`).join('')}</select></div>
+        <button class="btn small">Add goal</button></form>` : ''}
+    </div>
     ${canWrite() ? `<div class="card" style="margin-top:16px"><h3>Add or remove funds</h3><form id="savform" class="formgrid">
       <div><label>Type</label><select name="kind"><option value="deposit">Deposit (add)</option><option value="withdrawal">Withdraw (remove)</option></select></div>
       <div><label>Amount (${cur()})</label><input name="amount" type="number" step="0.01" min="0.01" required></div>
       <div><label>Date</label><input name="date" type="date" value="${today()}" required></div>
+      <div><label>Goal</label><select name="goal_id"><option value="">— general —</option>${openGoals.map((g) => `<option value="${g.id}">${esc(g.title)}</option>`).join('')}</select></div>
       <div><label>Note</label><input name="note" placeholder="optional"></div>
       <button class="btn">Save</button></form></div>` : ''}
     <div class="card" style="margin-top:16px"><h3>History</h3>
-      ${data.entries.length ? `<table><thead><tr><th>Date</th><th>By</th><th>Note</th><th class="right">Amount</th><th></th></tr></thead><tbody>
-        ${data.entries.map((r) => `<tr><td>${fdate(r.date)}</td><td>${esc(r.user_name || '—')}</td><td>${esc(r.note || '')}</td>
+      ${data.entries.length ? `<table><thead><tr><th>Date</th><th>By</th><th>Goal</th><th>Note</th><th class="right">Amount</th><th></th></tr></thead><tbody>
+        ${data.entries.map((r) => `<tr><td>${fdate(r.date)}</td><td>${esc(r.user_name || '—')}</td><td>${esc(r.goal_title || '—')}</td><td>${esc(r.note || '')}</td>
           <td class="right amount" style="color:${r.kind === 'deposit' ? '#2f6b5a' : 'var(--red)'}">${r.kind === 'deposit' ? '+' : '−'}${money(r.amount)}</td>
           <td class="right">${canWrite() ? `<button class="btn danger small" data-del="${r.id}">✕</button>` : ''}</td></tr>`).join('')}
       </tbody></table>` : `<div class="empty"><b>No savings entries yet</b>Deposit funds above to start the family economy account.</div>`}
     </div>`;
+  $('#goalform')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try { await api('/savings-goals', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) }); toast('Goal added'); moneySavings(body); }
+    catch (err) { toast(err.message); }
+  });
+  body.querySelectorAll('[data-gtog]').forEach((b) => (b.onclick = async () => {
+    await api(`/savings-goals/${b.dataset.gtog}/toggle`, { method: 'POST' }); moneySavings(body);
+  }));
+  body.querySelectorAll('[data-gdel]').forEach((b) => (b.onclick = async () => {
+    if (!confirm('Delete this goal? Its deposits stay in the account.')) return;
+    await api('/savings-goals/' + b.dataset.gdel, { method: 'DELETE' }); moneySavings(body);
+  }));
   $('#savform')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     try { await api('/savings', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) }); toast('Saved'); moneySavings(body); }
