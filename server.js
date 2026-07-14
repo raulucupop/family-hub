@@ -284,20 +284,47 @@ function crud({ route, table, fields, validate, orderBy }) {
   });
 }
 
-crud({
-  route: 'expenses', table: 'expenses',
-  fields: ['user_id', 'category', 'amount', 'note', 'date'],
-  orderBy: 'date DESC, id DESC',
-  validate: (b, req) => {
-    if (!b.category) return 'Category is required';
-    if (!(Number(b.amount) > 0)) return 'Amount must be greater than 0';
-    if (!isDate(b.date)) return 'Date must be YYYY-MM-DD';
-    // adults can log an expense on behalf of any member, children included
-    if (num(b.user_id) != null && !db.prepare('SELECT id FROM users WHERE id = ? AND family_id = ?').get(num(b.user_id), req.user.family_id)) {
-      return 'Person must be a member of the family';
+// expenses: custom endpoints — an expense can be linked to a property, which also
+// mirrors it into that property's cost history so the per-property totals stay true
+app.get('/api/expenses', auth, (req, res) => {
+  res.json(db.prepare(`
+    SELECT e.*, p.name AS property_name FROM expenses e
+    LEFT JOIN properties p ON p.id = e.property_id
+    WHERE e.family_id = ? ORDER BY e.date DESC, e.id DESC
+  `).all(req.user.family_id));
+});
+app.post('/api/expenses', auth, canWrite, (req, res) => {
+  const b = req.body || {};
+  if (!b.category) return res.status(400).json({ error: 'Category is required' });
+  if (!(Number(b.amount) > 0)) return res.status(400).json({ error: 'Amount must be greater than 0' });
+  if (!isDate(b.date)) return res.status(400).json({ error: 'Date must be YYYY-MM-DD' });
+  if (num(b.user_id) != null && !db.prepare('SELECT id FROM users WHERE id = ? AND family_id = ?').get(num(b.user_id), req.user.family_id)) {
+    return res.status(400).json({ error: 'Person must be a member of the family' });
+  }
+  const propId = num(b.property_id);
+  if (propId != null && !db.prepare('SELECT id FROM properties WHERE id = ? AND family_id = ?').get(propId, req.user.family_id)) {
+    return res.status(400).json({ error: 'Linked property not found' });
+  }
+  const uid = num(b.user_id) ?? req.user.id;
+  const eid = db.transaction(() => {
+    const info = db.prepare('INSERT INTO expenses (family_id, user_id, category, amount, note, date, property_id) VALUES (?,?,?,?,?,?,?)')
+      .run(req.user.family_id, uid, str(b.category), Number(b.amount), str(b.note), b.date, propId);
+    if (propId != null) {
+      db.prepare('INSERT INTO property_records (property_id, family_id, type, date, amount, note, user_id, expense_id) VALUES (?,?,?,?,?,?,?,?)')
+        .run(propId, req.user.family_id, 'other', b.date, Number(b.amount), `${str(b.category)}${b.note ? ': ' + str(b.note) : ''}`, uid, info.lastInsertRowid);
     }
-    return null;
-  },
+    return info.lastInsertRowid;
+  })();
+  res.json(db.prepare('SELECT * FROM expenses WHERE id = ?').get(eid));
+});
+app.delete('/api/expenses/:id', auth, canWrite, (req, res) => {
+  const row = db.prepare('SELECT * FROM expenses WHERE id = ? AND family_id = ?').get(req.params.id, req.user.family_id);
+  if (!row) return res.status(404).json({ error: 'Not found' });
+  db.transaction(() => {
+    db.prepare('DELETE FROM property_records WHERE expense_id = ? AND family_id = ?').run(row.id, req.user.family_id);
+    db.prepare('DELETE FROM expenses WHERE id = ?').run(row.id);
+  })();
+  res.json({ ok: true });
 });
 crud({
   route: 'incomes', table: 'incomes',
@@ -1328,19 +1355,31 @@ const THRESHOLDS = [30, 14, 7, 1, 0];
 const ALERT_KINDS = new Set(['rca', 'casco', 'vignette', 'itp', 'road_tax', 'property_insurance', 'document', 'birthday']);
 function generateNotifications(fid) {
   const ins = db.prepare('INSERT OR IGNORE INTO notifications (family_id, key, title, body, owner_id) VALUES (?,?,?,?,?)');
+  const upd = db.prepare('UPDATE notifications SET title = ?, body = ? WHERE family_id = ? AND key = ? AND (title != ? OR body != ?)');
+  const sweep = db.prepare('DELETE FROM notifications WHERE family_id = ? AND key LIKE ? AND key != ?');
   const fresh = [];
-  const add = (key, title, body, owner) => { if (ins.run(fid, key, title, body, owner).changes > 0) fresh.push({ title, body, owner }); };
+  // keys are stable per item+threshold; the text is refreshed on every pass so "X days left"
+  // always matches the dashboard, and crossing a tighter threshold replaces the older alert.
+  const add = (key, prefix, title, body, owner) => {
+    if (ins.run(fid, key, title, body, owner).changes > 0) {
+      sweep.run(fid, `${prefix}%`, key);
+      fresh.push({ title, body, owner });
+    } else {
+      upd.run(title, body, fid, key, title, body);
+    }
+  };
   for (const r of collectReminders(fid, 31)) {
     if (!ALERT_KINDS.has(r.kind)) continue;
+    const prefix = `${r.kind}:${r.ref_id}:${r.date}:`;
     if (r.days_left < 0) {
-      add(`${r.kind}:${r.ref_id}:${r.date}:overdue`,
+      add(`${prefix}overdue`, prefix,
         `Overdue: ${r.label}`, `${r.entity || ''} — was due ${r.date}${r.amount ? `, ${r.amount}` : ''}`.trim(), r.owner_id);
       continue;
     }
     for (const t of THRESHOLDS) {
       if (r.days_left <= t) {
-        add(`${r.kind}:${r.ref_id}:${r.date}:${t}`,
-          t === 0 ? `Due today: ${r.label}` : `${r.label} — ${r.days_left} day${r.days_left === 1 ? '' : 's'} left`,
+        add(`${prefix}${t}`, prefix,
+          r.days_left === 0 ? `Due today: ${r.label}` : `${r.label} — ${r.days_left} day${r.days_left === 1 ? '' : 's'} left`,
           `${r.entity || ''} — due ${r.date}${r.amount ? `, ${r.amount}` : ''}`.trim(), r.owner_id);
         break; // only the tightest threshold crossed right now
       }

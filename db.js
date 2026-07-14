@@ -83,7 +83,8 @@ CREATE TABLE IF NOT EXISTS expenses (
   category TEXT NOT NULL,
   amount REAL NOT NULL,
   note TEXT,
-  date TEXT NOT NULL
+  date TEXT NOT NULL,
+  property_id INTEGER REFERENCES properties(id) ON DELETE SET NULL -- optional link; also mirrored into property_records
 );
 CREATE INDEX IF NOT EXISTS idx_expenses_family_date ON expenses(family_id, date);
 
@@ -403,6 +404,9 @@ if (!propCols3.includes('payment_link')) db.exec('ALTER TABLE properties ADD COL
 
 const famCols = db.prepare('PRAGMA table_info(families)').all().map((c) => c.name);
 if (!famCols.includes('cal_token')) db.exec('ALTER TABLE families ADD COLUMN cal_token TEXT');
+
+const expCols = db.prepare('PRAGMA table_info(expenses)').all().map((c) => c.name);
+if (!expCols.includes('property_id')) db.exec('ALTER TABLE expenses ADD COLUMN property_id INTEGER REFERENCES properties(id) ON DELETE SET NULL');
 
 if (!userCols.includes('lang')) db.exec("ALTER TABLE users ADD COLUMN lang TEXT NOT NULL DEFAULT 'en'");
 if (!userCols.includes('birthday')) db.exec('ALTER TABLE users ADD COLUMN birthday TEXT');

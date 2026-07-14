@@ -292,7 +292,7 @@ async function renderTenantPortal() {
   }
   const t = today();
   const payUrl = data.property.payment_link
-    ? (amt) => `${data.property.payment_link.replace(/\/+$/, '')}/${Number(amt).toFixed(2)}${(data.property.currency || 'RON').toLowerCase()}`
+    ? (amt) => `${data.property.payment_link.replace(/\/+$/, '')}/${Number(amt).toFixed(2)}`
     : null;
   const unpaidTotal = data.charges.filter((c) => c.status === 'unpaid').reduce((s, c) => s + c.amount, 0);
   app.innerHTML = `<div class="authwrap"><div class="card" style="max-width:720px;width:100%">
@@ -502,7 +502,7 @@ function whoFilter(id, members, who) {
 }
 async function moneyExpenses(body, f = {}) {
   const flt = { month: thisMonth(), who: 'all', cat: 'all', q: '', ...f };
-  const [all, members] = await Promise.all([api('/expenses'), api('/family/members')]);
+  const [all, members, properties] = await Promise.all([api('/expenses'), api('/family/members'), api('/properties')]);
   const mname = Object.fromEntries(members.map((m) => [m.id, m.name]));
   const q = flt.q.trim().toLowerCase();
   const rows = all.filter((e) =>
@@ -518,6 +518,7 @@ async function moneyExpenses(body, f = {}) {
       <div><label>Category</label><select name="category">${CATEGORIES.map((c) => `<option>${c}</option>`).join('')}</select></div>
       <div><label>Amount (${cur()})</label><input name="amount" type="number" step="0.01" min="0.01" required></div>
       <div><label>Person</label><select name="user_id">${members.map((m) => `<option value="${m.id}" ${m.id === ME.id ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}</select></div>
+      ${properties.length ? `<div><label>Linked property</label><select name="property_id"><option value="">None</option>${properties.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select></div>` : ''}
       <div><label>Note</label><input name="note" placeholder="optional"></div>
       <button class="btn">Add expense</button></form></div>` : ''}
     <div class="card" style="margin-top:16px">
@@ -530,7 +531,7 @@ async function moneyExpenses(body, f = {}) {
         <input id="qfilter" type="search" placeholder="Search note…" value="${esc(flt.q)}" style="width:180px">
       </div>
       ${rows.length ? `<table><thead><tr><th>Date</th><th>Category</th><th>By</th><th>Note</th><th class="right">Amount</th><th></th></tr></thead><tbody>
-        ${rows.map((e) => `<tr><td>${fdate(e.date)}</td><td>${esc(e.category)}</td><td>${esc(mname[e.user_id] || '—')}</td><td>${esc(e.note || '')}</td>
+        ${rows.map((e) => `<tr><td>${fdate(e.date)}</td><td>${esc(e.category)}</td><td>${esc(mname[e.user_id] || '—')}</td><td>${esc(e.note || '')}${e.property_name ? `${e.note ? ' · ' : ''}<span class="muted">⌂ ${esc(e.property_name)}</span>` : ''}</td>
           <td class="right amount">${money(e.amount)}</td>
           <td class="right">${canWrite() ? `<button class="btn danger small" data-del="${e.id}">Delete</button>` : ''}</td></tr>`).join('')}
       </tbody></table>` : `<div class="empty"><b>No matching expenses</b>Adjust the filters or add one above.</div>`}
