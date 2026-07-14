@@ -310,6 +310,48 @@ crud({
     return null;
   },
 });
+
+// ---------- recurring incomes (salaries) ----------
+// once per month, on/after each entry's day, log it into incomes
+function autoLogIncomes() {
+  const period = new Date().toISOString().slice(0, 7);
+  const todayDay = new Date().getUTCDate();
+  for (const r of db.prepare('SELECT * FROM recurring_incomes WHERE active = 1').all()) {
+    if (r.last_period === period || todayDay < Math.min(Math.max(r.day, 1), 28)) continue;
+    const date = `${period}-${String(Math.min(Math.max(r.day, 1), 28)).padStart(2, '0')}`;
+    db.prepare('INSERT INTO incomes (family_id, user_id, source, amount, date) VALUES (?,?,?,?,?)')
+      .run(r.family_id, r.user_id, r.source, r.amount, date);
+    db.prepare('UPDATE recurring_incomes SET last_period = ? WHERE id = ?').run(period, r.id);
+  }
+}
+app.get('/api/recurring-incomes', auth, (req, res) => {
+  res.json(db.prepare('SELECT r.*, u.name AS user_name FROM recurring_incomes r LEFT JOIN users u ON u.id = r.user_id WHERE r.family_id = ? ORDER BY r.active DESC, r.id DESC').all(req.user.family_id));
+});
+app.post('/api/recurring-incomes', auth, canWrite, (req, res) => {
+  const b = req.body || {};
+  if (!str(b.source)) return res.status(400).json({ error: 'Source is required' });
+  if (!(Number(b.amount) > 0)) return res.status(400).json({ error: 'Amount must be greater than 0' });
+  const day = Math.round(Number(b.day));
+  if (!(day >= 1 && day <= 28)) return res.status(400).json({ error: 'Day must be between 1 and 28' });
+  let uid = num(b.user_id);
+  if (uid != null && !db.prepare('SELECT id FROM users WHERE id = ? AND family_id = ?').get(uid, req.user.family_id)) {
+    return res.status(400).json({ error: 'Person must be a member of the family' });
+  }
+  if (uid == null) uid = req.user.id;
+  const info = db.prepare('INSERT INTO recurring_incomes (family_id, user_id, source, amount, day) VALUES (?,?,?,?,?)')
+    .run(req.user.family_id, uid, str(b.source), Number(b.amount), day);
+  autoLogIncomes(); // if this month's day already passed, log it right away
+  res.json(db.prepare('SELECT * FROM recurring_incomes WHERE id = ?').get(info.lastInsertRowid));
+});
+app.post('/api/recurring-incomes/:id/toggle', auth, canWrite, (req, res) => {
+  const info = db.prepare('UPDATE recurring_incomes SET active = 1 - active WHERE id = ? AND family_id = ?').run(req.params.id, req.user.family_id);
+  if (!info.changes) return res.status(404).json({ error: 'Not found' });
+  res.json({ ok: true });
+});
+app.delete('/api/recurring-incomes/:id', auth, canWrite, (req, res) => {
+  db.prepare('DELETE FROM recurring_incomes WHERE id = ? AND family_id = ?').run(req.params.id, req.user.family_id);
+  res.json({ ok: true });
+});
 crud({
   route: 'vehicles', table: 'vehicles',
   fields: ['name', 'plate', 'rca_expiry', 'casco_expiry', 'vignette_expiry', 'itp_expiry', 'road_tax_due', 'owner_id', 'notes'],
@@ -1340,6 +1382,7 @@ async function runEmailReminders() {
 async function emailReminderTick() {
   try { autoPayBills(); } catch (err) { console.error('auto-pay bills:', err.message); }
   try { autoLogCreditExpenses(); } catch (err) { console.error('auto credit expense:', err.message); }
+  try { autoLogIncomes(); } catch (err) { console.error('auto incomes:', err.message); }
   try { for (const p of db.prepare('SELECT * FROM properties').all()) ensureMeterRequests(p); } catch (err) { console.error('meter schedule:', err.message); }
   try { await runEmailReminders(); } catch (err) { console.error('email reminders:', err.message); }
 }
@@ -1382,7 +1425,7 @@ const CATEGORY_SET = new Set(['Groceries', 'Utilities', 'Transportation', 'Enter
 
 // ---------- dashboard stats ----------
 app.get('/api/stats', auth, (req, res) => {
-  autoPayBills(); autoLogCreditExpenses();
+  autoPayBills(); autoLogCreditExpenses(); autoLogIncomes();
   const fid = req.user.family_id;
   const month = req.query.month || new Date().toISOString().slice(0, 7);
   // ?months=1|3|6|12 sets the KPI/category window (default 1 = current month); trend spans the same window

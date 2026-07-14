@@ -263,6 +263,18 @@ CREATE TABLE IF NOT EXISTS savings (
 );
 CREATE INDEX IF NOT EXISTS idx_savings_family ON savings(family_id);
 
+-- recurring incomes (salaries): auto-logged into incomes once per month on/after 'day'
+CREATE TABLE IF NOT EXISTS recurring_incomes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  family_id INTEGER NOT NULL REFERENCES families(id) ON DELETE CASCADE,
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  source TEXT NOT NULL,
+  amount REAL NOT NULL,
+  day INTEGER NOT NULL DEFAULT 1,   -- day of month (1-28)
+  active INTEGER NOT NULL DEFAULT 1,
+  last_period TEXT                  -- YYYY-MM of the last auto-logged month
+);
+
 -- savings goals: deposits/withdrawals can be tagged with a goal to track progress
 CREATE TABLE IF NOT EXISTS savings_goals (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

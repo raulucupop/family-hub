@@ -494,7 +494,7 @@ async function moneyExpenses(body, f = {}) {
   }));
 }
 async function moneyIncome(body, who = 'all') {
-  const [all, members] = await Promise.all([api('/incomes'), api('/family/members')]);
+  const [all, members, recurring] = await Promise.all([api('/incomes'), api('/family/members'), api('/recurring-incomes')]);
   const mname = Object.fromEntries(members.map((m) => [m.id, m.name]));
   const rows = all.filter((r) => who === 'all' || String(r.user_id) === String(who));
   const total = rows.reduce((s, r) => s + r.amount, 0);
@@ -504,6 +504,20 @@ async function moneyIncome(body, who = 'all') {
       <div><label>Source</label><input name="source" placeholder="Salary, freelance…" required></div>
       <div><label>Amount (${cur()})</label><input name="amount" type="number" step="0.01" min="0.01" required></div>
       <button class="btn">Add income</button></form></div>` : ''}
+    <div class="card" style="margin-top:16px"><h3>Recurring income (salaries)</h3>
+      <p class="muted" style="margin-top:0">Logged automatically every month on the chosen day — no manual entry needed.</p>
+      ${recurring.length ? `<table><tbody>${recurring.map((r) => `<tr style="${r.active ? '' : 'opacity:.55'}">
+        <td><b>${esc(r.source)}</b> <span class="muted">· ${esc(r.user_name || '')} · day ${r.day}</span>${r.active ? '' : ' <span class="badge role">paused</span>'}</td>
+        <td class="right amount">${money(r.amount)}<span class="muted">/mo</span></td>
+        <td class="right">${canWrite() ? `<button class="btn ghost small" data-rtog="${r.id}">${r.active ? 'Pause' : 'Resume'}</button>
+          <button class="btn danger small" data-rdel="${r.id}">✕</button>` : ''}</td></tr>`).join('')}</tbody></table>` : ''}
+      ${canWrite() ? `<form id="recform" class="formgrid" style="margin-top:10px">
+        <div><label>Source</label><input name="source" placeholder="Salariu Raul" required></div>
+        <div><label>Amount (${cur()}/mo)</label><input name="amount" type="number" step="0.01" min="0.01" required></div>
+        <div><label>Day of month</label><input name="day" type="number" min="1" max="28" value="1" required></div>
+        <div><label>Person</label><select name="user_id">${members.map((m) => `<option value="${m.id}" ${m.id === ME.id ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}</select></div>
+        <button class="btn small">Add recurring</button></form>` : ''}
+    </div>
     <div class="card" style="margin-top:16px">
       <div class="row" style="justify-content:space-between"><h3 style="margin:0">Income history</h3>
         <div class="row">${whoFilter('wfilter', members, who)}<span class="amount"><b>${money(total)}</b></span></div></div>
@@ -518,6 +532,18 @@ async function moneyIncome(body, who = 'all') {
     try { await api('/incomes', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) }); toast('Income added'); moneyIncome(body, who); }
     catch (err) { toast(err.message); }
   });
+  $('#recform')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try { await api('/recurring-incomes', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) }); toast('Recurring income added'); moneyIncome(body, who); }
+    catch (err) { toast(err.message); }
+  });
+  body.querySelectorAll('[data-rtog]').forEach((b) => (b.onclick = async () => {
+    await api(`/recurring-incomes/${b.dataset.rtog}/toggle`, { method: 'POST' }); moneyIncome(body, who);
+  }));
+  body.querySelectorAll('[data-rdel]').forEach((b) => (b.onclick = async () => {
+    if (!confirm('Delete this recurring income? Already-logged months stay.')) return;
+    await api('/recurring-incomes/' + b.dataset.rdel, { method: 'DELETE' }); moneyIncome(body, who);
+  }));
   body.querySelectorAll('[data-del]').forEach((b) => (b.onclick = async () => {
     await api('/incomes/' + b.dataset.del, { method: 'DELETE' }); moneyIncome(body, who);
   }));
