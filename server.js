@@ -1377,6 +1377,49 @@ async function runEmailReminders() {
   }
   return { sent, errors };
 }
+// ---------- monthly email report ----------
+// sent once per family at the start of each month, summarizing the month that just ended
+async function runMonthlyReports() {
+  if (!process.env.MAIL_FROM) return;
+  const now = new Date();
+  const prev = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1)).toISOString().slice(0, 7);
+  for (const fam of db.prepare('SELECT * FROM families').all()) {
+    const key = `report:${fam.id}:${prev}`;
+    if (!claimKeys([key]).length) continue;
+    const to = db.prepare("SELECT email FROM users WHERE family_id = ? AND role IN ('admin','adult') AND email IS NOT NULL").all(fam.id).map((u) => u.email);
+    if (!to.length) { releaseKeys([key]); continue; }
+    const cur = fam.currency || 'RON';
+    const m = (n) => `${Number(n || 0).toFixed(2)} ${cur}`;
+    const income = db.prepare("SELECT COALESCE(SUM(amount),0) t FROM incomes WHERE family_id = ? AND substr(date,1,7) = ?").get(fam.id, prev).t;
+    const spent = db.prepare("SELECT COALESCE(SUM(amount),0) t FROM expenses WHERE family_id = ? AND substr(date,1,7) = ?").get(fam.id, prev).t;
+    const cats = db.prepare("SELECT category, SUM(amount) t FROM expenses WHERE family_id = ? AND substr(date,1,7) = ? GROUP BY category ORDER BY t DESC LIMIT 6").all(fam.id, prev);
+    const byMember = db.prepare(`
+      SELECT COALESCE(u.name, '—') name, SUM(e.amount) t FROM expenses e LEFT JOIN users u ON u.id = e.user_id
+      WHERE e.family_id = ? AND substr(e.date,1,7) = ? GROUP BY u.id ORDER BY t DESC`).all(fam.id, prev);
+    const budgets = db.prepare('SELECT * FROM budgets WHERE family_id = ? AND month = ?').all(fam.id, prev);
+    const budgetLines = budgets.map((b) => {
+      const s = db.prepare('SELECT COALESCE(SUM(amount),0) t FROM expenses WHERE family_id = ? AND category = ? AND substr(date,1,7) = ?').get(fam.id, b.category, prev).t;
+      return `  ${b.category}: ${m(s)} / ${m(b.amount)}${s > b.amount ? '  (over!)' : ''}`;
+    });
+    const savBal = db.prepare("SELECT COALESCE(SUM(CASE WHEN kind='deposit' THEN amount ELSE -amount END),0) t FROM savings WHERE family_id = ?").get(fam.id).t;
+    const savMonth = db.prepare("SELECT COALESCE(SUM(CASE WHEN kind='deposit' THEN amount ELSE -amount END),0) t FROM savings WHERE family_id = ? AND substr(date,1,7) = ?").get(fam.id, prev).t;
+    const text = [
+      `Hello,`, '',
+      `Here is ${fam.name}'s money summary for ${prev}:`, '',
+      `Income:   ${m(income)}`,
+      `Spent:    ${m(spent)}`,
+      `Left over: ${m(income - spent)}`, '',
+      cats.length ? `Top spending categories:\n${cats.map((c) => `  ${c.category}: ${m(c.t)}`).join('\n')}` : 'No expenses were logged.',
+      byMember.length ? `\nSpending per person:\n${byMember.map((x) => `  ${x.name}: ${m(x.t)}`).join('\n')}` : '',
+      budgetLines.length ? `\nBudgets vs actual:\n${budgetLines.join('\n')}` : '',
+      `\nEconomy account: ${m(savBal)} (${savMonth >= 0 ? '+' : ''}${m(savMonth)} in ${prev})`, '',
+      `Open Family Hub for the full picture.`,
+    ].filter((s) => s !== '').join('\n');
+    try { await sendMail(to, `Family Hub — ${prev} monthly report`, text + '\n'); }
+    catch (err) { releaseKeys([key]); console.error('monthly report:', err.message); }
+  }
+}
+
 // runs shortly after every start (visits wake the app) and every 6 hours while it stays alive;
 // a cron hitting /api/cron/email-reminders guarantees a daily check even with zero visits
 async function emailReminderTick() {
@@ -1385,12 +1428,14 @@ async function emailReminderTick() {
   try { autoLogIncomes(); } catch (err) { console.error('auto incomes:', err.message); }
   try { for (const p of db.prepare('SELECT * FROM properties').all()) ensureMeterRequests(p); } catch (err) { console.error('meter schedule:', err.message); }
   try { await runEmailReminders(); } catch (err) { console.error('email reminders:', err.message); }
+  try { await runMonthlyReports(); } catch (err) { console.error('monthly report:', err.message); }
 }
 setTimeout(emailReminderTick, 30 * 1000);
 setInterval(emailReminderTick, 6 * 3600 * 1000);
 app.get('/api/cron/email-reminders', async (req, res) => {
   if (process.env.CRON_TOKEN && req.query.token !== process.env.CRON_TOKEN) return res.status(403).json({ error: 'Bad token' });
-  res.json(await runEmailReminders());
+  await emailReminderTick(); // full daily housekeeping: auto-pay, auto-log, meters, reminder emails, monthly report
+  res.json({ ok: true });
 });
 
 // ---------- bank import ----------
