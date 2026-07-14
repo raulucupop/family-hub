@@ -172,6 +172,17 @@ details.entity .body { padding: 14px 18px; }
 canvas { max-width: 100%; }
 .chartbox { position: relative; height: 240px; }
 
+/* calendar */
+.cal { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
+.cal .dow { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--ink-soft); text-align: center; padding-bottom: 2px; }
+.cal .day { border: 1px solid var(--line); border-radius: 8px; min-height: 88px; padding: 4px 6px; background: var(--card); font-size: 12px; overflow: hidden; }
+.cal .day .n { font-weight: 600; }
+.cal .day.today { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.cal .ev { border-radius: 5px; padding: 1px 5px; margin-top: 3px; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; background: var(--accent-soft); color: var(--accent); }
+.cal .ev.warn { background: var(--amber-soft); color: var(--amber); }
+.cal .ev.late { background: var(--red-soft); color: var(--red); }
+@media (max-width: 860px) { .cal { gap: 3px; } .cal .day { min-height: 62px; padding: 2px 4px; } .cal .ev { font-size: 9px; padding: 1px 3px; } }
+
 /* notifications */
 .notifbadge {
   background: var(--amber); color: #fff; font-size: 11px; font-weight: 700;

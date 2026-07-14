@@ -391,6 +391,9 @@ if (!propCols3.includes('reading_day')) db.exec('ALTER TABLE properties ADD COLU
 if (!propCols3.includes('reading_utilities')) db.exec('ALTER TABLE properties ADD COLUMN reading_utilities TEXT');
 if (!propCols3.includes('payment_link')) db.exec('ALTER TABLE properties ADD COLUMN payment_link TEXT');
 
+const famCols = db.prepare('PRAGMA table_info(families)').all().map((c) => c.name);
+if (!famCols.includes('cal_token')) db.exec('ALTER TABLE families ADD COLUMN cal_token TEXT');
+
 if (!userCols.includes('lang')) db.exec("ALTER TABLE users ADD COLUMN lang TEXT NOT NULL DEFAULT 'en'");
 if (!userCols.includes('birthday')) db.exec('ALTER TABLE users ADD COLUMN birthday TEXT');
 if (!userCols.includes('phone')) db.exec('ALTER TABLE users ADD COLUMN phone TEXT');

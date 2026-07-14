@@ -1237,6 +1237,39 @@ app.get('/api/reminders', auth, (req, res) => {
   res.json(collectReminders(req.user.family_id, horizon, scope));
 });
 
+// ---------- calendar (iCal feed + subscribe link) ----------
+app.get('/api/calendar/info', auth, (req, res) => {
+  const fam = db.prepare('SELECT cal_token FROM families WHERE id = ?').get(req.user.family_id);
+  const base = `${req.protocol}://${req.get('host')}`;
+  res.json({ url: fam?.cal_token ? `${base}/calendar/${fam.cal_token}.ics` : null });
+});
+app.post('/api/calendar/token', auth, canWrite, (req, res) => {
+  const token = crypto.randomBytes(20).toString('hex');
+  db.prepare('UPDATE families SET cal_token = ? WHERE id = ?').run(token, req.user.family_id);
+  const base = `${req.protocol}://${req.get('host')}`;
+  res.json({ url: `${base}/calendar/${token}.ics` });
+});
+// public-by-token feed for Google/Apple Calendar subscriptions
+app.get('/calendar/:token.ics', (req, res) => {
+  const fam = db.prepare('SELECT * FROM families WHERE cal_token = ?').get(req.params.token);
+  if (!fam) return res.status(404).send('Not found');
+  const escICS = (s) => String(s || '').replace(/\\/g, '\\\\').replace(/[,;]/g, (c) => '\\' + c).replace(/\n/g, '\\n');
+  const stamp = new Date().toISOString().replace(/[-:]/g, '').slice(0, 15) + 'Z';
+  const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Family Hub//EN', 'CALSCALE:GREGORIAN',
+    `X-WR-CALNAME:Family Hub — ${escICS(fam.name)}`];
+  for (const r of collectReminders(fam.id, 365)) {
+    lines.push('BEGIN:VEVENT',
+      `UID:fh-${r.kind}-${r.ref_id}-${r.date}@familyhub`,
+      `DTSTAMP:${stamp}`,
+      `DTSTART;VALUE=DATE:${r.date.replace(/-/g, '')}`,
+      `SUMMARY:${escICS(r.label + (r.entity ? ` — ${r.entity}` : ''))}`,
+      'END:VEVENT');
+  }
+  lines.push('END:VCALENDAR');
+  res.setHeader('Content-Type', 'text/calendar; charset=utf-8');
+  res.send(lines.join('\r\n') + '\r\n');
+});
+
 // ---------- site notifications ----------
 const THRESHOLDS = [30, 14, 7, 1, 0];
 // only the important stuff raises alerts: insurance, car deadlines, PAD and personal papers.
