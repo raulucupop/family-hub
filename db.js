@@ -201,6 +201,7 @@ CREATE TABLE IF NOT EXISTS properties (
   rent_amount REAL,            -- monthly rent charged to the tenant
   rent_due_day INTEGER,        -- day of month rent is due (1-28)
   tenant_invite_code TEXT,     -- code a tenant uses to register
+  payment_link TEXT,           -- e.g. revolut.me link the tenant pays to (amount gets appended)
   notes TEXT
 );
 
@@ -388,6 +389,7 @@ if (!tcCols.includes('attachment')) db.exec('ALTER TABLE tenant_charges ADD COLU
 const propCols3 = db.prepare('PRAGMA table_info(properties)').all().map((c) => c.name);
 if (!propCols3.includes('reading_day')) db.exec('ALTER TABLE properties ADD COLUMN reading_day INTEGER');
 if (!propCols3.includes('reading_utilities')) db.exec('ALTER TABLE properties ADD COLUMN reading_utilities TEXT');
+if (!propCols3.includes('payment_link')) db.exec('ALTER TABLE properties ADD COLUMN payment_link TEXT');
 
 if (!userCols.includes('lang')) db.exec("ALTER TABLE users ADD COLUMN lang TEXT NOT NULL DEFAULT 'en'");
 if (!userCols.includes('birthday')) db.exec('ALTER TABLE users ADD COLUMN birthday TEXT');

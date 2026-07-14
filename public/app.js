@@ -291,6 +291,10 @@ async function renderTenantPortal() {
     return;
   }
   const t = today();
+  const payUrl = data.property.payment_link
+    ? (amt) => `${data.property.payment_link.replace(/\/+$/, '')}/${Number(amt).toFixed(2)}${(data.property.currency || 'RON').toLowerCase()}`
+    : null;
+  const unpaidTotal = data.charges.filter((c) => c.status === 'unpaid').reduce((s, c) => s + c.amount, 0);
   app.innerHTML = `<div class="authwrap"><div class="card" style="max-width:720px;width:100%">
     <div class="row" style="justify-content:space-between;align-items:flex-start">
       <div><div class="brandmark">Family<span>Hub</span></div>
@@ -307,10 +311,15 @@ async function renderTenantPortal() {
           <td>${c.status === 'paid' ? `<span class="badge paid">paid${c.confirmed_at ? ' ' + fdate(c.confirmed_at) : ''}</span>`
             : c.status === 'pending' ? `<span class="badge role">confirmation pending</span>`
             : `<span class="badge unpaid">to pay</span>`}</td>
-          <td class="right">${c.status === 'unpaid' ? `<button class="btn small" data-pay="${c.id}">Mark as paid</button>` : ''}</td>
+          <td class="right">${c.status === 'unpaid' ? `${payUrl ? `<a class="btn ghost small" href="${esc(payUrl(c.amount))}" target="_blank" rel="noopener">Pay</a> ` : ''}<button class="btn small" data-pay="${c.id}">Mark as paid</button>` : ''}</td>
         </tr>`;
       }).join('')}</tbody></table>`
     : `<div class="empty" style="margin-top:14px"><b>Nothing to pay yet</b>Rent and shared invoices from your landlord will appear here.</div>`}
+    ${payUrl && unpaidTotal > 0 ? `<div class="row" style="flex-wrap:wrap;margin-top:10px;border:1px solid var(--line);border-radius:10px;padding:10px">
+      <b>Pay with Revolut:</b>
+      <a class="btn small" href="${esc(payUrl(unpaidTotal))}" target="_blank" rel="noopener">Pay all — ${money(unpaidTotal)}</a>
+      <a class="btn ghost small" href="${esc(data.property.payment_link)}" target="_blank" rel="noopener">Pay a custom amount</a>
+    </div>` : ''}
     <p class="muted">After you mark something as paid, the owner confirms it — until then it shows as "confirmation pending".</p>
     ${(data.meters || []).length ? `<h3 style="margin-top:16px">Meter readings</h3>
       ${data.meters.filter((m) => m.status === 'pending').map((m) => `
@@ -886,6 +895,7 @@ async function viewProperties(el) {
       ...P_DEADLINES.map(([k, l]) => [k, l + ' due', 'date', '']),
       ['mortgage_lender', 'Mortgage lender', 'text', 'optional'], ['mortgage_payment', `Monthly payment (${cur()})`, 'number', ''], ['mortgage_due_day', 'Payment day of month', 'number', '15'],
       ['rent_amount', `Rent (${cur()}/mo, if rented out)`, 'number', ''], ['rent_due_day', 'Rent due day (1-28)', 'number', '1'],
+      ['payment_link', 'Payment link (Revolut.me)', 'text', 'https://revolut.me/...'],
     ]) : ''}
     <div id="proplist" style="margin-top:16px">${props.length ? '' : `<div class="card empty"><b>No properties yet</b>Add your home above to track its deadlines and costs.</div>`}</div>`;
   bindEntityForm('propform', '/properties', () => viewProperties(el));
@@ -901,7 +911,8 @@ async function viewProperties(el) {
       deadlines: P_DEADLINES, route: 'properties',
       editExtra: [['owner_id', 'Owner', 'select', ownerOpts], ['rent_amount', `Rent (${cur()}/mo)`, 'number'], ['rent_due_day', 'Rent due day (1-28)', 'number'],
         ['reading_day', 'Meter reading day (1-28)', 'number'],
-        ['reading_utilities', 'Meters to read monthly', 'select', [['', '— none —'], ['electricity', 'Electricity'], ['gas', 'Gas'], ['water', 'Water'], ['electricity,gas', 'Electricity + gas'], ['electricity,gas,water', 'Electricity + gas + water']]]],
+        ['reading_utilities', 'Meters to read monthly', 'select', [['', '— none —'], ['electricity', 'Electricity'], ['gas', 'Gas'], ['water', 'Water'], ['electricity,gas', 'Electricity + gas'], ['electricity,gas,water', 'Electricity + gas + water']]],
+        ['payment_link', 'Payment link (Revolut.me)', 'text']],
       extra: (box, it) => { const d1 = document.createElement('div'), d2 = document.createElement('div'); box.append(d1, d2); renderTenantBox(d1, it); renderEntityDocs(d2, 'property', it, pSlots, () => viewProperties(el)); },
       recordTypes: { maintenance: 'Maintenance', renovation: 'Renovation', utility: 'Utility', rent: 'Rent (income)', other_income: 'Other income', other: 'Other' },
       incomeTypes: ['rent', 'other_income'],

@@ -366,7 +366,7 @@ crud({
 });
 crud({
   route: 'properties', table: 'properties',
-  fields: ['name', 'address', 'insurance_expiry', 'insurance2_expiry', 'property_tax_due', 'mortgage_lender', 'mortgage_payment', 'mortgage_due_day', 'owner_id', 'rent_amount', 'rent_due_day', 'reading_day', 'reading_utilities', 'notes'],
+  fields: ['name', 'address', 'insurance_expiry', 'insurance2_expiry', 'property_tax_due', 'mortgage_lender', 'mortgage_payment', 'mortgage_due_day', 'owner_id', 'rent_amount', 'rent_due_day', 'reading_day', 'reading_utilities', 'payment_link', 'notes'],
   orderBy: 'name',
   validate: (b, req) => {
     if (!b.name) return 'Property name is required';
@@ -976,7 +976,7 @@ app.post('/api/properties/:id/charges', auth, canWrite, (req, res) => {
   const info = db.prepare('INSERT INTO tenant_charges (family_id, property_id, type, title, amount, due_date, note) VALUES (?,?,?,?,?,?,?)')
     .run(prop.family_id, prop.id, b.type, str(b.title), Number(b.amount), b.due_date, str(b.note));
   notifyMail(tenantEmails(prop.id), `New ${b.type === 'rent' ? 'rent charge' : 'invoice'} for ${prop.name}`,
-    `Hello,\n\nA new payment was added for ${prop.name}:\n\n- ${str(b.title)}: ${Number(b.amount).toFixed(2)}, due ${b.due_date}\n\nOpen your tenant portal to see the details${b.type === 'invoice' ? ' and the invoice' : ''}, and press "Mark as paid" once you've paid it.\n`);
+    `Hello,\n\nA new payment was added for ${prop.name}:\n\n- ${str(b.title)}: ${Number(b.amount).toFixed(2)}, due ${b.due_date}\n${prop.payment_link ? `\nPay directly: ${prop.payment_link}/${Number(b.amount).toFixed(2)}\n` : ''}\nOpen your tenant portal to see the details${b.type === 'invoice' ? ' and the invoice' : ''}, and press "Mark as paid" once you've paid it.\n`);
   res.json(db.prepare('SELECT * FROM tenant_charges WHERE id = ?').get(info.lastInsertRowid));
 });
 // invoice file on a tenant charge (owner uploads, tenant can view)
@@ -1100,7 +1100,8 @@ app.get('/api/tenant/charges', auth, (req, res) => {
   ensureMeterRequests(prop);
   const charges = db.prepare("SELECT id, type, title, amount, due_date, status, marked_paid_at, confirmed_at, attachment, note FROM tenant_charges WHERE property_id = ? ORDER BY (status = 'paid'), due_date DESC, id DESC").all(prop.id);
   const meters = db.prepare("SELECT id, utility, status, reading, provided_at, requested_at FROM meter_requests WHERE property_id = ? ORDER BY (status = 'done'), id DESC LIMIT 20").all(prop.id);
-  res.json({ property: { name: prop.name, address: prop.address }, charges, meters });
+  const fam = db.prepare('SELECT currency FROM families WHERE id = ?').get(prop.family_id);
+  res.json({ property: { name: prop.name, address: prop.address, payment_link: prop.payment_link, currency: fam?.currency || 'RON' }, charges, meters });
 });
 app.get('/api/tenant/charges/:cid/attachment', auth, (req, res) => {
   if (req.user.role !== 'tenant') return res.status(403).json({ error: 'Tenant accounts only' });
