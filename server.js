@@ -1308,9 +1308,9 @@ function getMailTransport() {
   }
   return mailTransport;
 }
-async function sendMail(to, subject, text) {
-  const info = await getMailTransport().sendMail({ from: process.env.MAIL_FROM, to: to.join(', '), subject, text });
-  if (process.env.MAIL_DEBUG === '1') console.log('MAIL_DEBUG:', info.message);
+async function sendMail(to, subject, text, attachments) {
+  const info = await getMailTransport().sendMail({ from: process.env.MAIL_FROM, to: to.join(', '), subject, text, attachments });
+  if (process.env.MAIL_DEBUG === '1') console.log('MAIL_DEBUG:', String(info.message).slice(0, 3000));
 }
 // claim keys atomically so parallel workers can't double-send; released again if sending fails
 function claimKeys(keys) {
@@ -1421,6 +1421,40 @@ async function runMonthlyReports() {
   }
 }
 
+// ---------- weekly database backup by email ----------
+// a consistent snapshot (VACUUM INTO) of the whole database, gzipped and mailed to the admins.
+// note: uploaded files (invoices, scans, photos) live in DATA_DIR/uploads and are not included.
+async function runWeeklyBackup() {
+  if (!process.env.MAIL_FROM) return;
+  const fams = db.prepare('SELECT id FROM families').all();
+  if (fams.length !== 1) return; // the file contains every family — only safe on a single-family install
+  const to = db.prepare("SELECT email FROM users WHERE role = 'admin' AND email IS NOT NULL").all().map((u) => u.email);
+  if (!to.length) return;
+  const now = new Date();
+  const week = Math.ceil(((now.getTime() - Date.UTC(now.getUTCFullYear(), 0, 1)) / 86400000 + 1) / 7);
+  const key = `backup:${now.getUTCFullYear()}-W${week}`;
+  if (!claimKeys([key]).length) return;
+  const tmp = path.join(DATA_DIR, `backup-tmp-${Date.now()}.db`);
+  try {
+    db.exec(`VACUUM INTO '${tmp.replace(/\\/g, '/').replace(/'/g, "''")}'`);
+    const gz = require('zlib').gzipSync(fs.readFileSync(tmp));
+    fs.unlinkSync(tmp);
+    const stamp = now.toISOString().slice(0, 10);
+    if (gz.length > 15 * 1024 * 1024) {
+      await sendMail(to, `Family Hub — backup ${stamp} too large to email`,
+        `The weekly database backup is ${(gz.length / 1048576).toFixed(1)} MB — too large to attach.\nDownload DATA_DIR/familyhub.db from the server manually.\n`);
+      return;
+    }
+    await sendMail(to, `Family Hub — weekly backup ${stamp}`,
+      `Attached is this week's database backup (${(gz.length / 1024).toFixed(1)} KB gzipped).\n\nTo restore: stop the app, gunzip the file and replace familyhub.db in your DATA_DIR, then start the app.\nNote: uploaded files (invoices, scans, meter photos) are stored separately in DATA_DIR/uploads and are not part of this file.\n`,
+      [{ filename: `familyhub-${stamp}.db.gz`, content: gz }]);
+  } catch (err) {
+    try { fs.unlinkSync(tmp); } catch {}
+    releaseKeys([key]);
+    console.error('weekly backup:', err.message);
+  }
+}
+
 // runs shortly after every start (visits wake the app) and every 6 hours while it stays alive;
 // a cron hitting /api/cron/email-reminders guarantees a daily check even with zero visits
 async function emailReminderTick() {
@@ -1430,6 +1464,7 @@ async function emailReminderTick() {
   try { for (const p of db.prepare('SELECT * FROM properties').all()) ensureMeterRequests(p); } catch (err) { console.error('meter schedule:', err.message); }
   try { await runEmailReminders(); } catch (err) { console.error('email reminders:', err.message); }
   try { await runMonthlyReports(); } catch (err) { console.error('monthly report:', err.message); }
+  try { await runWeeklyBackup(); } catch (err) { console.error('weekly backup:', err.message); }
 }
 setTimeout(emailReminderTick, 30 * 1000);
 setInterval(emailReminderTick, 6 * 3600 * 1000);
