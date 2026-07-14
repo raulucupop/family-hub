@@ -302,7 +302,7 @@ async function renderTenantPortal() {
         const late = c.status === 'unpaid' && c.due_date < t;
         return `<tr>
           <td>${fdate(c.due_date)}${late ? ' <span class="badge late">overdue</span>' : ''}</td>
-          <td><b>${esc(c.title)}</b>${c.type === 'rent' ? ' <span class="muted">· rent</span>' : ''}${c.note ? `<br><span class="muted">${esc(c.note)}</span>` : ''}</td>
+          <td><b>${esc(c.title)}</b>${c.type === 'rent' ? ' <span class="muted">· rent</span>' : ''}${c.attachment ? ` · <a href="/api/tenant/charges/${c.id}/attachment" target="_blank">invoice</a>` : ''}${c.note ? `<br><span class="muted">${esc(c.note)}</span>` : ''}</td>
           <td class="right amount">${money(c.amount)}</td>
           <td>${c.status === 'paid' ? `<span class="badge paid">paid${c.confirmed_at ? ' ' + fdate(c.confirmed_at) : ''}</span>`
             : c.status === 'pending' ? `<span class="badge role">confirmation pending</span>`
@@ -311,11 +311,31 @@ async function renderTenantPortal() {
         </tr>`;
       }).join('')}</tbody></table>`
     : `<div class="empty" style="margin-top:14px"><b>Nothing to pay yet</b>Rent and shared invoices from your landlord will appear here.</div>`}
-    <p class="muted" style="margin-bottom:0">After you mark something as paid, the owner confirms it — until then it shows as "confirmation pending".</p>
+    <p class="muted">After you mark something as paid, the owner confirms it — until then it shows as "confirmation pending".</p>
+    ${(data.meters || []).length ? `<h3 style="margin-top:16px">Meter readings</h3>
+      ${data.meters.filter((m) => m.status === 'pending').map((m) => `
+        <div class="row" style="flex-wrap:wrap;border:1px solid var(--line);border-radius:10px;padding:10px;margin-bottom:8px">
+          <b style="text-transform:capitalize">${esc(m.utility)}</b><span class="muted">requested ${fdate(m.requested_at?.slice(0, 10))}</span>
+          <input data-mval="${m.id}" inputmode="decimal" placeholder="meter value" style="max-width:140px">
+          <button class="btn small" data-msend="${m.id}">Send reading</button>
+          <label class="btn ghost small" style="display:inline-block">Upload photo<input type="file" data-mphoto="${m.id}" accept="image/*" hidden></label>
+        </div>`).join('')}
+      ${data.meters.filter((m) => m.status === 'done').slice(0, 5).map((m) => `
+        <p class="muted" style="margin:4px 0">✓ <span style="text-transform:capitalize">${esc(m.utility)}</span>: ${m.reading ? esc(m.reading) : 'photo sent'} · ${fdate(m.provided_at)}</p>`).join('')}` : ''}
   </div></div>`;
   $('#tlogout').onclick = async () => { await api('/auth/logout', { method: 'POST' }); ME = null; renderAuth(); };
   app.querySelectorAll('[data-pay]').forEach((b) => (b.onclick = async () => {
     try { await api(`/tenant/charges/${b.dataset.pay}/pay`, { method: 'POST' }); toast('Marked as paid — waiting for owner confirmation'); renderTenantPortal(); }
+    catch (err) { toast(err.message); }
+  }));
+  app.querySelectorAll('[data-msend]').forEach((b) => (b.onclick = async () => {
+    const val = app.querySelector(`[data-mval="${b.dataset.msend}"]`).value;
+    try { await api(`/tenant/meter/${b.dataset.msend}`, { method: 'POST', body: { reading: val } }); toast('Reading sent — thank you!'); renderTenantPortal(); }
+    catch (err) { toast(err.message); }
+  }));
+  app.querySelectorAll('[data-mphoto]').forEach((inp) => (inp.onchange = async () => {
+    const fd = new FormData(); fd.append('file', inp.files[0]);
+    try { await api(`/tenant/meter/${inp.dataset.mphoto}/photo`, { method: 'POST', body: fd }); toast('Photo sent — thank you!'); renderTenantPortal(); }
     catch (err) { toast(err.message); }
   }));
 }
@@ -853,7 +873,9 @@ async function viewProperties(el) {
     list.appendChild(entityCard(p, {
       subtitle: [p.address, `Owner: ${mname[p.owner_id] || 'whole family'}`, p.mortgage_lender ? `Mortgage: ${p.mortgage_lender}, ${money(p.mortgage_payment)} on day ${p.mortgage_due_day ?? '—'}` : null].filter(Boolean).join(' · '),
       deadlines: P_DEADLINES, route: 'properties',
-      editExtra: [['owner_id', 'Owner', 'select', ownerOpts], ['rent_amount', `Rent (${cur()}/mo)`, 'number'], ['rent_due_day', 'Rent due day (1-28)', 'number']],
+      editExtra: [['owner_id', 'Owner', 'select', ownerOpts], ['rent_amount', `Rent (${cur()}/mo)`, 'number'], ['rent_due_day', 'Rent due day (1-28)', 'number'],
+        ['reading_day', 'Meter reading day (1-28)', 'number'],
+        ['reading_utilities', 'Meters to read monthly', 'select', [['', '— none —'], ['electricity', 'Electricity'], ['gas', 'Gas'], ['water', 'Water'], ['electricity,gas', 'Electricity + gas'], ['electricity,gas,water', 'Electricity + gas + water']]]],
       extra: (box, it) => { const d1 = document.createElement('div'), d2 = document.createElement('div'); box.append(d1, d2); renderTenantBox(d1, it); renderEntityDocs(d2, 'property', it, pSlots, () => viewProperties(el)); },
       recordTypes: { maintenance: 'Maintenance', renovation: 'Renovation', utility: 'Utility', rent: 'Rent (income)', other_income: 'Other income', other: 'Other' },
       incomeTypes: ['rent', 'other_income'],
@@ -906,7 +928,8 @@ async function renderEntityDocs(box, kind, item, slots, refresh) {
 
 /* tenant & rent section inside a property card (owner view) */
 async function renderTenantBox(box, p) {
-  const [tinfo, charges] = await Promise.all([api(`/properties/${p.id}/tenant`), api(`/properties/${p.id}/charges`)]);
+  const [tinfo, charges, meters] = await Promise.all([
+    api(`/properties/${p.id}/tenant`), api(`/properties/${p.id}/charges`), api(`/properties/${p.id}/meter-requests`)]);
   const t = today();
   box.innerHTML = `<h3 style="margin-top:16px">Tenant & rent</h3>
     <p class="muted">${p.rent_amount ? `Rent: <b>${money(p.rent_amount)}</b> / month, due day ${p.rent_due_day || 1} — this month's rent charge is generated automatically once a tenant has joined.` : 'No rent set — use <b>Edit</b> to set the monthly rent and due day.'}</p>
@@ -923,14 +946,16 @@ async function renderTenantBox(box, p) {
       <div><label>Title</label><input name="title" placeholder="Electricity — June" required></div>
       <div><label>Amount (${cur()})</label><input name="amount" type="number" step="0.01" min="0.01" required></div>
       <div><label>Due date</label><input name="due_date" type="date" value="${t}" required></div>
+      <div><label>Invoice file (PDF/photo)</label><input name="file" type="file" accept=".pdf,image/*"></div>
       <button class="btn small">Share with tenant</button></form>` : ''}
-    ${charges.length ? `<table><thead><tr><th>Due</th><th>What</th><th class="right">Amount</th><th>Status</th><th></th></tr></thead><tbody>
+    ${charges.length ? `<table><thead><tr><th>Due</th><th>What</th><th class="right">Amount</th><th>Invoice</th><th>Status</th><th></th></tr></thead><tbody>
       ${charges.map((c) => {
         const late = c.status === 'unpaid' && c.due_date < t;
         return `<tr>
           <td>${fdate(c.due_date)}${late ? ' <span class="badge late">overdue</span>' : ''}</td>
           <td><b>${esc(c.title)}</b>${c.type === 'rent' ? ' <span class="muted">· rent</span>' : ''}</td>
           <td class="right amount">${money(c.amount)}</td>
+          <td>${c.attachment ? `<a href="/api/properties/${p.id}/charges/${c.id}/attachment" target="_blank">view</a>` : canWrite() ? `<label class="btn ghost small" style="display:inline-block">attach<input type="file" data-chattach="${c.id}" accept=".pdf,image/*" hidden></label>` : '—'}</td>
           <td>${c.status === 'paid' ? `<span class="badge paid">paid${c.confirmed_at ? ' ' + fdate(c.confirmed_at) : ''}</span>`
             : c.status === 'pending' ? `<span class="badge role">pending — tenant marked paid ${c.marked_paid_at ? fdate(c.marked_paid_at) : ''}</span>`
             : `<span class="badge unpaid">unpaid</span>`}</td>
@@ -939,7 +964,19 @@ async function renderTenantBox(box, p) {
             ${c.status === 'pending' ? `<button class="btn ghost small" data-chreject="${c.id}">Reject</button>` : ''}
             <button class="btn danger small" data-chdel="${c.id}">✕</button>` : ''}</td>
         </tr>`;
-      }).join('')}</tbody></table>` : `<p class="muted">Nothing shared with the tenant yet.</p>`}`;
+      }).join('')}</tbody></table>` : `<p class="muted">Nothing shared with the tenant yet.</p>`}
+    <h3 style="margin-top:16px">Meter readings</h3>
+    <p class="muted">${p.reading_day && p.reading_utilities ? `Scheduled: ${esc(p.reading_utilities)} on day ${p.reading_day} of every month (tenant gets an email).` : 'No monthly schedule — set "Meter reading day" and the meters via <b>Edit</b>, or request one now.'}</p>
+    ${canWrite() && tinfo.tenants.length ? `<p class="row">Request now:
+      ${['electricity', 'gas', 'water'].map((u) => `<button class="btn ghost small" data-meterreq="${u}">${u[0].toUpperCase() + u.slice(1)}</button>`).join('')}</p>` : ''}
+    ${meters.length ? `<table><thead><tr><th>Requested</th><th>Utility</th><th>Status</th><th>Reading</th><th></th></tr></thead><tbody>
+      ${meters.map((m) => `<tr style="${m.status === 'done' ? '' : ''}">
+        <td>${fdate(m.requested_at?.slice(0, 10))}</td>
+        <td>${esc(m.utility)}</td>
+        <td>${m.status === 'done' ? `<span class="badge paid">received ${m.provided_at ? fdate(m.provided_at) : ''}</span>` : '<span class="badge unpaid">waiting</span>'}</td>
+        <td>${m.reading ? `<b class="amount">${esc(m.reading)}</b>` : ''}${m.photo ? ` <a href="/api/properties/${p.id}/meter-requests/${m.id}/photo" target="_blank">photo</a>` : ''}</td>
+        <td class="right">${canWrite() ? `<button class="btn danger small" data-meterdel="${m.id}">✕</button>` : ''}</td></tr>`).join('')}
+    </tbody></table>` : `<p class="muted">No reading requests yet.</p>`}`;
   const reload = () => renderTenantBox(box, p);
   box.querySelectorAll('[data-copy]').forEach((b) => (b.onclick = () => copyText(b.dataset.copy)));
   box.querySelector('[data-tcode]')?.addEventListener('click', async () => {
@@ -951,9 +988,29 @@ async function renderTenantBox(box, p) {
   }));
   box.querySelector('[data-chform]')?.addEventListener('submit', async (e) => {
     e.preventDefault();
-    try { await api(`/properties/${p.id}/charges`, { method: 'POST', body: Object.fromEntries(new FormData(e.target)) }); toast('Shared with tenant'); reload(); }
-    catch (err) { toast(err.message); }
+    const fd0 = new FormData(e.target);
+    const file = fd0.get('file'); fd0.delete('file');
+    try {
+      const ch = await api(`/properties/${p.id}/charges`, { method: 'POST', body: Object.fromEntries(fd0) });
+      if (file && file.size > 0) {
+        const fd = new FormData(); fd.append('file', file);
+        await api(`/properties/${p.id}/charges/${ch.id}/attachment`, { method: 'POST', body: fd });
+      }
+      toast('Shared with tenant'); reload();
+    } catch (err) { toast(err.message); }
   });
+  box.querySelectorAll('[data-chattach]').forEach((inp) => (inp.onchange = async () => {
+    const fd = new FormData(); fd.append('file', inp.files[0]);
+    try { await api(`/properties/${p.id}/charges/${inp.dataset.chattach}/attachment`, { method: 'POST', body: fd }); toast('Invoice attached'); reload(); }
+    catch (err) { toast(err.message); }
+  }));
+  box.querySelectorAll('[data-meterreq]').forEach((b) => (b.onclick = async () => {
+    try { await api(`/properties/${p.id}/meter-request`, { method: 'POST', body: { utility: b.dataset.meterreq } }); toast('Reading requested — tenant notified'); reload(); }
+    catch (err) { toast(err.message); }
+  }));
+  box.querySelectorAll('[data-meterdel]').forEach((b) => (b.onclick = async () => {
+    await api(`/properties/${p.id}/meter-requests/${b.dataset.meterdel}`, { method: 'DELETE' }); reload();
+  }));
   box.querySelectorAll('[data-chconfirm]').forEach((b) => (b.onclick = async () => {
     try { await api(`/properties/${p.id}/charges/${b.dataset.chconfirm}/confirm`, { method: 'POST' }); toast('Payment confirmed'); reload(); }
     catch (err) { toast(err.message); }

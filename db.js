@@ -218,9 +218,25 @@ CREATE TABLE IF NOT EXISTS tenant_charges (
   status TEXT NOT NULL DEFAULT 'unpaid' CHECK (status IN ('unpaid','pending','paid')),
   marked_paid_at TEXT,
   confirmed_at TEXT,
+  attachment TEXT, -- invoice scan the owner attaches; visible to the tenant
   note TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_tenant_charges_property ON tenant_charges(property_id);
+
+-- meter reading requests (gas/electricity/water): owner asks, tenant answers with a value and/or photo
+CREATE TABLE IF NOT EXISTS meter_requests (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  family_id INTEGER NOT NULL REFERENCES families(id) ON DELETE CASCADE,
+  property_id INTEGER NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+  utility TEXT NOT NULL CHECK (utility IN ('electricity','gas','water')),
+  period TEXT,               -- YYYY-MM for scheduled requests (one per month per utility)
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','done')),
+  reading TEXT,              -- value the tenant typed
+  photo TEXT,                -- uploaded meter photo filename
+  provided_at TEXT,
+  requested_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_meter_requests_property ON meter_requests(property_id);
 
 CREATE TABLE IF NOT EXISTS property_records (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -353,6 +369,13 @@ if (!vrCols.includes('expense_id')) db.exec('ALTER TABLE vehicle_records ADD COL
 
 const savCols = db.prepare('PRAGMA table_info(savings)').all().map((c) => c.name);
 if (!savCols.includes('goal_id')) db.exec('ALTER TABLE savings ADD COLUMN goal_id INTEGER REFERENCES savings_goals(id) ON DELETE SET NULL');
+
+const tcCols = db.prepare('PRAGMA table_info(tenant_charges)').all().map((c) => c.name);
+if (!tcCols.includes('attachment')) db.exec('ALTER TABLE tenant_charges ADD COLUMN attachment TEXT');
+
+const propCols3 = db.prepare('PRAGMA table_info(properties)').all().map((c) => c.name);
+if (!propCols3.includes('reading_day')) db.exec('ALTER TABLE properties ADD COLUMN reading_day INTEGER');
+if (!propCols3.includes('reading_utilities')) db.exec('ALTER TABLE properties ADD COLUMN reading_utilities TEXT');
 
 if (!userCols.includes('lang')) db.exec("ALTER TABLE users ADD COLUMN lang TEXT NOT NULL DEFAULT 'en'");
 if (!userCols.includes('birthday')) db.exec('ALTER TABLE users ADD COLUMN birthday TEXT');

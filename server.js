@@ -324,7 +324,7 @@ crud({
 });
 crud({
   route: 'properties', table: 'properties',
-  fields: ['name', 'address', 'insurance_expiry', 'insurance2_expiry', 'property_tax_due', 'mortgage_lender', 'mortgage_payment', 'mortgage_due_day', 'owner_id', 'rent_amount', 'rent_due_day', 'notes'],
+  fields: ['name', 'address', 'insurance_expiry', 'insurance2_expiry', 'property_tax_due', 'mortgage_lender', 'mortgage_payment', 'mortgage_due_day', 'owner_id', 'rent_amount', 'rent_due_day', 'reading_day', 'reading_utilities', 'notes'],
   orderBy: 'name',
   validate: (b, req) => {
     if (!b.name) return 'Property name is required';
@@ -899,11 +899,28 @@ app.delete('/api/properties/:id/tenant/:uid', auth, canWrite, (req, res) => {
   res.json({ ok: true });
 });
 
+// who to email about tenant matters
+function tenantEmails(propId) {
+  return db.prepare("SELECT email FROM users WHERE role = 'tenant' AND tenant_property_id = ? AND email IS NOT NULL").all(propId).map((u) => u.email);
+}
+function propOwnerEmails(prop) {
+  if (prop.owner_id) {
+    const o = db.prepare('SELECT email FROM users WHERE id = ? AND email IS NOT NULL').get(prop.owner_id);
+    if (o) return [o.email];
+  }
+  return db.prepare("SELECT email FROM users WHERE family_id = ? AND role IN ('admin','adult') AND email IS NOT NULL").all(prop.family_id).map((u) => u.email);
+}
+function notifyMail(to, subject, text) {
+  if (!process.env.MAIL_FROM || !to.length) return;
+  sendMail(to, subject, text).catch((err) => console.error('notify mail:', err.message));
+}
+
 // owner side: charges shared with the tenant
 app.get('/api/properties/:id/charges', auth, (req, res) => {
   const prop = familyProperty(req);
   if (!prop) return res.status(404).json({ error: 'Not found' });
   ensureRentCharge(prop);
+  ensureMeterRequests(prop);
   res.json(db.prepare("SELECT * FROM tenant_charges WHERE property_id = ? ORDER BY (status = 'paid'), due_date DESC, id DESC").all(prop.id));
 });
 app.post('/api/properties/:id/charges', auth, canWrite, (req, res) => {
@@ -916,7 +933,25 @@ app.post('/api/properties/:id/charges', auth, canWrite, (req, res) => {
   if (!isDate(b.due_date)) return res.status(400).json({ error: 'Due date must be YYYY-MM-DD' });
   const info = db.prepare('INSERT INTO tenant_charges (family_id, property_id, type, title, amount, due_date, note) VALUES (?,?,?,?,?,?,?)')
     .run(prop.family_id, prop.id, b.type, str(b.title), Number(b.amount), b.due_date, str(b.note));
+  notifyMail(tenantEmails(prop.id), `New ${b.type === 'rent' ? 'rent charge' : 'invoice'} for ${prop.name}`,
+    `Hello,\n\nA new payment was added for ${prop.name}:\n\n- ${str(b.title)}: ${Number(b.amount).toFixed(2)}, due ${b.due_date}\n\nOpen your tenant portal to see the details${b.type === 'invoice' ? ' and the invoice' : ''}, and press "Mark as paid" once you've paid it.\n`);
   res.json(db.prepare('SELECT * FROM tenant_charges WHERE id = ?').get(info.lastInsertRowid));
+});
+// invoice file on a tenant charge (owner uploads, tenant can view)
+app.post('/api/properties/:id/charges/:cid/attachment', auth, canWrite, upload.single('file'), (req, res) => {
+  const prop = familyProperty(req);
+  const ch = prop && db.prepare('SELECT * FROM tenant_charges WHERE id = ? AND property_id = ?').get(req.params.cid, prop.id);
+  if (!ch) return res.status(404).json({ error: 'Charge not found' });
+  if (!req.file) return res.status(400).json({ error: 'No file received' });
+  if (ch.attachment) { try { fs.unlinkSync(path.join(UPLOAD_DIR, ch.attachment)); } catch {} }
+  db.prepare('UPDATE tenant_charges SET attachment = ? WHERE id = ?').run(req.file.filename, ch.id);
+  res.json({ attachment: req.file.filename });
+});
+app.get('/api/properties/:id/charges/:cid/attachment', auth, (req, res) => {
+  const prop = familyProperty(req);
+  const ch = prop && db.prepare('SELECT * FROM tenant_charges WHERE id = ? AND property_id = ?').get(req.params.cid, prop.id);
+  if (!ch || !ch.attachment) return res.status(404).json({ error: 'No attachment' });
+  res.sendFile(path.join(UPLOAD_DIR, ch.attachment));
 });
 // owner confirms a payment the tenant marked (or records one directly);
 // confirmed rent is logged as property income so the spent/income summary stays true
@@ -953,21 +988,111 @@ app.delete('/api/properties/:id/charges/:cid', auth, canWrite, (req, res) => {
   res.json({ ok: true });
 });
 
+// ---------- meter reading requests ----------
+const METER_UTILITIES = ['electricity', 'gas', 'water'];
+// scheduled readings: once per month on/after reading_day, create a request per configured utility and email the tenant
+function ensureMeterRequests(prop) {
+  const day = Number(prop.reading_day);
+  if (!day || day < 1) return;
+  const utils = String(prop.reading_utilities || '').split(',').map((s) => s.trim()).filter((u) => METER_UTILITIES.includes(u));
+  if (!utils.length) return;
+  if (!db.prepare("SELECT id FROM users WHERE role = 'tenant' AND tenant_property_id = ?").get(prop.id)) return;
+  const period = new Date().toISOString().slice(0, 7);
+  if (new Date().getUTCDate() < Math.min(day, 28)) return;
+  const created = [];
+  for (const u of utils) {
+    if (db.prepare('SELECT id FROM meter_requests WHERE property_id = ? AND utility = ? AND period = ?').get(prop.id, u, period)) continue;
+    db.prepare('INSERT INTO meter_requests (family_id, property_id, utility, period) VALUES (?,?,?,?)').run(prop.family_id, prop.id, u, period);
+    created.push(u);
+  }
+  if (created.length) {
+    notifyMail(tenantEmails(prop.id), `Meter reading needed for ${prop.name}`,
+      `Hello,\n\nPlease send this month's meter reading${created.length > 1 ? 's' : ''} for ${prop.name}: ${created.join(', ')}.\n\nOpen your tenant portal and type the value or upload a photo of the meter.\n`);
+  }
+}
+// owner: request a reading now, list and manage requests
+app.post('/api/properties/:id/meter-request', auth, canWrite, (req, res) => {
+  const prop = familyProperty(req);
+  if (!prop) return res.status(404).json({ error: 'Not found' });
+  const u = String(req.body?.utility || '');
+  if (!METER_UTILITIES.includes(u)) return res.status(400).json({ error: 'Utility must be electricity, gas or water' });
+  const info = db.prepare('INSERT INTO meter_requests (family_id, property_id, utility) VALUES (?,?,?)').run(prop.family_id, prop.id, u);
+  notifyMail(tenantEmails(prop.id), `Meter reading needed for ${prop.name}`,
+    `Hello,\n\nPlease send the current ${u} meter reading for ${prop.name}.\n\nOpen your tenant portal and type the value or upload a photo of the meter.\n`);
+  res.json(db.prepare('SELECT * FROM meter_requests WHERE id = ?').get(info.lastInsertRowid));
+});
+app.get('/api/properties/:id/meter-requests', auth, (req, res) => {
+  const prop = familyProperty(req);
+  if (!prop) return res.status(404).json({ error: 'Not found' });
+  ensureMeterRequests(prop);
+  res.json(db.prepare("SELECT * FROM meter_requests WHERE property_id = ? ORDER BY (status = 'done'), id DESC LIMIT 60").all(prop.id));
+});
+app.delete('/api/properties/:id/meter-requests/:rid', auth, canWrite, (req, res) => {
+  const prop = familyProperty(req);
+  if (!prop) return res.status(404).json({ error: 'Not found' });
+  const row = db.prepare('SELECT * FROM meter_requests WHERE id = ? AND property_id = ?').get(req.params.rid, prop.id);
+  if (row?.photo) { try { fs.unlinkSync(path.join(UPLOAD_DIR, row.photo)); } catch {} }
+  db.prepare('DELETE FROM meter_requests WHERE id = ? AND property_id = ?').run(req.params.rid, prop.id);
+  res.json({ ok: true });
+});
+app.get('/api/properties/:id/meter-requests/:rid/photo', auth, (req, res) => {
+  const prop = familyProperty(req);
+  const row = prop && db.prepare('SELECT * FROM meter_requests WHERE id = ? AND property_id = ?').get(req.params.rid, prop.id);
+  if (!row || !row.photo) return res.status(404).json({ error: 'No photo' });
+  res.sendFile(path.join(UPLOAD_DIR, row.photo));
+});
+
 // tenant side: the only data a tenant account can reach
+function tenantProp(req) { return db.prepare('SELECT * FROM properties WHERE id = ?').get(req.user.tenant_property_id); }
+function meterDone(req, res, row, prop, readingText) {
+  db.prepare("UPDATE meter_requests SET status = 'done', provided_at = ? WHERE id = ?").run(new Date().toISOString().slice(0, 10), row.id);
+  notifyMail(propOwnerEmails(prop), `Meter reading received — ${prop.name} (${row.utility})`,
+    `Hello,\n\n${req.user.name} sent the ${row.utility} reading for ${prop.name}:\n\n${readingText}\n\nOpen Family Hub → Properties → ${prop.name} to see it.\n`);
+  res.json({ ok: true });
+}
 app.get('/api/tenant/charges', auth, (req, res) => {
   if (req.user.role !== 'tenant') return res.status(403).json({ error: 'Tenant accounts only' });
-  const prop = db.prepare('SELECT * FROM properties WHERE id = ?').get(req.user.tenant_property_id);
+  const prop = tenantProp(req);
   if (!prop) return res.status(404).json({ error: 'Your rental is no longer registered — contact the owner' });
   ensureRentCharge(prop);
-  const charges = db.prepare("SELECT id, type, title, amount, due_date, status, marked_paid_at, confirmed_at, note FROM tenant_charges WHERE property_id = ? ORDER BY (status = 'paid'), due_date DESC, id DESC").all(prop.id);
-  res.json({ property: { name: prop.name, address: prop.address }, charges });
+  ensureMeterRequests(prop);
+  const charges = db.prepare("SELECT id, type, title, amount, due_date, status, marked_paid_at, confirmed_at, attachment, note FROM tenant_charges WHERE property_id = ? ORDER BY (status = 'paid'), due_date DESC, id DESC").all(prop.id);
+  const meters = db.prepare("SELECT id, utility, status, reading, provided_at, requested_at FROM meter_requests WHERE property_id = ? ORDER BY (status = 'done'), id DESC LIMIT 20").all(prop.id);
+  res.json({ property: { name: prop.name, address: prop.address }, charges, meters });
+});
+app.get('/api/tenant/charges/:cid/attachment', auth, (req, res) => {
+  if (req.user.role !== 'tenant') return res.status(403).json({ error: 'Tenant accounts only' });
+  const ch = db.prepare('SELECT * FROM tenant_charges WHERE id = ? AND property_id = ?').get(req.params.cid, req.user.tenant_property_id);
+  if (!ch || !ch.attachment) return res.status(404).json({ error: 'No attachment' });
+  res.sendFile(path.join(UPLOAD_DIR, ch.attachment));
 });
 app.post('/api/tenant/charges/:cid/pay', auth, (req, res) => {
   if (req.user.role !== 'tenant') return res.status(403).json({ error: 'Tenant accounts only' });
-  const info = db.prepare("UPDATE tenant_charges SET status = 'pending', marked_paid_at = ? WHERE id = ? AND property_id = ? AND status = 'unpaid'")
-    .run(new Date().toISOString().slice(0, 10), req.params.cid, req.user.tenant_property_id);
-  if (!info.changes) return res.status(404).json({ error: 'Charge not found or already marked' });
+  const ch = db.prepare("SELECT * FROM tenant_charges WHERE id = ? AND property_id = ? AND status = 'unpaid'").get(req.params.cid, req.user.tenant_property_id);
+  if (!ch) return res.status(404).json({ error: 'Charge not found or already marked' });
+  db.prepare("UPDATE tenant_charges SET status = 'pending', marked_paid_at = ? WHERE id = ?").run(new Date().toISOString().slice(0, 10), ch.id);
+  const prop = tenantProp(req);
+  if (prop) notifyMail(propOwnerEmails(prop), `Payment marked as paid — ${prop.name}`,
+    `Hello,\n\n${req.user.name} marked this as paid for ${prop.name}:\n\n- ${ch.title}: ${Number(ch.amount).toFixed(2)}, due ${ch.due_date}\n\nOpen Family Hub → Properties → ${prop.name} to confirm (or reject) it.\n`);
   res.json({ ok: true });
+});
+// tenant answers a meter request with a typed value and/or a photo
+app.post('/api/tenant/meter/:rid', auth, (req, res) => {
+  if (req.user.role !== 'tenant') return res.status(403).json({ error: 'Tenant accounts only' });
+  const row = db.prepare("SELECT * FROM meter_requests WHERE id = ? AND property_id = ? AND status = 'pending'").get(req.params.rid, req.user.tenant_property_id);
+  if (!row) return res.status(404).json({ error: 'Request not found or already answered' });
+  const reading = str(req.body?.reading);
+  if (!reading) return res.status(400).json({ error: 'Type the meter value' });
+  db.prepare('UPDATE meter_requests SET reading = ? WHERE id = ?').run(reading, row.id);
+  meterDone(req, res, row, tenantProp(req), `Reading: ${reading}`);
+});
+app.post('/api/tenant/meter/:rid/photo', auth, upload.single('file'), (req, res) => {
+  if (req.user.role !== 'tenant') return res.status(403).json({ error: 'Tenant accounts only' });
+  const row = db.prepare("SELECT * FROM meter_requests WHERE id = ? AND property_id = ? AND status = 'pending'").get(req.params.rid, req.user.tenant_property_id);
+  if (!row) return res.status(404).json({ error: 'Request not found or already answered' });
+  if (!req.file) return res.status(400).json({ error: 'No photo received' });
+  db.prepare('UPDATE meter_requests SET photo = ? WHERE id = ?').run(req.file.filename, row.id);
+  meterDone(req, res, row, tenantProp(req), 'A photo of the meter was uploaded (see it in the app).');
 });
 
 // next upcoming occurrence of a yearly date (birthday): this year if still ahead, else next year
@@ -1215,6 +1340,7 @@ async function runEmailReminders() {
 async function emailReminderTick() {
   try { autoPayBills(); } catch (err) { console.error('auto-pay bills:', err.message); }
   try { autoLogCreditExpenses(); } catch (err) { console.error('auto credit expense:', err.message); }
+  try { for (const p of db.prepare('SELECT * FROM properties').all()) ensureMeterRequests(p); } catch (err) { console.error('meter schedule:', err.message); }
   try { await runEmailReminders(); } catch (err) { console.error('email reminders:', err.message); }
 }
 setTimeout(emailReminderTick, 30 * 1000);
