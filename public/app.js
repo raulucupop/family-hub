@@ -1581,6 +1581,10 @@ async function viewSettings(el) {
       <p class="muted" style="margin:14px 0 6px">Language</p>
       <div class="row">${[['en', '🇬🇧 English'], ['ro', '🇷🇴 Română']].map(([lg, lb]) => `<button class="btn ${(ME.lang || 'en') === lg ? '' : 'ghost'} small" data-lang="${lg}">${lb}</button>`).join('')}</div>
     </div>
+    <div class="card" style="margin-top:16px"><h3>Notifications on this device</h3>
+      <p class="muted" style="margin-top:0">Get alerts (RCA, ITP, acte, birthdays…) as push notifications on this phone/computer even when the site is closed. Tip: on a phone, first use "Add to Home Screen" to install the app.</p>
+      <div class="row"><button class="btn small" id="pushbtn">…</button><button class="btn ghost small" id="pushtest" hidden>Send a test</button></div>
+    </div>
     <div class="card" style="margin-top:16px"><h3>Your profile</h3>
       <div class="row" style="gap:16px;align-items:center">${avatarHtml(ME, 'avatar-lg')}
         <div class="row">
@@ -1607,6 +1611,7 @@ async function viewSettings(el) {
     try { const u = await api('/settings', { method: 'POST', body: { lang: b.dataset.lang } }); ME = { ...ME, ...u }; applyLang(); render(); }
     catch (err) { toast(err.message); }
   }));
+  setupPushCard();
   $('#nameform')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     try { const u = await api('/settings', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) }); ME = { ...ME, ...u }; toast('Saved'); render(); }
@@ -1628,6 +1633,46 @@ async function viewSettings(el) {
       toast('Removed');
     } catch (err) { toast(err.message); }
   }));
+}
+
+/* ---------- push notifications setup (Settings card) ---------- */
+function b64ToUint8(base64) {
+  const pad = '='.repeat((4 - (base64.length % 4)) % 4);
+  const raw = atob((base64 + pad).replace(/-/g, '+').replace(/_/g, '/'));
+  return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
+}
+async function setupPushCard() {
+  const btn = $('#pushbtn'), testBtn = $('#pushtest');
+  if (!btn) return;
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+    btn.textContent = 'Not supported by this browser'; btn.disabled = true; return;
+  }
+  const reg = await navigator.serviceWorker.ready;
+  let sub = await reg.pushManager.getSubscription();
+  const paint = () => {
+    btn.textContent = sub ? 'Disable on this device' : 'Enable on this device';
+    btn.classList.toggle('ghost', !!sub);
+    testBtn.hidden = !sub;
+  };
+  paint();
+  btn.onclick = async () => {
+    try {
+      if (sub) {
+        await api('/push/unsubscribe', { method: 'POST', body: { endpoint: sub.endpoint } });
+        await sub.unsubscribe(); sub = null; toast('Push notifications off on this device');
+      } else {
+        const { key } = await api('/push/key');
+        sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToUint8(key) });
+        await api('/push/subscribe', { method: 'POST', body: sub.toJSON() });
+        toast('Push notifications on — alerts will reach this device');
+      }
+      paint();
+    } catch (err) { toast(err.message || 'Permission was not granted'); }
+  };
+  testBtn.onclick = async () => {
+    try { await api('/push/test', { method: 'POST' }); toast('Test sent — check your notifications'); }
+    catch (err) { toast(err.message); }
+  };
 }
 
 /* ---------- date inputs: show dd/mm/yyyy instead of the browser's locale format ----------

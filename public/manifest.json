@@ -1,0 +1,14 @@
+{
+  "name": "Family Hub",
+  "short_name": "FamilyHub",
+  "description": "Family finance & asset manager: budget, bills, vehicles, properties.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#eff2f1",
+  "theme_color": "#1c2b33",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}

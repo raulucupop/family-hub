@@ -287,6 +287,16 @@ CREATE TABLE IF NOT EXISTS savings_goals (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- web push subscriptions (one row per device)
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  family_id INTEGER NOT NULL REFERENCES families(id) ON DELETE CASCADE,
+  endpoint TEXT UNIQUE NOT NULL,
+  keys_json TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- shared family lists: buy/travel wishlists, groceries, personal targets
 CREATE TABLE IF NOT EXISTS list_items (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

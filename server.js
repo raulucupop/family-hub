@@ -1270,6 +1270,57 @@ app.get('/calendar/:token.ics', (req, res) => {
   res.send(lines.join('\r\n') + '\r\n');
 });
 
+// ---------- web push ----------
+let _webpush = null, VAPID_KEYS = null;
+function getWebPush() {
+  if (_webpush) return _webpush;
+  const wp = require('web-push');
+  const f = path.join(DATA_DIR, '.vapid.json');
+  if (!fs.existsSync(f)) fs.writeFileSync(f, JSON.stringify(wp.generateVAPIDKeys()), { mode: 0o600 });
+  VAPID_KEYS = JSON.parse(fs.readFileSync(f, 'utf8'));
+  const contact = String(process.env.MAIL_FROM || '').match(/[^\s<>]+@[^\s<>]+/)?.[0] || 'admin@example.com';
+  wp.setVapidDetails('mailto:' + contact, VAPID_KEYS.publicKey, VAPID_KEYS.privateKey);
+  _webpush = wp;
+  return wp;
+}
+// push a payload to every subscribed device of the family (owner-scoped alerts go to admins + the owner)
+async function sendPushToFamily(fid, payload, ownerId = null) {
+  let wp; try { wp = getWebPush(); } catch { return; }
+  let subs = db.prepare('SELECT s.*, u.role FROM push_subscriptions s JOIN users u ON u.id = s.user_id WHERE s.family_id = ?').all(fid);
+  if (ownerId != null) subs = subs.filter((s) => s.role === 'admin' || s.user_id === ownerId);
+  for (const s of subs) {
+    try { await wp.sendNotification({ endpoint: s.endpoint, keys: JSON.parse(s.keys_json) }, JSON.stringify(payload)); }
+    catch (err) { if (err.statusCode === 404 || err.statusCode === 410) db.prepare('DELETE FROM push_subscriptions WHERE id = ?').run(s.id); }
+  }
+}
+app.get('/api/push/key', auth, (req, res) => {
+  try { getWebPush(); res.json({ key: VAPID_KEYS.publicKey }); }
+  catch (err) { res.status(500).json({ error: 'Push is not available on this server' }); }
+});
+app.post('/api/push/subscribe', auth, (req, res) => {
+  const s = req.body || {};
+  if (!s.endpoint || !s.keys) return res.status(400).json({ error: 'Invalid subscription' });
+  db.prepare(`
+    INSERT INTO push_subscriptions (user_id, family_id, endpoint, keys_json) VALUES (?,?,?,?)
+    ON CONFLICT(endpoint) DO UPDATE SET user_id = excluded.user_id, family_id = excluded.family_id, keys_json = excluded.keys_json
+  `).run(req.user.id, req.user.family_id, String(s.endpoint), JSON.stringify(s.keys));
+  res.json({ ok: true });
+});
+app.post('/api/push/unsubscribe', auth, (req, res) => {
+  if (req.body?.endpoint) db.prepare('DELETE FROM push_subscriptions WHERE endpoint = ? AND user_id = ?').run(String(req.body.endpoint), req.user.id);
+  res.json({ ok: true });
+});
+app.post('/api/push/test', auth, async (req, res) => {
+  const subs = db.prepare('SELECT * FROM push_subscriptions WHERE user_id = ?').all(req.user.id);
+  if (!subs.length) return res.status(400).json({ error: 'No subscription on this account yet' });
+  let wp; try { wp = getWebPush(); } catch { return res.status(500).json({ error: 'Push is not available on this server' }); }
+  for (const s of subs) {
+    try { await wp.sendNotification({ endpoint: s.endpoint, keys: JSON.parse(s.keys_json) }, JSON.stringify({ title: 'Family Hub', body: 'Push notifications are working 🎉' })); }
+    catch (err) { console.error('push test:', err.message); }
+  }
+  res.json({ ok: true });
+});
+
 // ---------- site notifications ----------
 const THRESHOLDS = [30, 14, 7, 1, 0];
 // only the important stuff raises alerts: insurance, car deadlines, PAD and personal papers.
@@ -1277,22 +1328,26 @@ const THRESHOLDS = [30, 14, 7, 1, 0];
 const ALERT_KINDS = new Set(['rca', 'casco', 'vignette', 'itp', 'road_tax', 'property_insurance', 'document', 'birthday']);
 function generateNotifications(fid) {
   const ins = db.prepare('INSERT OR IGNORE INTO notifications (family_id, key, title, body, owner_id) VALUES (?,?,?,?,?)');
+  const fresh = [];
+  const add = (key, title, body, owner) => { if (ins.run(fid, key, title, body, owner).changes > 0) fresh.push({ title, body, owner }); };
   for (const r of collectReminders(fid, 31)) {
     if (!ALERT_KINDS.has(r.kind)) continue;
     if (r.days_left < 0) {
-      ins.run(fid, `${r.kind}:${r.ref_id}:${r.date}:overdue`,
+      add(`${r.kind}:${r.ref_id}:${r.date}:overdue`,
         `Overdue: ${r.label}`, `${r.entity || ''} — was due ${r.date}${r.amount ? `, ${r.amount}` : ''}`.trim(), r.owner_id);
       continue;
     }
     for (const t of THRESHOLDS) {
       if (r.days_left <= t) {
-        ins.run(fid, `${r.kind}:${r.ref_id}:${r.date}:${t}`,
+        add(`${r.kind}:${r.ref_id}:${r.date}:${t}`,
           t === 0 ? `Due today: ${r.label}` : `${r.label} — ${r.days_left} day${r.days_left === 1 ? '' : 's'} left`,
           `${r.entity || ''} — due ${r.date}${r.amount ? `, ${r.amount}` : ''}`.trim(), r.owner_id);
         break; // only the tightest threshold crossed right now
       }
     }
   }
+  // brand-new alerts also go out as push notifications to subscribed devices
+  for (const n of fresh) sendPushToFamily(fid, { title: n.title, body: n.body }, n.owner).catch(() => {});
 }
 app.get('/api/notifications', auth, (req, res) => {
   generateNotifications(req.user.family_id);
