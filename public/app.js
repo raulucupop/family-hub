@@ -315,10 +315,9 @@ async function renderTenantPortal() {
         </tr>`;
       }).join('')}</tbody></table>`
     : `<div class="empty" style="margin-top:14px"><b>Nothing to pay yet</b>Rent and shared invoices from your landlord will appear here.</div>`}
-    ${payUrl && unpaidTotal > 0 ? `<div class="row" style="flex-wrap:wrap;margin-top:10px;border:1px solid var(--line);border-radius:10px;padding:10px">
+    ${payUrl ? `<div class="row" style="flex-wrap:wrap;margin-top:10px;border:1px solid var(--line);border-radius:10px;padding:10px">
       <b>Pay with Revolut:</b>
-      <a class="btn small" href="${esc(payUrl(unpaidTotal))}" target="_blank" rel="noopener">Pay all — ${money(unpaidTotal)}</a>
-      <a class="btn ghost small" href="${esc(data.property.payment_link)}" target="_blank" rel="noopener">Pay a custom amount</a>
+      <a class="btn small" href="${esc(data.property.payment_link)}" target="_blank" rel="noopener">Pay</a>
     </div>` : ''}
     <p class="muted">After you mark something as paid, the owner confirms it — until then it shows as "confirmation pending".</p>
     ${(data.meters || []).length ? `<h3 style="margin-top:16px">Meter readings</h3>
