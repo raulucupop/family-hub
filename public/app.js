@@ -135,7 +135,7 @@ function daysClass(d) { return d < 0 ? 'late' : d <= 14 ? 'warn' : ''; }
 function daysLabel(d) { return d < 0 ? `${-d}d overdue` : d === 0 ? 'today' : `in ${d}d`; }
 
 /* ---------- router ---------- */
-const routes = { dashboard: viewDashboard, calendar: viewCalendar, money: viewMoney, bills: viewBills, vehicles: viewVehicles, properties: viewProperties, acte: viewActe, lists: viewLists, import: viewImport, alerts: viewAlerts, family: viewFamily, settings: viewSettings };
+const routes = { dashboard: viewDashboard, money: viewMoney, bills: viewBills, vehicles: viewVehicles, properties: viewProperties, acte: viewActe, lists: viewLists, import: viewImport, alerts: viewAlerts, family: viewFamily, settings: viewSettings };
 window.addEventListener('hashchange', render);
 
 /* ---------- site notifications: polling, badge, browser notifications ---------- */
@@ -189,7 +189,7 @@ function render() {
 }
 function shell(active) {
   const links = [
-    ['dashboard', '⌂', 'Dashboard'], ['calendar', '▦', 'Calendar'], ['money', '₤', 'Budget & expenses'], ['bills', '☰', 'Bills'],
+    ['dashboard', '⌂', 'Dashboard'], ['money', '₤', 'Budget & expenses'], ['bills', '☰', 'Bills'],
     ['vehicles', '⛟', 'Vehicles'], ['properties', '⌂', 'Properties'], ['acte', '❏', 'Acte'], ['lists', '☑', 'Lists'], ['import', '⇪', 'Bank import'],
     ['alerts', '◉', `Alerts<span id="notifbadge" class="notifbadge" ${NOTIF.unread ? '' : 'hidden'}>${NOTIF.unread}</span>`],
     ['family', '☺', 'Family'], ['settings', '⚙', 'Settings'],
@@ -398,20 +398,32 @@ async function viewDashboard(el) {
           <span>${esc(b.category)}</span><span class="amount muted">${money(s)} / ${money(b.amount)}</span></div>
           <div class="bar"><i class="${s > b.amount ? 'over' : ''}" style="width:${pct}%"></i></div></div>`;
       }).join('') : `<p class="muted">No budgets set for this month yet — set them in <a href="#money">Budget & expenses</a>.</p>`}
-    </section>`;
+    </section>
+    <section class="card" id="dashcal" style="margin-top:18px"><p class="muted">Loading calendar…</p></section>`;
   $('#dash').querySelectorAll('[data-tab]').forEach((a) => a.addEventListener('click', () => { PENDING_MONEY_TAB = a.dataset.tab; }));
-  drawCharts(stats);
+  drawCharts(stats, DASH_VIEW, DASH_MONTHS);
+  renderCalendar($('#dashcal'), true);
 }
-let PENDING_MONEY_TAB = null;
-function drawCharts(stats) {
+let PENDING_MONEY_TAB = null, PENDING_EXPENSE_FILTER = null;
+function drawCharts(stats, scopeView = 'all', scopeMonths = 1) {
   const c0 = getComputedStyle(document.documentElement).getPropertyValue('--ink-soft').trim();
   if (window.Chart) { Chart.defaults.color = c0 || '#666'; Chart.defaults.borderColor = getComputedStyle(document.documentElement).getPropertyValue('--line').trim() || '#ddd'; }
   const colors = ['#2f6b5a', '#c98a2d', '#5b7fa6', '#b23a2e', '#7c5ba6', '#3e7c4f', '#8a6d3b', '#45565f', '#a0522d', '#4a8fb0'];
-  const cc = $('#catChart'); if (cc && stats.byCategory.length) new Chart(cc, {
+  // clicking a category slice opens Expenses filtered to that category, keeping the dashboard's scope
+  const drillTo = (cat) => {
+    PENDING_MONEY_TAB = 'expenses';
+    PENDING_EXPENSE_FILTER = { cat, who: scopeView === 'all' ? 'all' : String(scopeView), month: scopeMonths === 1 ? thisMonth() : 'all' };
+    location.hash = '#money';
+  };
+  const cc = $('#catChart'); let catChart;
+  if (cc && stats.byCategory.length) { catChart = new Chart(cc, {
     type: 'doughnut',
     data: { labels: stats.byCategory.map((c) => c.category), datasets: [{ data: stats.byCategory.map((c) => c.total), backgroundColor: colors }] },
-    options: { maintainAspectRatio: false, plugins: { legend: { position: 'right' } } },
-  });
+    options: {
+      maintainAspectRatio: false, plugins: { legend: { position: 'right', onClick: (e, item) => drillTo(item.text) } },
+      onClick: (e, els) => { if (els.length) drillTo(catChart.data.labels[els[0].index]); },
+    },
+  }); cc.style.cursor = 'pointer'; }
   else if (cc) cc.replaceWith(Object.assign(document.createElement('p'), { className: 'muted', textContent: 'No expenses this month yet.' }));
   const months = [...new Set([...stats.trend.map((t) => t.m), ...stats.incomeTrend.map((t) => t.m)])].sort();
   const tc = $('#trendChart'); if (tc && months.length) new Chart(tc, {
@@ -430,7 +442,8 @@ function drawCharts(stats) {
 
 /* ---------- calendar ---------- */
 let CAL_MONTH = null; // 'YYYY-MM'
-async function viewCalendar(el) {
+// rendered as a box inside the dashboard (embedded = the containing card is provided by the caller)
+async function renderCalendar(el, embedded) {
   if (!CAL_MONTH) CAL_MONTH = thisMonth();
   const [reminders, info] = await Promise.all([api('/reminders?days=365'), api('/calendar/info')]);
   const byDate = {};
@@ -450,29 +463,31 @@ async function viewCalendar(el) {
       ${evs.slice(0, 3).map((r) => `<div class="ev ${daysClass(r.days_left)}" title="${esc(r.label + (r.entity ? ' — ' + r.entity : ''))}">${esc(r.label)}</div>`).join('')}
       ${evs.length > 3 ? `<div class="muted" style="font-size:11px">+${evs.length - 3} more</div>` : ''}</div>`);
   }
-  el.innerHTML = `<div class="pagehead"><div><h1>Calendar</h1><p>Every deadline, bill and birthday on one calendar.</p></div>
-    <div class="row"><button class="btn ghost small" id="calprev">←</button>
-      <b style="min-width:150px;text-align:center;text-transform:capitalize">${esc(monthLabel)}</b>
-      <button class="btn ghost small" id="calnext">→</button>
-      <button class="btn ghost small" id="caltoday">Today</button></div></div>
-    <div class="cal">
-      ${['Lu', 'Ma', 'Mi', 'Jo', 'Vi', 'Sâ', 'Du'].map((d) => `<div class="dow">${d}</div>`).join('')}
-      ${cells.join('')}
-    </div>
-    <div class="card" style="margin-top:18px"><h3>Subscribe from your phone's calendar</h3>
-      ${info.url ? `<p class="muted">Add this address in Google Calendar (Other calendars → From URL) or Apple Calendar (Add Subscription Calendar) — deadlines then show up in your normal calendar and update automatically.</p>
-        <div class="row"><input readonly value="${esc(info.url)}" onclick="this.select()" style="flex:1;min-width:220px;font-size:13px">
-        <button class="btn ghost small" data-copy="${esc(info.url)}">Copy link</button>
-        ${canWrite() ? `<button class="btn ghost small" id="calrotate">New link</button>` : ''}</div>`
-      : canWrite() ? `<p class="muted">Generate a private link and subscribe from Google/Apple Calendar.</p><button class="btn small" id="calgen">Generate subscribe link</button>`
-      : `<p class="muted">Ask an adult to generate the subscribe link.</p>`}
-    </div>`;
-  const shift = (n) => { const d = new Date(Date.UTC(Y, M - 1 + n, 1)); CAL_MONTH = d.toISOString().slice(0, 7); viewCalendar(el); };
+  const controls = `<div class="row"><button class="btn ghost small" id="calprev">←</button>
+    <b style="min-width:130px;text-align:center;text-transform:capitalize">${esc(monthLabel)}</b>
+    <button class="btn ghost small" id="calnext">→</button>
+    <button class="btn ghost small" id="caltoday">Today</button></div>`;
+  const subscribeInner = info.url
+    ? `<p class="muted">Add this address in Google Calendar (Other calendars → From URL) or Apple Calendar (Add Subscription Calendar) — deadlines then show up in your normal calendar and update automatically.</p>
+       <div class="row"><input readonly value="${esc(info.url)}" onclick="this.select()" style="flex:1;min-width:220px;font-size:13px">
+       <button class="btn ghost small" data-copy="${esc(info.url)}">Copy link</button>
+       ${canWrite() ? `<button class="btn ghost small" id="calrotate">New link</button>` : ''}</div>`
+    : canWrite() ? `<p class="muted">Generate a private link and subscribe from Google/Apple Calendar.</p><button class="btn small" id="calgen">Generate subscribe link</button>`
+    : `<p class="muted">Ask an adult to generate the subscribe link.</p>`;
+  const grid = `<div class="cal">${['Lu', 'Ma', 'Mi', 'Jo', 'Vi', 'Sâ', 'Du'].map((d) => `<div class="dow">${d}</div>`).join('')}${cells.join('')}</div>`;
+  el.innerHTML = embedded
+    ? `<div class="row" style="justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:10px"><h3 style="margin:0">Calendar</h3>${controls}</div>
+       ${grid}
+       <details style="margin-top:12px"><summary style="cursor:pointer;color:var(--ink-soft);font-size:13px">Subscribe from your phone's calendar</summary><div style="padding-top:8px">${subscribeInner}</div></details>`
+    : `<div class="pagehead"><div><h1>Calendar</h1><p>Every deadline, bill and birthday on one calendar.</p></div>${controls}</div>
+       ${grid}
+       <div class="card" style="margin-top:18px"><h3>Subscribe from your phone's calendar</h3>${subscribeInner}</div>`;
+  const shift = (n) => { const d = new Date(Date.UTC(Y, M - 1 + n, 1)); CAL_MONTH = d.toISOString().slice(0, 7); renderCalendar(el, embedded); };
   $('#calprev').onclick = () => shift(-1);
   $('#calnext').onclick = () => shift(1);
-  $('#caltoday').onclick = () => { CAL_MONTH = thisMonth(); viewCalendar(el); };
+  $('#caltoday').onclick = () => { CAL_MONTH = thisMonth(); renderCalendar(el, embedded); };
   el.querySelectorAll('[data-copy]').forEach((b) => (b.onclick = () => copyText(b.dataset.copy)));
-  const gen = async () => { await api('/calendar/token', { method: 'POST' }); toast('Subscribe link ready'); viewCalendar(el); };
+  const gen = async () => { await api('/calendar/token', { method: 'POST' }); toast('Subscribe link ready'); renderCalendar(el, embedded); };
   $('#calgen')?.addEventListener('click', gen);
   $('#calrotate')?.addEventListener('click', async () => { if (confirm('Generate a new link? The old one stops working.')) await gen(); });
 }
@@ -487,7 +502,7 @@ async function viewMoney(el, tab) {
     </div><div id="moneybody">Loading…</div>`;
   el.querySelectorAll('.tabs button').forEach((b) => (b.onclick = () => viewMoney(el, b.dataset.t)));
   const body = $('#moneybody');
-  if (tab === 'expenses') return moneyExpenses(body);
+  if (tab === 'expenses') { const f = PENDING_EXPENSE_FILTER || {}; PENDING_EXPENSE_FILTER = null; return moneyExpenses(body, f); }
   if (tab === 'income') return moneyIncome(body);
   if (tab === 'credits') return moneyCredits(body);
   if (tab === 'savings') return moneySavings(body);
