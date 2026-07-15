@@ -284,12 +284,13 @@ function crud({ route, table, fields, validate, orderBy }) {
   });
 }
 
-// expenses: custom endpoints — an expense can be linked to a property, which also
-// mirrors it into that property's cost history so the per-property totals stay true
+// expenses: custom endpoints — an expense can be linked to a property or a vehicle, which
+// mirrors it into that entity's cost history so the per-property/per-car totals stay true
 app.get('/api/expenses', auth, (req, res) => {
   res.json(db.prepare(`
-    SELECT e.*, p.name AS property_name FROM expenses e
+    SELECT e.*, p.name AS property_name, v.name AS vehicle_name FROM expenses e
     LEFT JOIN properties p ON p.id = e.property_id
+    LEFT JOIN vehicles v ON v.id = e.vehicle_id
     WHERE e.family_id = ? ORDER BY e.date DESC, e.id DESC
   `).all(req.user.family_id));
 });
@@ -302,16 +303,26 @@ app.post('/api/expenses', auth, canWrite, (req, res) => {
     return res.status(400).json({ error: 'Person must be a member of the family' });
   }
   const propId = num(b.property_id);
+  const vehId = num(b.vehicle_id);
+  if (propId != null && vehId != null) return res.status(400).json({ error: 'Link the expense to a property or a vehicle, not both' });
   if (propId != null && !db.prepare('SELECT id FROM properties WHERE id = ? AND family_id = ?').get(propId, req.user.family_id)) {
     return res.status(400).json({ error: 'Linked property not found' });
   }
+  if (vehId != null && !db.prepare('SELECT id FROM vehicles WHERE id = ? AND family_id = ?').get(vehId, req.user.family_id)) {
+    return res.status(400).json({ error: 'Linked vehicle not found' });
+  }
   const uid = num(b.user_id) ?? req.user.id;
   const eid = db.transaction(() => {
-    const info = db.prepare('INSERT INTO expenses (family_id, user_id, category, amount, note, date, property_id) VALUES (?,?,?,?,?,?,?)')
-      .run(req.user.family_id, uid, str(b.category), Number(b.amount), str(b.note), b.date, propId);
+    const info = db.prepare('INSERT INTO expenses (family_id, user_id, category, amount, note, date, property_id, vehicle_id) VALUES (?,?,?,?,?,?,?,?)')
+      .run(req.user.family_id, uid, str(b.category), Number(b.amount), str(b.note), b.date, propId, vehId);
+    const label = `${str(b.category)}${b.note ? ': ' + str(b.note) : ''}`;
     if (propId != null) {
       db.prepare('INSERT INTO property_records (property_id, family_id, type, date, amount, note, user_id, expense_id) VALUES (?,?,?,?,?,?,?,?)')
-        .run(propId, req.user.family_id, 'other', b.date, Number(b.amount), `${str(b.category)}${b.note ? ': ' + str(b.note) : ''}`, uid, info.lastInsertRowid);
+        .run(propId, req.user.family_id, 'other', b.date, Number(b.amount), label, uid, info.lastInsertRowid);
+    }
+    if (vehId != null) {
+      db.prepare('INSERT INTO vehicle_records (vehicle_id, family_id, type, date, amount, note, expense_id) VALUES (?,?,?,?,?,?,?)')
+        .run(vehId, req.user.family_id, 'other', b.date, Number(b.amount), label, info.lastInsertRowid);
     }
     return info.lastInsertRowid;
   })();
@@ -322,6 +333,7 @@ app.delete('/api/expenses/:id', auth, canWrite, (req, res) => {
   if (!row) return res.status(404).json({ error: 'Not found' });
   db.transaction(() => {
     db.prepare('DELETE FROM property_records WHERE expense_id = ? AND family_id = ?').run(row.id, req.user.family_id);
+    db.prepare('DELETE FROM vehicle_records WHERE expense_id = ? AND family_id = ?').run(row.id, req.user.family_id);
     db.prepare('DELETE FROM expenses WHERE id = ?').run(row.id);
   })();
   res.json({ ok: true });

@@ -311,7 +311,7 @@ async function renderTenantPortal() {
           <td>${c.status === 'paid' ? `<span class="badge paid">paid${c.confirmed_at ? ' ' + fdate(c.confirmed_at) : ''}</span>`
             : c.status === 'pending' ? `<span class="badge role">confirmation pending</span>`
             : `<span class="badge unpaid">to pay</span>`}</td>
-          <td class="right">${c.status === 'unpaid' ? `${payUrl ? `<a class="btn ghost small" href="${esc(payUrl(c.amount))}" target="_blank" rel="noopener">Pay</a> ` : ''}<button class="btn small" data-pay="${c.id}">Mark as paid</button>` : ''}</td>
+          <td class="right">${c.status === 'unpaid' ? `<span class="row" style="gap:6px;justify-content:flex-end;flex-wrap:nowrap;white-space:nowrap">${payUrl ? `<a class="btn ghost small" href="${esc(payUrl(c.amount))}" target="_blank" rel="noopener">Pay</a>` : ''}<button class="btn small" data-pay="${c.id}">Mark as paid</button></span>` : ''}</td>
         </tr>`;
       }).join('')}</tbody></table>`
     : `<div class="empty" style="margin-top:14px"><b>Nothing to pay yet</b>Rent and shared invoices from your landlord will appear here.</div>`}
@@ -502,7 +502,7 @@ function whoFilter(id, members, who) {
 }
 async function moneyExpenses(body, f = {}) {
   const flt = { month: thisMonth(), who: 'all', cat: 'all', q: '', ...f };
-  const [all, members, properties] = await Promise.all([api('/expenses'), api('/family/members'), api('/properties')]);
+  const [all, members, properties, vehicles] = await Promise.all([api('/expenses'), api('/family/members'), api('/properties'), api('/vehicles')]);
   const mname = Object.fromEntries(members.map((m) => [m.id, m.name]));
   const q = flt.q.trim().toLowerCase();
   const rows = all.filter((e) =>
@@ -518,7 +518,9 @@ async function moneyExpenses(body, f = {}) {
       <div><label>Category</label><select name="category">${CATEGORIES.map((c) => `<option>${c}</option>`).join('')}</select></div>
       <div><label>Amount (${cur()})</label><input name="amount" type="number" step="0.01" min="0.01" required></div>
       <div><label>Person</label><select name="user_id">${members.map((m) => `<option value="${m.id}" ${m.id === ME.id ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}</select></div>
-      ${properties.length ? `<div><label>Linked property</label><select name="property_id"><option value="">None</option>${properties.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select></div>` : ''}
+      ${properties.length || vehicles.length ? `<div><label>Link to (optional)</label><select name="link"><option value="">Nothing</option>
+        ${properties.map((p) => `<option value="property:${p.id}">⌂ ${esc(p.name)}</option>`).join('')}
+        ${vehicles.map((v) => `<option value="vehicle:${v.id}">⛟ ${esc(v.name)}</option>`).join('')}</select></div>` : ''}
       <div><label>Note</label><input name="note" placeholder="optional"></div>
       <button class="btn">Add expense</button></form></div>` : ''}
     <div class="card" style="margin-top:16px">
@@ -531,9 +533,9 @@ async function moneyExpenses(body, f = {}) {
         <input id="qfilter" type="search" placeholder="Search note…" value="${esc(flt.q)}" style="width:180px">
       </div>
       ${rows.length ? `<table><thead><tr><th>Date</th><th>Category</th><th>By</th><th>Note</th><th class="right">Amount</th><th></th></tr></thead><tbody>
-        ${rows.map((e) => `<tr><td>${fdate(e.date)}</td><td>${esc(e.category)}</td><td>${esc(mname[e.user_id] || '—')}</td><td>${esc(e.note || '')}${e.property_name ? `${e.note ? ' · ' : ''}<span class="muted">⌂ ${esc(e.property_name)}</span>` : ''}</td>
+        ${rows.map((e) => { const link = e.property_name ? `⌂ ${esc(e.property_name)}` : e.vehicle_name ? `⛟ ${esc(e.vehicle_name)}` : ''; return `<tr><td>${fdate(e.date)}</td><td>${esc(e.category)}</td><td>${esc(mname[e.user_id] || '—')}</td><td>${esc(e.note || '')}${link ? `${e.note ? ' · ' : ''}<span class="muted">${link}</span>` : ''}</td>
           <td class="right amount">${money(e.amount)}</td>
-          <td class="right">${canWrite() ? `<button class="btn danger small" data-del="${e.id}">Delete</button>` : ''}</td></tr>`).join('')}
+          <td class="right">${canWrite() ? `<button class="btn danger small" data-del="${e.id}">Delete</button>` : ''}</td></tr>`; }).join('')}
       </tbody></table>` : `<div class="empty"><b>No matching expenses</b>Adjust the filters or add one above.</div>`}
     </div>`;
   $('#mfilter').onchange = (e) => reload({ month: e.target.value || thisMonth() });
@@ -544,7 +546,10 @@ async function moneyExpenses(body, f = {}) {
   qEl.oninput = () => { clearTimeout(qEl._h); qEl._h = setTimeout(() => reload({ q: qEl.value }), 250); };
   $('#expform')?.addEventListener('submit', async (e) => {
     e.preventDefault();
-    try { await api('/expenses', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) }); toast('Expense added'); reload(); }
+    const body = Object.fromEntries(new FormData(e.target));
+    if (body.link) { const [kind, id] = body.link.split(':'); body[kind + '_id'] = Number(id); }
+    delete body.link;
+    try { await api('/expenses', { method: 'POST', body }); toast('Expense added'); reload(); }
     catch (err) { toast(err.message); }
   });
   body.querySelectorAll('[data-del]').forEach((b) => (b.onclick = async () => {

@@ -84,7 +84,8 @@ CREATE TABLE IF NOT EXISTS expenses (
   amount REAL NOT NULL,
   note TEXT,
   date TEXT NOT NULL,
-  property_id INTEGER REFERENCES properties(id) ON DELETE SET NULL -- optional link; also mirrored into property_records
+  property_id INTEGER REFERENCES properties(id) ON DELETE SET NULL, -- optional link; also mirrored into property_records
+  vehicle_id INTEGER REFERENCES vehicles(id) ON DELETE SET NULL      -- optional link; also mirrored into vehicle_records
 );
 CREATE INDEX IF NOT EXISTS idx_expenses_family_date ON expenses(family_id, date);
 
@@ -407,6 +408,7 @@ if (!famCols.includes('cal_token')) db.exec('ALTER TABLE families ADD COLUMN cal
 
 const expCols = db.prepare('PRAGMA table_info(expenses)').all().map((c) => c.name);
 if (!expCols.includes('property_id')) db.exec('ALTER TABLE expenses ADD COLUMN property_id INTEGER REFERENCES properties(id) ON DELETE SET NULL');
+if (!expCols.includes('vehicle_id')) db.exec('ALTER TABLE expenses ADD COLUMN vehicle_id INTEGER REFERENCES vehicles(id) ON DELETE SET NULL');
 
 if (!userCols.includes('lang')) db.exec("ALTER TABLE users ADD COLUMN lang TEXT NOT NULL DEFAULT 'en'");
 if (!userCols.includes('birthday')) db.exec('ALTER TABLE users ADD COLUMN birthday TEXT');
