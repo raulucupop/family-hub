@@ -143,6 +143,7 @@ const RO = {
   'Electricity, gas, internet, water, taxes — with due dates, owner, attachments and payment history. Auto-paid subscriptions are marked paid automatically once due.':
     'Electricitate, gaz, internet, apă, taxe — cu scadențe, responsabil, atașamente și istoric de plăți. Abonamentele cu plată automată sunt marcate plătite automat la scadență.',
   'One-off': 'O singură dată', 'Every 2 months': 'La 2 luni', 'Quarterly': 'Trimestrial', 'Every 6 months': 'La 6 luni', 'Yearly': 'Anual',
+  'Every 30 days': 'La 30 de zile', 'Counts as expense': 'Se contează ca cheltuială', 'Automatic (from category)': 'Automat (după categorie)',
   'every': 'la fiecare', 'mo': 'luni', 'Bill': 'Factură',
   'No bills yet': 'Nicio factură încă',
   'Add recurring utilities once — Family Hub rolls the due date forward every time you mark them paid.': 'Adaugă utilitățile recurente o singură dată — Family Hub mută scadența înainte de fiecare dată când le marchezi plătite.',
@@ -1074,31 +1075,51 @@ function creditCard(c, members, properties, refresh) {
 }
 
 /* ---------- bills ---------- */
-function billFormFields(members, properties, b = {}) {
+// repeat cycles: day-based ones are stored in recur_days, month-based ones in recur_months
+const RECUR_OPTS = [['0', 'One-off'], ['d30', 'Every 30 days'], ['m1', 'Monthly'], ['m2', 'Every 2 months'], ['m3', 'Quarterly'], ['m6', 'Every 6 months'], ['m12', 'Yearly']];
+const recurValue = (b) => (b.recur_days > 0 ? `d${b.recur_days}` : b.recur_months > 0 ? `m${b.recur_months}` : b.recur_months === 0 ? '0' : 'm1');
+// the two combined <select>s (repeat cycle, property-or-vehicle link) unpack into real columns.
+// both keys are always written so clearing a link on edit actually clears it server-side.
+function unpackBillBody(body) {
+  const r = String(body.recur || '0'); delete body.recur;
+  body.recur_days = r.startsWith('d') ? Number(r.slice(1)) : 0;
+  body.recur_months = r.startsWith('m') ? Number(r.slice(1)) : 0;
+  const l = String(body.link || ''); delete body.link;
+  body.property_id = null; body.vehicle_id = null;
+  if (l) { const [kind, id] = l.split(':'); body[kind + '_id'] = Number(id); }
+  return body;
+}
+function billFormFields(members, properties, vehicles, b = {}) {
+  const link = b.property_id ? `property:${b.property_id}` : b.vehicle_id ? `vehicle:${b.vehicle_id}` : '';
   return `
     <div><label>Name</label><input name="name" placeholder="Electricity — apartment" value="${esc(b.name || '')}" required></div>
     <div><label>Provider</label><input name="provider" placeholder="PPC, Engie, Digi…" value="${esc(b.provider || '')}"></div>
     <div><label>Category</label><select name="category">${Object.entries(BILL_CATS).map(([k, v]) => `<option value="${k}" ${b.category === k ? 'selected' : ''}>${v}</option>`).join('')}</select></div>
     <div><label>Amount (${cur()})</label><input name="amount" type="number" step="0.01" min="0" value="${b.amount ?? ''}"></div>
     <div><label>Due date</label><input name="due_date" type="date" value="${b.due_date || ''}" required></div>
-    <div><label>Repeats</label><select name="recur_months">${[[0, 'One-off'], [1, 'Monthly'], [2, 'Every 2 months'], [3, 'Quarterly'], [6, 'Every 6 months'], [12, 'Yearly']].map(([v, l]) => `<option value="${v}" ${Number(b.recur_months ?? 1) === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+    <div><label>Repeats</label><select name="recur">${RECUR_OPTS.map(([v, l]) => `<option value="${v}" ${recurValue(b) === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+    <div><label>Counts as expense</label><select name="expense_category"><option value="">Automatic (from category)</option>
+      ${CATEGORIES.map((c) => `<option value="${c}" ${b.expense_category === c ? 'selected' : ''}>${c}</option>`).join('')}</select></div>
     <div><label>Responsible person</label><select name="owner_id"><option value="">Whole family</option>${members.map((m) => `<option value="${m.id}" ${String(b.owner_id) === String(m.id) ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}</select></div>
-    <div><label>Linked property</label><select name="property_id"><option value="">None</option>${properties.map((p) => `<option value="${p.id}" ${String(b.property_id) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></div>
+    <div><label>Link to (optional)</label><select name="link"><option value="">Nothing</option>
+      ${properties.map((p) => `<option value="property:${p.id}" ${link === `property:${p.id}` ? 'selected' : ''}>⌂ ${esc(p.name)}</option>`).join('')}
+      ${vehicles.map((v) => `<option value="vehicle:${v.id}" ${link === `vehicle:${v.id}` ? 'selected' : ''}>⛟ ${esc(v.name)}</option>`).join('')}</select></div>
     <div style="align-self:center"><label style="display:inline-flex;align-items:center;gap:6px;font-size:13px"><input type="checkbox" name="auto_pay" value="1" ${b.auto_pay ? 'checked' : ''} style="width:auto"> Auto-paid subscription</label></div>`;
 }
 async function viewBills(el) {
-  const [bills, members, properties] = await Promise.all([api('/bills'), api('/family/members'), api('/properties')]);
+  const [bills, members, properties, vehicles] = await Promise.all([api('/bills'), api('/family/members'), api('/properties'), api('/vehicles')]);
   const t = today();
+  const recurLabel = (b) => (RECUR_OPTS.find(([v]) => v === recurValue(b)) || [])[1];
   el.innerHTML = `<div class="pagehead"><div><h1>Bills & invoices</h1><p>Electricity, gas, internet, water, taxes — with due dates, owner, attachments and payment history. Auto-paid subscriptions are marked paid automatically once due.</p></div></div>
     ${canWrite() ? `<div class="card"><h3>Add bill</h3><form id="billform" class="formgrid">
-      ${billFormFields(members, properties)}
+      ${billFormFields(members, properties, vehicles)}
       <button class="btn">Add bill</button></form></div>` : ''}
     <div class="card" style="margin-top:16px" id="billlist">
       ${bills.length ? `<table><thead><tr><th>Bill</th><th>Owner</th><th>Due</th><th class="right">Amount</th><th>Status</th><th>Invoice</th><th></th></tr></thead><tbody>
       ${bills.map((b) => {
         const late = b.status === 'unpaid' && b.due_date < t;
         return `<tr>
-          <td><b>${esc(b.name)}</b><br><span class="muted">${esc(b.provider || tr(BILL_CATS[b.category]) || '')}${b.recur_months ? ` · ${tr('every')} ${b.recur_months} ${tr('mo')}` : ''}${b.auto_pay ? ' · auto-pay' : ''}${b.property_name ? ` · ${esc(b.property_name)}` : ''}</span></td>
+          <td><b>${esc(b.name)}</b><br><span class="muted">${esc(b.provider || tr(BILL_CATS[b.category]) || '')}${recurValue(b) === '0' ? '' : ` · ${tr(recurLabel(b))}`}${b.auto_pay ? ' · auto-pay' : ''}${b.expense_category ? ` · ${tr(b.expense_category)}` : ''}${b.property_name ? ` · ⌂ ${esc(b.property_name)}` : ''}${b.vehicle_name ? ` · ⛟ ${esc(b.vehicle_name)}` : ''}</span></td>
           <td>${esc(b.owner_name || 'Family')}</td>
           <td>${fdate(b.due_date)}</td>
           <td class="right amount">${money(b.amount)}</td>
@@ -1116,7 +1137,7 @@ async function viewBills(el) {
   const billsById = Object.fromEntries(bills.map((b) => [b.id, b]));
   $('#billform')?.addEventListener('submit', async (e) => {
     e.preventDefault();
-    try { await api('/bills', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) }); toast('Bill added'); viewBills(el); }
+    try { await api('/bills', { method: 'POST', body: unpackBillBody(Object.fromEntries(new FormData(e.target))) }); toast('Bill added'); viewBills(el); }
     catch (err) { toast(err.message); }
   });
   el.querySelectorAll('[data-pay]').forEach((b) => (b.onclick = async () => {
@@ -1129,11 +1150,11 @@ async function viewBills(el) {
     const row = $('#row-' + b.dataset.edit);
     if (!row.hidden) { row.hidden = true; return; }
     const bill = billsById[b.dataset.edit];
-    row.firstElementChild.innerHTML = `<form class="formgrid" style="padding:6px 0">${billFormFields(members, properties, bill)}<button class="btn small">Save changes</button></form>`;
+    row.firstElementChild.innerHTML = `<form class="formgrid" style="padding:6px 0">${billFormFields(members, properties, vehicles, bill)}<button class="btn small">Save changes</button></form>`;
     row.hidden = false;
     row.querySelector('form').onsubmit = async (e) => {
       e.preventDefault();
-      const body = Object.fromEntries(new FormData(e.target));
+      const body = unpackBillBody(Object.fromEntries(new FormData(e.target)));
       body.auto_pay = e.target.auto_pay.checked ? 1 : 0;
       try { await api('/bills/' + b.dataset.edit, { method: 'PUT', body }); toast('Bill updated'); viewBills(el); }
       catch (err) { toast(err.message); }

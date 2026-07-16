@@ -84,6 +84,11 @@ const isDate = (v) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
 function inviteCode() {
   return crypto.randomBytes(4).toString('hex').toUpperCase();
 }
+function addDays(dateStr, days) {
+  const d = new Date(dateStr + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
 function addMonths(dateStr, months) {
   const d = new Date(dateStr + 'T00:00:00Z');
   const day = d.getUTCDate();
@@ -604,17 +609,45 @@ app.delete('/api/credits/:id/payments/:pid', auth, canWrite, (req, res) => {
 });
 
 // ---------- bills ----------
+// expense categories a bill may be logged under — mirrors CATEGORIES in public/app.js
+const EXPENSE_CATEGORIES = ['Groceries', 'Utilities', 'Transportation', 'Entertainment', 'Healthcare', 'Education', 'Taxes', 'Credit', 'Subscriptions', 'Other'];
 const BILL_CAT_MAP = { electricity: 'Utilities', gas: 'Utilities', water: 'Utilities', internet: 'Utilities', mobile: 'Utilities', subscription: 'Subscriptions', property_tax: 'Taxes', other: 'Other' };
 const BILL_SELECT = `
-  SELECT b.*, u.name AS owner_name, p.name AS property_name
+  SELECT b.*, u.name AS owner_name, p.name AS property_name, v.name AS vehicle_name
   FROM bills b
   LEFT JOIN users u ON u.id = b.owner_id
   LEFT JOIN properties p ON p.id = b.property_id
+  LEFT JOIN vehicles v ON v.id = b.vehicle_id
 `;
 function validateBillLinks(b, fid) {
   if (num(b.owner_id) != null && !db.prepare('SELECT id FROM users WHERE id = ? AND family_id = ?').get(num(b.owner_id), fid)) return 'Owner must be a member of the family';
+  if (num(b.property_id) != null && num(b.vehicle_id) != null) return 'Link the bill to a property or a vehicle, not both';
   if (num(b.property_id) != null && !db.prepare('SELECT id FROM properties WHERE id = ? AND family_id = ?').get(num(b.property_id), fid)) return 'Linked property not found';
+  if (num(b.vehicle_id) != null && !db.prepare('SELECT id FROM vehicles WHERE id = ? AND family_id = ?').get(num(b.vehicle_id), fid)) return 'Linked vehicle not found';
+  if (b.expense_category != null && b.expense_category !== '' && !EXPENSE_CATEGORIES.includes(String(b.expense_category))) return 'Unknown expense category';
   return null;
+}
+// the expense category a bill lands under: the explicit choice, else derived from the bill type
+const billExpenseCategory = (bill) => bill.expense_category || BILL_CAT_MAP[bill.category] || 'Utilities';
+// next due date for a recurring bill: a day cycle (e.g. every 30 days) wins over a month cycle
+function nextBillDue(bill) {
+  if (bill.recur_days > 0) return addDays(bill.due_date, bill.recur_days);
+  if (bill.recur_months > 0) return addMonths(bill.due_date, bill.recur_months);
+  return null;
+}
+// paying a bill logs an expense; if it is linked to a property/vehicle the expense is
+// mirrored into that entity's cost history, exactly like a manually added expense.
+function logBillExpense(bill, amount, userId, date, note) {
+  const info = db.prepare('INSERT INTO expenses (family_id, user_id, category, amount, note, date, property_id, vehicle_id) VALUES (?,?,?,?,?,?,?,?)')
+    .run(bill.family_id, userId, billExpenseCategory(bill), amount, note, date, bill.property_id, bill.vehicle_id);
+  if (bill.property_id) {
+    db.prepare('INSERT INTO property_records (property_id, family_id, type, date, amount, note, user_id, expense_id) VALUES (?,?,?,?,?,?,?,?)')
+      .run(bill.property_id, bill.family_id, 'utility', date, amount, note, userId, info.lastInsertRowid);
+  }
+  if (bill.vehicle_id) {
+    db.prepare('INSERT INTO vehicle_records (vehicle_id, family_id, type, date, amount, note, expense_id) VALUES (?,?,?,?,?,?,?)')
+      .run(bill.vehicle_id, bill.family_id, 'other', date, amount, note, info.lastInsertRowid);
+  }
 }
 // auto-pay subscriptions: once due, count them as paid (log payment + expense, roll recurring forward)
 function autoPayBills() {
@@ -624,9 +657,9 @@ function autoPayBills() {
     const tx = db.transaction(() => {
       db.prepare('INSERT INTO bill_payments (bill_id, family_id, amount, paid_at, paid_by) VALUES (?,?,?,?,?)')
         .run(bill.id, bill.family_id, bill.amount, today, bill.owner_id);
-      db.prepare('INSERT INTO expenses (family_id, user_id, category, amount, note, date) VALUES (?,?,?,?,?,?)')
-        .run(bill.family_id, bill.owner_id, BILL_CAT_MAP[bill.category] || 'Utilities', bill.amount, `Bill (auto): ${bill.name}`, today);
-      if (bill.recur_months > 0) db.prepare("UPDATE bills SET due_date = ?, status = 'unpaid' WHERE id = ?").run(addMonths(bill.due_date, bill.recur_months), bill.id);
+      logBillExpense(bill, bill.amount, bill.owner_id, today, `Bill (auto): ${bill.name}`);
+      const next = nextBillDue(bill);
+      if (next) db.prepare("UPDATE bills SET due_date = ?, status = 'unpaid' WHERE id = ?").run(next, bill.id);
       else db.prepare("UPDATE bills SET status = 'paid' WHERE id = ?").run(bill.id);
     });
     tx();
@@ -643,10 +676,11 @@ app.post('/api/bills', auth, canWrite, (req, res) => {
   const err = validateBillLinks(b, req.user.family_id);
   if (err) return res.status(400).json({ error: err });
   const info = db.prepare(`
-    INSERT INTO bills (family_id, name, provider, category, amount, due_date, recur_months, auto_pay, owner_id, property_id, notes)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?)
-  `).run(req.user.family_id, str(b.name), str(b.provider), str(b.category), num(b.amount), b.due_date, Number(b.recur_months) || 0,
-    b.auto_pay ? 1 : 0, num(b.owner_id), num(b.property_id), str(b.notes));
+    INSERT INTO bills (family_id, name, provider, category, expense_category, amount, due_date, recur_months, recur_days, auto_pay, owner_id, property_id, vehicle_id, notes)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+  `).run(req.user.family_id, str(b.name), str(b.provider), str(b.category), str(b.expense_category), num(b.amount), b.due_date,
+    Number(b.recur_months) || 0, Number(b.recur_days) || 0,
+    b.auto_pay ? 1 : 0, num(b.owner_id), num(b.property_id), num(b.vehicle_id), str(b.notes));
   res.json(db.prepare(`${BILL_SELECT} WHERE b.id = ?`).get(info.lastInsertRowid));
 });
 app.put('/api/bills/:id', auth, canWrite, (req, res) => {
@@ -657,9 +691,10 @@ app.put('/api/bills/:id', auth, canWrite, (req, res) => {
   const err = validateBillLinks(b, req.user.family_id);
   if (err) return res.status(400).json({ error: err });
   db.prepare(`
-    UPDATE bills SET name=?, provider=?, category=?, amount=?, due_date=?, recur_months=?, status=?, auto_pay=?, owner_id=?, property_id=?, notes=? WHERE id=?
-  `).run(str(b.name), str(b.provider), str(b.category), num(b.amount), b.due_date, Number(b.recur_months) || 0,
-    b.status === 'paid' ? 'paid' : 'unpaid', b.auto_pay ? 1 : 0, num(b.owner_id), num(b.property_id), str(b.notes), row.id);
+    UPDATE bills SET name=?, provider=?, category=?, expense_category=?, amount=?, due_date=?, recur_months=?, recur_days=?, status=?, auto_pay=?, owner_id=?, property_id=?, vehicle_id=?, notes=? WHERE id=?
+  `).run(str(b.name), str(b.provider), str(b.category), str(b.expense_category), num(b.amount), b.due_date,
+    Number(b.recur_months) || 0, Number(b.recur_days) || 0,
+    b.status === 'paid' ? 'paid' : 'unpaid', b.auto_pay ? 1 : 0, num(b.owner_id), num(b.property_id), num(b.vehicle_id), str(b.notes), row.id);
   res.json(db.prepare(`${BILL_SELECT} WHERE b.id = ?`).get(row.id));
 });
 app.delete('/api/bills/:id', auth, canWrite, (req, res) => {
@@ -680,11 +715,10 @@ app.post('/api/bills/:id/pay', auth, canWrite, (req, res) => {
   const tx = db.transaction(() => {
     db.prepare('INSERT INTO bill_payments (bill_id, family_id, amount, paid_at, paid_by) VALUES (?,?,?,?,?)')
       .run(bill.id, bill.family_id, amount, today, req.user.id);
-    db.prepare('INSERT INTO expenses (family_id, user_id, category, amount, note, date) VALUES (?,?,?,?,?,?)')
-      .run(bill.family_id, req.user.id, BILL_CAT_MAP[bill.category] || 'Utilities', amount, `Bill: ${bill.name}`, today);
-    if (bill.recur_months > 0) {
-      db.prepare('UPDATE bills SET due_date = ?, status = ?, amount = ? WHERE id = ?')
-        .run(addMonths(bill.due_date, bill.recur_months), 'unpaid', bill.amount, bill.id);
+    logBillExpense(bill, amount, bill.owner_id ?? req.user.id, today, `Bill: ${bill.name}`);
+    const next = nextBillDue(bill);
+    if (next) {
+      db.prepare('UPDATE bills SET due_date = ?, status = ?, amount = ? WHERE id = ?').run(next, 'unpaid', bill.amount, bill.id);
     } else {
       db.prepare("UPDATE bills SET status = 'paid' WHERE id = ?").run(bill.id);
     }

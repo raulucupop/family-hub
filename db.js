@@ -145,10 +145,13 @@ CREATE TABLE IF NOT EXISTS bills (
   amount REAL,
   due_date TEXT NOT NULL,
   recur_months INTEGER NOT NULL DEFAULT 0, -- 0 = one-off, 1 = monthly, 12 = yearly...
+  recur_days INTEGER NOT NULL DEFAULT 0,   -- day-based cycle (e.g. 30); takes precedence over recur_months
+  expense_category TEXT,  -- expense category to log under; NULL = derive it from the bill category
   status TEXT NOT NULL DEFAULT 'unpaid' CHECK (status IN ('unpaid','paid')),
   auto_pay INTEGER NOT NULL DEFAULT 0, -- subscription paid automatically: on/after due date it's counted as paid
   owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL,       -- responsible person; NULL = whole family
   property_id INTEGER REFERENCES properties(id) ON DELETE SET NULL,
+  vehicle_id INTEGER REFERENCES vehicles(id) ON DELETE SET NULL,  -- optional link; also mirrored into vehicle_records
   attachment TEXT, -- stored filename of uploaded invoice
   notes TEXT
 );
@@ -368,6 +371,9 @@ const billCols = db.prepare('PRAGMA table_info(bills)').all().map((c) => c.name)
 if (!billCols.includes('auto_pay')) db.exec('ALTER TABLE bills ADD COLUMN auto_pay INTEGER NOT NULL DEFAULT 0');
 if (!billCols.includes('owner_id')) db.exec('ALTER TABLE bills ADD COLUMN owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL');
 if (!billCols.includes('property_id')) db.exec('ALTER TABLE bills ADD COLUMN property_id INTEGER REFERENCES properties(id) ON DELETE SET NULL');
+if (!billCols.includes('vehicle_id')) db.exec('ALTER TABLE bills ADD COLUMN vehicle_id INTEGER REFERENCES vehicles(id) ON DELETE SET NULL');
+if (!billCols.includes('recur_days')) db.exec('ALTER TABLE bills ADD COLUMN recur_days INTEGER NOT NULL DEFAULT 0');
+if (!billCols.includes('expense_category')) db.exec('ALTER TABLE bills ADD COLUMN expense_category TEXT');
 
 const vehCols = db.prepare('PRAGMA table_info(vehicles)').all().map((c) => c.name);
 if (!vehCols.includes('owner_id')) db.exec('ALTER TABLE vehicles ADD COLUMN owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL');
