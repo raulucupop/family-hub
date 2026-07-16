@@ -1125,11 +1125,11 @@ async function viewBills(el) {
           <td class="right amount">${money(b.amount)}</td>
           <td><span class="badge ${late ? 'late' : b.status}">${tr(late ? 'overdue' : b.status)}</span></td>
           <td>${b.attachment ? `<a href="/api/bills/${b.id}/attachment" target="_blank">view</a>` : canWrite() ? `<label class="btn ghost small" style="display:inline-block">attach<input type="file" data-attach="${b.id}" accept=".pdf,image/*" hidden></label>` : '—'}</td>
-          <td class="right">${canWrite() ? `
+          <td class="right"><span class="rowacts">${canWrite() ? `
             ${b.status === 'unpaid' ? `<button class="btn small" data-pay="${b.id}" data-amt="${b.amount ?? ''}">Mark paid</button>` : ''}
             <button class="btn ghost small" data-edit="${b.id}">Edit</button>
             <button class="btn ghost small" data-hist="${b.id}">History</button>
-            <button class="btn danger small" data-del="${b.id}">Delete</button>` : `<button class="btn ghost small" data-hist="${b.id}">History</button>`}</td>
+            <button class="btn danger small" data-del="${b.id}">Delete</button>` : `<button class="btn ghost small" data-hist="${b.id}">History</button>`}</span></td>
         </tr><tr id="row-${b.id}" hidden><td colspan="7"></td></tr>`;
       }).join('')}</tbody></table>`
       : `<div class="empty"><b>No bills yet</b>Add recurring utilities once — Family Hub rolls the due date forward every time you mark them paid.</div>`}

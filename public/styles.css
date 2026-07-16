@@ -123,6 +123,9 @@ td.right, th.right { text-align: right; }
 .btn.small { padding: 5px 10px; font-size: 12.5px; }
 .btn.danger { background: transparent; color: var(--red); border: 1px solid var(--red-soft); }
 .btn.danger:hover { background: var(--red-soft); }
+/* row action buttons (Mark paid / Edit / History / Delete): a flex row so the gaps are
+   even instead of relying on collapsing whitespace between inline-blocks */
+.rowacts { display: inline-flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
 .badge { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; }
 .badge.unpaid { background: var(--amber-soft); color: var(--amber); }
 .badge.paid { background: var(--accent-soft); color: var(--accent); }
@@ -222,6 +225,9 @@ canvas { max-width: 100%; }
   table { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; font-size: 13.5px; }
   th, td { padding: 8px 8px; }
   td .btn.small { white-space: nowrap; }
+  /* narrow screens: stack row actions into an evenly spaced, equal-width column
+     instead of four buttons touching each other with ragged edges */
+  td .rowacts { display: flex; flex-direction: column; align-items: stretch; gap: 6px; min-width: 92px; }
 
   /* tab rows (Expenses/Income/Budgets/Credits, auth screen) wrap instead of cramming */
   .tabs { flex-wrap: wrap; }
