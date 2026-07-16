@@ -66,24 +66,222 @@ const RO = {
   'Personal targets': 'Obiective personale', 'Wishlists, groceries and personal goals for the whole family.': 'Liste de dorințe, cumpărături și obiective personale pentru toată familia.',
   'Item': 'Articol', 'Target': 'Obiectiv', 'Person': 'Persoană', 'Nothing here yet': 'Nimic aici încă',
   'Add the first item above.': 'Adaugă primul articol mai sus.',
+  // auth extras
+  'One place for the household: budget, bills, cars and property deadlines — RCA, rovinietă, ITP, PAD included.':
+    'Un singur loc pentru gospodărie: buget, facturi, mașini și termene pentru proprietăți — RCA, rovinietă, ITP, PAD incluse.',
+  "Tell us your account email and we'll send a link to choose a new password.": 'Spune-ne emailul contului și îți trimitem un link pentru a alege o parolă nouă.',
+  'Password (min. 8 characters)': 'Parolă (min. 8 caractere)', 'New password (min. 8 characters)': 'Parolă nouă (min. 8 caractere)',
+  'from your family admin or landlord': 'de la adminul familiei sau de la proprietar',
+  'If that email has an account, the reset link is on its way': 'Dacă emailul are un cont, linkul de resetare e pe drum',
+  'Password changed — you are signed in': 'Parola a fost schimbată — ești autentificat',
+  // roles & common words
+  'adult': 'adult', 'child': 'copil', 'tenant': 'chiriaș', '(you)': '(tu)', '(me)': '(eu)',
+  'Loading…': 'Se încarcă…', 'Loading calendar…': 'Se încarcă calendarul…', 'Loading history…': 'Se încarcă istoricul…',
+  'Copied:': 'Copiat:', 'Copy failed — select it manually': 'Copierea a eșuat — selectează manual',
+  'view': 'vezi', 'attach': 'atașează', 'photo': 'poză', 'Saved': 'Salvat', 'Added': 'Adăugat', 'Removed': 'Eliminat', 'Done': 'Gata',
+  'paid': 'plătit', 'unpaid': 'neplătit', 'overdue': 'întârziat', 'waiting': 'în așteptare', 'Request failed': 'Cererea a eșuat',
+  'whole family': 'toată familia', 'Family': 'Familie', 'day': 'ziua', 'more': 'altele', 'None': 'Niciuna',
+  // categories (display only — option values stay English)
+  'Groceries': 'Alimente', 'Utilities': 'Utilități', 'Transportation': 'Transport', 'Entertainment': 'Divertisment',
+  'Healthcare': 'Sănătate', 'Education': 'Educație', 'Taxes': 'Taxe', 'Subscriptions': 'Abonamente', 'Other': 'Altele',
+  'Electricity': 'Electricitate', 'Gas': 'Gaz', 'Mobile': 'Mobil', 'Water': 'Apă', 'Subscription': 'Abonament',
+  'electricity': 'electricitate', 'gas': 'gaz', 'water': 'apă', 'property_tax': 'impozit proprietate', 'other': 'altele',
+  // server reminder labels
+  'RCA insurance': 'Asigurare RCA', 'Casco insurance': 'Asigurare Casco', 'Rovinieta (vignette)': 'Rovinietă',
+  'ITP inspection': 'Inspecție ITP', 'Vehicle tax': 'Taxă auto', 'Property insurance (PAD)': 'Asigurare locuință (PAD)',
+  'Additional home insurance': 'Asigurare facultativă locuință', 'Property tax': 'Impozit proprietate',
+  // dashboard
+  'Add bills, vehicle or property deadlines and they will line up here.': 'Adaugă facturi sau termene pentru vehicule și proprietăți și vor apărea aici.',
+  'Nothing assigned to this person is coming up.': 'Nimic atribuit acestei persoane nu urmează.',
+  'Spent': 'Cheltuit', 'Spending by category': 'Cheltuieli pe categorii', 'Budget vs actual': 'Buget vs realizat',
+  'No budgets set for this month yet — set them in': 'Niciun buget setat pentru luna aceasta — setează-le în',
+  'No expenses this month yet.': 'Nicio cheltuială luna aceasta.', 'History appears once you log expenses.': 'Istoricul apare după ce înregistrezi cheltuieli.',
+  // calendar
+  'Today': 'Azi', "Subscribe from your phone's calendar": 'Abonează-te din calendarul telefonului',
+  'Add this address in Google Calendar (Other calendars → From URL) or Apple Calendar (Add Subscription Calendar) — deadlines then show up in your normal calendar and update automatically.':
+    'Adaugă această adresă în Google Calendar (Alte calendare → De la URL) sau Apple Calendar (Adaugă calendar cu abonament) — termenele apar în calendarul tău obișnuit și se actualizează automat.',
+  'New link': 'Link nou', 'Generate a private link and subscribe from Google/Apple Calendar.': 'Generează un link privat și abonează-te din Google/Apple Calendar.',
+  'Generate subscribe link': 'Generează link de abonare', 'Ask an adult to generate the subscribe link.': 'Roagă un adult să genereze linkul de abonare.',
+  'Generate a new link? The old one stops working.': 'Generezi un link nou? Cel vechi nu va mai funcționa.', 'Subscribe link ready': 'Linkul de abonare e gata',
+  // expenses
+  'Link to (optional)': 'Asociază cu (opțional)', 'Nothing': 'Nimic', '● All time': '● Tot timpul',
+  'Expense added': 'Cheltuială adăugată', 'Delete this expense?': 'Ștergi această cheltuială?',
+  // income
+  'Recurring income (salaries)': 'Venituri recurente (salarii)',
+  'Logged automatically every month on the chosen day — no manual entry needed.': 'Înregistrate automat în fiecare lună în ziua aleasă — fără introducere manuală.',
+  'paused': 'în pauză', 'Pause': 'Pauză', 'Resume': 'Reia', 'Add recurring': 'Adaugă recurent',
+  'Amount (RON/mo)': 'Sumă (RON/lună)', 'Amount (RON)': 'Sumă (RON)', 'Day of month': 'Ziua din lună',
+  'No income recorded yet': 'Niciun venit înregistrat încă', 'Log salaries and other income to see the monthly balance.': 'Înregistrează salarii și alte venituri pentru a vedea balanța lunară.',
+  'Income added': 'Venit adăugat', 'Recurring income added': 'Venit recurent adăugat',
+  'Delete this recurring income? Already-logged months stay.': 'Ștergi acest venit recurent? Lunile deja înregistrate rămân.',
+  // budgets
+  'Budget': 'Buget', 'Progress': 'Progres', 'no budget': 'fără buget', 'Budgets saved': 'Bugete salvate',
+  // savings
+  'No contributions yet.': 'Nicio contribuție încă.', 'No goals yet — set one below and tag deposits to it.': 'Niciun obiectiv încă — setează unul mai jos și leagă depunerile de el.',
+  '· family': '· familie', 'Target (RON)': 'Țintă (RON)', 'Goal added': 'Obiectiv adăugat',
+  'Delete this goal? Its deposits stay in the account.': 'Ștergi acest obiectiv? Depunerile rămân în cont.',
+  'No savings entries yet': 'Nicio intrare în economii încă', 'Deposit funds above to start the family economy account.': 'Depune fonduri mai sus pentru a porni contul de economii al familiei.',
+  'Delete this entry?': 'Ștergi această intrare?',
+  // credits
+  'Lender': 'Bancă / creditor', 'Principal (RON)': 'Principal (RON)', 'Dobândă (% / year)': 'Dobândă (% / an)',
+  'Term (months)': 'Durată (luni)', 'Commission (RON/mo, fixed)': 'Comision (RON/lună, fix)', 'Start date': 'Data de început', 'Holder': 'Titular',
+  'No credits yet': 'Niciun credit încă',
+  'Add a loan above — the monthly payment is calculated from the dobândă, and anticipated payments show how much interest you save.':
+    'Adaugă un credit mai sus — rata lunară e calculată din dobândă, iar plățile anticipate arată câtă dobândă economisești.',
+  'Monthly total': 'Total lunar', 'principal': 'principal', 'interest': 'dobândă', 'com.': 'com.',
+  '1 month in advance (principal + 1%)': 'O lună în avans (principal + 1%)', 'Balance today': 'Sold azi', 'Payoff': 'Achitare', 'mo left': 'luni rămase',
+  'Money saved (interest)': 'Bani economisiți (dobândă)', 'Total interest projected': 'Dobândă totală estimată', 'vs': 'vs', 'without': 'fără',
+  'saved': 'economisit',
+  'Extra payments on top of the monthly one. The payment stays the same, the credit ends earlier — the interest you skip is your money saved.':
+    'Plăți suplimentare peste rata lunară. Rata rămâne aceeași, creditul se termină mai devreme — dobânda evitată sunt banii tăi economisiți.',
+  'Paying 1 month in advance now costs ≈': 'Plata unei luni în avans costă acum ≈', 'next principal': 'principalul următor',
+  'No anticipated payments yet.': 'Nicio plată anticipată încă.', 'Anticipated payment recorded': 'Plată anticipată înregistrată',
+  'Delete this credit and its payment history?': 'Ștergi acest credit și istoricul plăților?',
+  'Credit added': 'Credit adăugat', 'Credit updated': 'Credit actualizat',
+  'Monthly': 'Lunar', 'rate': 'rată', 'commission': 'comision', 'total interest over': 'dobândă totală pe', 'months': 'luni',
+  // bills
+  'Electricity, gas, internet, water, taxes — with due dates, owner, attachments and payment history. Auto-paid subscriptions are marked paid automatically once due.':
+    'Electricitate, gaz, internet, apă, taxe — cu scadențe, responsabil, atașamente și istoric de plăți. Abonamentele cu plată automată sunt marcate plătite automat la scadență.',
+  'One-off': 'O singură dată', 'Every 2 months': 'La 2 luni', 'Quarterly': 'Trimestrial', 'Every 6 months': 'La 6 luni', 'Yearly': 'Anual',
+  'every': 'la fiecare', 'mo': 'luni', 'Bill': 'Factură',
+  'No bills yet': 'Nicio factură încă',
+  'Add recurring utilities once — Family Hub rolls the due date forward every time you mark them paid.': 'Adaugă utilitățile recurente o singură dată — Family Hub mută scadența înainte de fiecare dată când le marchezi plătite.',
+  'Amount paid': 'Suma plătită', 'Payment recorded — expense logged too': 'Plată înregistrată — cheltuiala a fost logată și ea',
+  'Bill added': 'Factură adăugată', 'Bill updated': 'Factură actualizată', 'Delete this bill and its history?': 'Ștergi această factură și istoricul ei?',
+  'Payment history': 'Istoric plăți', 'No payments recorded yet.': 'Nicio plată înregistrată încă.', 'Invoice attached': 'Factură atașată',
+  // vehicles
+  'RCA, Casco, rovinietă, ITP and vehicle tax deadlines, plus service, tires and fuel logs.': 'Termene RCA, Casco, rovinietă, ITP și taxă auto, plus istoric service, anvelope și combustibil.',
+  'RCA expires': 'RCA expiră', 'Casco expires': 'Casco expiră', 'Rovinietă expires': 'Rovinieta expiră', 'ITP expires': 'ITP expiră', 'Vehicle tax expires': 'Taxa auto expiră',
+  'Plate': 'Număr de înmatriculare', 'Fuel': 'Combustibil', 'Tires': 'Anvelope', 'Odometer (km)': 'Kilometraj (km)',
+  'No vehicles yet': 'Niciun vehicul încă', 'Add your car above to start getting deadline reminders.': 'Adaugă mașina mai sus pentru a primi memento-uri de termene.',
+  'Not a specific deadline': 'Fără termen specific', 'No records yet.': 'Nicio înregistrare încă.', 'Paid by': 'Plătit de', 'and all its history?': 'și tot istoricul?',
+  // properties
+  'Insurance (PAD), property tax, mortgage and maintenance history for each home.': 'Asigurare (PAD), impozit, credit ipotecar și istoric de întreținere pentru fiecare locuință.',
+  'Insurance (PAD)': 'Asigurare (PAD)', 'Additional insurance': 'Asigurare facultativă',
+  'Insurance (PAD) due': 'Asigurarea (PAD) expiră', 'Additional insurance due': 'Asigurarea facultativă expiră', 'Property tax due': 'Impozitul scadent',
+  'Mortgage lender': 'Banca ipotecii', 'Monthly payment (RON)': 'Rată lunară (RON)', 'Payment day of month': 'Ziua plății în lună',
+  'Rent (RON/mo, if rented out)': 'Chirie (RON/lună, dacă e închiriată)', 'Rent due day (1-28)': 'Ziua scadenței chiriei (1-28)', 'Rent (RON/mo)': 'Chirie (RON/lună)',
+  'Meter reading day (1-28)': 'Ziua citirii contoarelor (1-28)', 'Meters to read monthly': 'Contoare de citit lunar',
+  '— none —': '— niciunul —', 'Electricity + gas': 'Electricitate + gaz', 'Electricity + gas + water': 'Electricitate + gaz + apă',
+  'Payment link (Revolut.me)': 'Link de plată (Revolut.me)', 'Mortgage': 'Ipotecă', 'on day': 'în ziua',
+  'Maintenance': 'Întreținere', 'Renovation': 'Renovare', 'Utility': 'Utilitate', 'Rent (income)': 'Chirie (venit)', 'Other income': 'Alt venit',
+  'Cost paid by': 'Cost plătit de', 'Owner / family': 'Proprietar / familie', 'Tenant — bill to': 'Chiriaș — facturează pe',
+  'Costs (maintenance, utility…) are also logged as an expense for the chosen person; "Tenant" bills the tenant instead.':
+    'Costurile (întreținere, utilități…) se înregistrează și ca cheltuială pentru persoana aleasă; „Chiriaș” îl facturează pe chiriaș.',
+  'Money in this property:': 'Bani în această proprietate:', 'Net': 'Net',
+  'No properties yet': 'Nicio proprietate încă', 'Add your home above to track its deadlines and costs.': 'Adaugă locuința mai sus pentru a urmări termenele și costurile.',
+  // tenant & rent box
+  'Rent:': 'Chirie:', '/ month, due day': '/ lună, scadentă pe', 'the rent charge is generated automatically once a tenant has joined.': 'chiria se generează automat după ce chiriașul s-a alăturat.',
+  'No rent set — use': 'Nicio chirie setată — folosește', 'to set the monthly rent and due day.': 'pentru a seta chiria lunară și ziua scadenței.',
+  'Tenant code:': 'Cod chiriaș:', 'No tenant code yet.': 'Niciun cod de chiriaș încă.', 'Generate code': 'Generează cod',
+  'Your tenant registers with it on the sign-in screen →': 'Chiriașul se înregistrează cu el pe ecranul de autentificare →',
+  'tab. They only see the charges below — nothing else.': 'tab. Vede doar costurile de mai jos — nimic altceva.',
+  'Tenants': 'Chiriași', 'No tenant has joined yet.': 'Niciun chiriaș nu s-a alăturat încă.',
+  'Rent (extra)': 'Chirie (suplimentar)', 'Title': 'Titlu', 'Invoice file (PDF/photo)': 'Fișier factură (PDF/poză)', 'Share with tenant': 'Trimite chiriașului',
+  'What': 'Ce', 'pending — tenant marked paid': 'în așteptare — chiriașul a marcat plătit', 'Confirm paid': 'Confirmă plata', 'Reject': 'Respinge',
+  'Nothing shared with the tenant yet.': 'Nimic trimis chiriașului încă.', 'Meter readings': 'Citiri contoare',
+  'Scheduled:': 'Programat:', 'of every month (tenant gets an email).': 'a fiecărei luni (chiriașul primește email).',
+  'No monthly schedule — set "Meter reading day" and the meters via': 'Fără program lunar — setează „Ziua citirii contoarelor” și contoarele din',
+  ', or request one now.': 'sau cere una acum.', 'Request now:': 'Cere acum:',
+  'Requested': 'Cerut', 'Reading': 'Citire', 'received': 'primit', 'No reading requests yet.': 'Nicio cerere de citire încă.',
+  'Tenant code generated': 'Cod de chiriaș generat', 'Remove this tenant? Their account will be deleted.': 'Elimini acest chiriaș? Contul lui va fi șters.',
+  'Shared with tenant': 'Trimis chiriașului', 'Reading requested — tenant notified': 'Citire cerută — chiriașul a fost notificat',
+  'Payment confirmed': 'Plată confirmată', 'Marked back as unpaid': 'Marcat înapoi ca neplătit', 'Delete this charge?': 'Ștergi această plată?',
+  // tenant portal
+  'Tenant portal ·': 'Portal chiriaș ·', 'Signed in as': 'Autentificat ca', '· rent': '· chirie', 'invoice': 'factură',
+  'to pay': 'de plată', 'confirmation pending': 'confirmare în așteptare', 'Pay': 'Plătește', 'Mark as paid': 'Marchează plătit',
+  'Nothing to pay yet': 'Nimic de plată încă', 'Rent and shared invoices from your landlord will appear here.': 'Chiria și facturile trimise de proprietar vor apărea aici.',
+  'Pay with Revolut:': 'Plătește cu Revolut:',
+  'After you mark something as paid, the owner confirms it — until then it shows as "confirmation pending".': 'După ce marchezi ceva ca plătit, proprietarul confirmă — până atunci apare ca „confirmare în așteptare”.',
+  'requested': 'cerut', 'meter value': 'valoare contor', 'Send reading': 'Trimite citirea', 'Upload photo': 'Încarcă poză', 'photo sent': 'poză trimisă',
+  'Marked as paid — waiting for owner confirmation': 'Marcat ca plătit — se așteaptă confirmarea proprietarului',
+  'Reading sent — thank you!': 'Citire trimisă — mulțumim!', 'Photo sent — thank you!': 'Poză trimisă — mulțumim!',
+  // acte
+  'Series / number': 'Serie / număr', 'Notes': 'Note', 'Scan (PDF or photo)': 'Scan (PDF sau poză)', 'Scan (PDF/photo)': 'Scan (PDF/poză)', 'Scan': 'Scan',
+  'Vehicle': 'Vehicul', 'Property': 'Proprietate',
+  'No acte yet': 'Niciun act încă', 'Add ID cards, passports and other documents — the ones with an expiry date show up in reminders and alerts.': 'Adaugă buletine, pașapoarte și alte documente — cele cu dată de expirare apar în memento-uri și alerte.',
+  'Document added': 'Document adăugat', 'Scan attached': 'Scan atașat', 'Delete this document (and its scan)?': 'Ștergi acest document (și scanul lui)?',
+  'Document saved, but the scan failed:': 'Documentul a fost salvat, dar scanul a eșuat:',
+  'Pick a Type to tie it to that deadline — it then shows once (here and in Acte), not twice.': 'Alege un Tip pentru a-l lega de acel termen — apare o singură dată (aici și în Acte), nu de două ori.',
+  'No documents yet.': 'Niciun document încă.',
+  // lists
+  'open': 'deschise', 'done': 'finalizate', 'Est. price (RON)': 'Preț estimat (RON)',
+  // import
+  'Export a CSV statement from your bank (BT, BCR, ING, Revolut…) and import it here. Already-imported transactions are skipped automatically, so re-uploading is safe.':
+    'Exportă un extras CSV de la banca ta (BT, BCR, ING, Revolut…) și importă-l aici. Tranzacțiile deja importate sunt sărite automat, deci re-încărcarea e sigură.',
+  '1 · Choose statement file': '1 · Alege fișierul extrasului',
+  'Tip: in your banking app look for "Export" or "Extras de cont" → CSV.': 'Sfat: în aplicația băncii caută „Export” sau „Extras de cont” → CSV.',
+  'View-only account': 'Cont doar cu vizualizare', 'Ask an adult or admin to import statements.': 'Roagă un adult sau un admin să importe extrase.',
+  '2 · Map columns': '2 · Mapează coloanele', 'Date column': 'Coloana datei', 'Description column': 'Coloana descrierii', 'Amount layout': 'Formatul sumei',
+  'One amount column (negative = expense)': 'O coloană de sumă (negativ = cheltuială)', 'Separate debit / credit columns': 'Coloane separate debit / credit',
+  'Amount column': 'Coloana sumei', 'Debit (money out)': 'Debit (bani ieșiți)', 'Credit (money in)': 'Credit (bani intrați)', 'Preview': 'Previzualizare',
+  '3 · Review & import': '3 · Verifică și importă',
+  "transactions found. Untick anything you don't want; fix categories where the guess is wrong.": 'tranzacții găsite. Debifează ce nu vrei; corectează categoriile unde ghicirea e greșită.',
+  'Description': 'Descriere', 'out': 'ieșire', 'in': 'intrare', 'income': 'venit', 'Import selected': 'Importă selectatele',
+  'imported': 'importate', 'skipped (already imported before)': 'sărite (deja importate)', 'invalid.': 'invalide.',
+  'See them in Budget & expenses →': 'Vezi-le în Buget și cheltuieli →',
+  'Could not read any rows from this file': 'Nu s-au putut citi rânduri din acest fișier',
+  'No valid transactions found — check the column mapping': 'Nicio tranzacție validă — verifică maparea coloanelor',
+  // alerts
+  'Generated automatically when a bill or deadline gets within 30, 14, 7 or 1 days — or goes overdue. Shared by the whole family; read status is yours.':
+    'Generate automat când o factură sau un termen ajunge la 30, 14, 7 sau 1 zile — sau întârzie. Comune întregii familii; starea de citit e a ta.',
+  'While Family Hub is open in a tab, new alerts also pop up as system notifications.': 'Cât timp Family Hub e deschis într-un tab, alertele noi apar și ca notificări de sistem.',
+  'Not supported by this browser': 'Nesuportat de acest browser', 'Blocked in browser settings': 'Blocat din setările browserului',
+  'Turn off': 'Oprește', 'Turn on': 'Pornește', 'No alerts yet': 'Nicio alertă încă',
+  'They appear here as your bills and deadlines get close.': 'Apar aici pe măsură ce facturile și termenele se apropie.',
+  'Permission was not granted': 'Permisiunea nu a fost acordată',
+  // family
+  'Everyone shares the same data. Admins manage members, adults can edit, children can only view.': 'Toți împart aceleași date. Adminii gestionează membrii, adulții pot edita, copiii pot doar vizualiza.',
+  'Share this code — they choose': 'Trimite acest cod — persoana alege', 'on the sign-in screen:': 'pe ecranul de autentificare:',
+  'Or send this link — it opens Register with the code filled in:': 'Sau trimite acest link — deschide Înregistrarea cu codul completat:',
+  'New members join as adults. Change their role below after they join.': 'Membrii noi intră ca adulți. Schimbă-le rolul mai jos după ce se alătură.',
+  'Or email an invite': 'Sau trimite invitația pe email',
+  "For kids without an email — they show up in the family and can have acte and expenses linked to them, but can't sign in.":
+    'Pentru copii fără email — apar în familie și pot avea acte și cheltuieli legate de ei, dar nu se pot autentifica.',
+  'Invite sent to': 'Invitație trimisă către', 'Child added': 'Copil adăugat', 'Role updated': 'Rol actualizat',
+  'Remove this member? Their account will be deleted.': 'Elimini acest membru? Contul lui va fi șters.',
+  // settings
+  'Your profile, theme and family pictures.': 'Profilul tău, tema și pozele familiei.',
+  'Notifications on this device': 'Notificări pe acest dispozitiv',
+  'Get alerts (RCA, ITP, acte, birthdays…) as push notifications on this phone/computer even when the site is closed. Tip: on a phone, first use "Add to Home Screen" to install the app.':
+    'Primește alerte (RCA, ITP, acte, zile de naștere…) ca notificări push pe acest telefon/calculator chiar și când site-ul e închis. Sfat: pe telefon, folosește mai întâi „Adaugă pe ecranul principal” pentru a instala aplicația.',
+  'Enable on this device': 'Activează pe acest dispozitiv', 'Disable on this device': 'Dezactivează pe acest dispozitiv', 'Send a test': 'Trimite un test',
+  'Push notifications off on this device': 'Notificările push sunt oprite pe acest dispozitiv',
+  'Push notifications on — alerts will reach this device': 'Notificări push pornite — alertele vor ajunge pe acest dispozitiv',
+  'Test sent — check your notifications': 'Test trimis — verifică notificările', 'Picture updated': 'Poză actualizată',
 };
+// pattern rules for text that embeds a name/number and can't be a fixed dictionary key
+const RO_RX = [
+  [/^🎂 (.+)'s birthday$/, '🎂 Ziua de naștere: $1'],
+];
 let LANG = 'en';
 function applyLang() { LANG = (ME && ME.lang) || 'en'; document.documentElement.lang = LANG; }
+// tr(): translate a string when building templates in JS (for text assembled with interpolation)
+const tr = (s) => (LANG === 'ro' && RO[s]) || s;
+// confirm/prompt shadow the natives so static messages get translated too
+const nativeConfirm = window.confirm.bind(window), nativePrompt = window.prompt.bind(window);
+const confirm = (m) => nativeConfirm(tr(m));
+const prompt = (m, d) => nativePrompt(tr(m), d);
 function translateSubtree(root) {
   if (LANG !== 'ro' || !root) return;
-  // placeholders + option/input values via attributes
+  // placeholders + titles via attributes
   const els = root.nodeType === 1 ? [root, ...root.querySelectorAll('*')] : [];
   for (const el of els) {
     const ph = el.getAttribute && el.getAttribute('placeholder');
     if (ph && RO[ph.trim()]) el.setAttribute('placeholder', RO[ph.trim()]);
+    const ti = el.getAttribute && el.getAttribute('title');
+    if (ti && RO[ti.trim()]) el.setAttribute('title', RO[ti.trim()]);
   }
   // text nodes (exact-match whole phrase, whitespace preserved)
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   const nodes = [];
   for (let n = walker.nextNode(); n; n = walker.nextNode()) nodes.push(n);
   for (const n of nodes) {
+    if (n.parentElement && n.parentElement.closest('.brandmark, .brand')) continue; // never translate the product name
     const raw = n.nodeValue; const key = raw.trim();
-    if (key && RO[key]) n.nodeValue = raw.replace(key, RO[key]);
+    if (!key) continue;
+    if (RO[key]) { n.nodeValue = raw.replace(key, RO[key]); continue; }
+    for (const [rx, rep] of RO_RX) if (rx.test(key)) { n.nodeValue = raw.replace(key, key.replace(rx, rep)); break; }
   }
 }
 const cur = () => (FAMILY?.currency || 'RON');
@@ -99,7 +297,7 @@ const canWrite = () => ME && ME.role !== 'child';
 
 function toast(msg) {
   const t = $('#toast');
-  t.textContent = msg; t.hidden = false;
+  t.textContent = tr(msg); t.hidden = false;
   clearTimeout(t._h); t._h = setTimeout(() => (t.hidden = true), 2600);
 }
 const registerLink = (code) => `${location.origin}/#register=${encodeURIComponent(code)}`;
@@ -108,7 +306,7 @@ async function copyText(text) {
   try {
     if (navigator.clipboard) await navigator.clipboard.writeText(text);
     else { const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); }
-    toast('Copied: ' + text);
+    toast(tr('Copied:') + ' ' + text);
   } catch { toast('Copy failed — select it manually'); }
 }
 // turn any dd/mm/yyyy values in a request body back into the ISO the server expects
@@ -132,7 +330,10 @@ async function api(path, opts = {}) {
   return data;
 }
 function daysClass(d) { return d < 0 ? 'late' : d <= 14 ? 'warn' : ''; }
-function daysLabel(d) { return d < 0 ? `${-d}d overdue` : d === 0 ? 'today' : `in ${d}d`; }
+function daysLabel(d) {
+  if (LANG === 'ro') return d < 0 ? `întârziat ${-d}z` : d === 0 ? 'azi' : `în ${d}z`;
+  return d < 0 ? `${-d}d overdue` : d === 0 ? 'today' : `in ${d}d`;
+}
 
 /* ---------- router ---------- */
 const routes = { dashboard: viewDashboard, money: viewMoney, bills: viewBills, vehicles: viewVehicles, properties: viewProperties, acte: viewActe, lists: viewLists, import: viewImport, alerts: viewAlerts, family: viewFamily, settings: viewSettings };
@@ -199,7 +400,7 @@ function shell(active) {
       <div class="brand">Family Hub<small>${esc(FAMILY.name)}</small></div>
       ${links.map(([k, ic, l]) => `<a class="navlink ${k === active ? 'active' : ''}" href="#${k}"><span aria-hidden="true">${ic}</span>${l}</a>`).join('')}
       <div class="spacer"></div>
-      <a class="whoami row" href="#settings" style="text-decoration:none;color:inherit;gap:8px">${avatarHtml(ME)}<span><b>${esc(ME.name)}</b>${ME.role} · ${esc(ME.email || '')}</span></a>
+      <a class="whoami row" href="#settings" style="text-decoration:none;color:inherit;gap:8px">${avatarHtml(ME)}<span><b>${esc(ME.name)}</b>${tr(ME.role)} · ${esc(ME.email || '')}</span></a>
       <button class="navlink" id="logout">↩ Sign out</button>
     </nav>
     <main class="main" id="page"></main>
@@ -299,7 +500,7 @@ async function renderTenantPortal() {
     <div class="row" style="justify-content:space-between;align-items:flex-start">
       <div><div class="brandmark">Family<span>Hub</span></div>
         <p class="muted" style="margin:4px 0 0">Tenant portal · <b>${esc(data.property.name)}</b>${data.property.address ? ' — ' + esc(data.property.address) : ''}</p>
-        <p class="muted" style="margin:4px 0 0">Signed in as ${esc(ME.name)} (${esc(ME.email)})</p></div>
+        <p class="muted" style="margin:4px 0 0">${tr('Signed in as')} ${esc(ME.name)} (${esc(ME.email)})</p></div>
       <button class="btn ghost small" id="tlogout">Sign out</button></div>
     ${data.charges.length ? `<table style="margin-top:14px"><thead><tr><th>Due</th><th>What</th><th class="right">Amount</th><th>Status</th><th></th></tr></thead><tbody>
       ${data.charges.map((c) => {
@@ -308,7 +509,7 @@ async function renderTenantPortal() {
           <td>${fdate(c.due_date)}${late ? ' <span class="badge late">overdue</span>' : ''}</td>
           <td><b>${esc(c.title)}</b>${c.type === 'rent' ? ' <span class="muted">· rent</span>' : ''}${c.attachment ? ` · <a href="/api/tenant/charges/${c.id}/attachment" target="_blank">invoice</a>` : ''}${c.note ? `<br><span class="muted">${esc(c.note)}</span>` : ''}</td>
           <td class="right amount">${money(c.amount)}</td>
-          <td>${c.status === 'paid' ? `<span class="badge paid">paid${c.confirmed_at ? ' ' + fdate(c.confirmed_at) : ''}</span>`
+          <td>${c.status === 'paid' ? `<span class="badge paid">${tr('paid')}${c.confirmed_at ? ' ' + fdate(c.confirmed_at) : ''}</span>`
             : c.status === 'pending' ? `<span class="badge role">confirmation pending</span>`
             : `<span class="badge unpaid">to pay</span>`}</td>
           <td class="right">${c.status === 'unpaid' ? `<span class="row" style="gap:6px;justify-content:flex-end;flex-wrap:nowrap;white-space:nowrap">${payUrl ? `<a class="btn ghost small" href="${esc(payUrl(c.amount))}" target="_blank" rel="noopener">Pay</a>` : ''}<button class="btn small" data-pay="${c.id}">Mark as paid</button></span>` : ''}</td>
@@ -323,13 +524,13 @@ async function renderTenantPortal() {
     ${(data.meters || []).length ? `<h3 style="margin-top:16px">Meter readings</h3>
       ${data.meters.filter((m) => m.status === 'pending').map((m) => `
         <div class="row" style="flex-wrap:wrap;border:1px solid var(--line);border-radius:10px;padding:10px;margin-bottom:8px">
-          <b style="text-transform:capitalize">${esc(m.utility)}</b><span class="muted">requested ${fdate(m.requested_at?.slice(0, 10))}</span>
+          <b style="text-transform:capitalize">${esc(tr(m.utility))}</b><span class="muted">${tr('requested')} ${fdate(m.requested_at?.slice(0, 10))}</span>
           <input data-mval="${m.id}" inputmode="decimal" placeholder="meter value" style="max-width:140px">
           <button class="btn small" data-msend="${m.id}">Send reading</button>
           <label class="btn ghost small" style="display:inline-block">Upload photo<input type="file" data-mphoto="${m.id}" accept="image/*" hidden></label>
         </div>`).join('')}
       ${data.meters.filter((m) => m.status === 'done').slice(0, 5).map((m) => `
-        <p class="muted" style="margin:4px 0">✓ <span style="text-transform:capitalize">${esc(m.utility)}</span>: ${m.reading ? esc(m.reading) : 'photo sent'} · ${fdate(m.provided_at)}</p>`).join('')}` : ''}
+        <p class="muted" style="margin:4px 0">✓ <span style="text-transform:capitalize">${esc(tr(m.utility))}</span>: ${m.reading ? esc(m.reading) : tr('photo sent')} · ${fdate(m.provided_at)}</p>`).join('')}` : ''}
   </div></div>`;
   $('#tlogout').onclick = async () => { await api('/auth/logout', { method: 'POST' }); ME = null; renderAuth(); };
   app.querySelectorAll('[data-pay]').forEach((b) => (b.onclick = async () => {
@@ -360,7 +561,7 @@ async function viewDashboard(el) {
       <select id="dashperiod" style="width:150px">${[1, 3, 6, 12].map((m) => `<option value="${m}" ${DASH_MONTHS === m ? 'selected' : ''}>${PERIOD_LABELS[m]}</option>`).join('')}</select>
       <select id="dashview" style="width:190px">
         <option value="all" ${DASH_VIEW === 'all' ? 'selected' : ''}>Whole family (total)</option>
-        ${members.map((m) => `<option value="${m.id}" ${String(DASH_VIEW) === String(m.id) ? 'selected' : ''}>${esc(m.name)}${m.id === ME.id ? ' (me)' : ''}</option>`).join('')}
+        ${members.map((m) => `<option value="${m.id}" ${String(DASH_VIEW) === String(m.id) ? 'selected' : ''}>${esc(m.name)}${m.id === ME.id ? ' ' + tr('(me)') : ''}</option>`).join('')}
       </select></div></div><div id="dash">Loading…</div>`;
   $('#dashview').onchange = (e) => { DASH_VIEW = e.target.value; viewDashboard(el); };
   $('#dashperiod').onchange = (e) => { DASH_MONTHS = Number(e.target.value); viewDashboard(el); };
@@ -382,16 +583,16 @@ async function viewDashboard(el) {
       : `<div class="card empty"><b>Nothing due soon</b>${DASH_VIEW === 'all' ? 'Add bills, vehicle or property deadlines and they will line up here.' : 'Nothing assigned to this person is coming up.'}</div>`}
     </section>
     <section class="kpi" style="margin-top:18px">
-      <a class="card clickcard" href="#money" data-tab="income"><div class="label">Income · ${esc(periodLabel)}</div><div class="value">${money(stats.income)}</div></a>
-      <a class="card clickcard" href="#money" data-tab="expenses"><div class="label">Spent · ${esc(periodLabel)}</div><div class="value">${money(stats.spent)}</div></a>
+      <a class="card clickcard" href="#money" data-tab="income"><div class="label">${tr('Income')} · ${esc(tr(periodLabel))}</div><div class="value">${money(stats.income)}</div></a>
+      <a class="card clickcard" href="#money" data-tab="expenses"><div class="label">${tr('Spent')} · ${esc(tr(periodLabel))}</div><div class="value">${money(stats.spent)}</div></a>
       <div class="card"><div class="label">Left over</div><div class="value ${net < 0 ? 'neg' : ''}">${money(net)}</div></div>
     </section>
     <section class="grid2" style="margin-top:18px">
-      <div class="card"><h3>Spending by category · ${esc(periodLabel)}</h3><div class="chartbox"><canvas id="catChart"></canvas></div></div>
+      <div class="card"><h3>${tr('Spending by category')} · ${esc(tr(periodLabel))}</h3><div class="chartbox"><canvas id="catChart"></canvas></div></div>
       <div class="card"><h3>Income vs spending</h3><div class="chartbox"><canvas id="trendChart"></canvas></div></div>
     </section>
     <section class="card" style="margin-top:18px">
-      <h3>Budget vs actual · ${budgets.month}</h3>
+      <h3>${tr('Budget vs actual')} · ${budgets.month}</h3>
       ${budgets.budgets.length ? budgets.budgets.map((b) => {
         const s = spentMap[b.category] || 0; const pct = Math.min(100, (s / b.amount) * 100 || 0);
         return `<div style="margin-bottom:10px"><div class="row" style="justify-content:space-between">
@@ -416,28 +617,29 @@ function drawCharts(stats, scopeView = 'all', scopeMonths = 1) {
     location.hash = '#money';
   };
   const cc = $('#catChart'); let catChart;
+  const cats = stats.byCategory.map((c) => c.category); // untranslated keys for the drill-down filter
   if (cc && stats.byCategory.length) { catChart = new Chart(cc, {
     type: 'doughnut',
-    data: { labels: stats.byCategory.map((c) => c.category), datasets: [{ data: stats.byCategory.map((c) => c.total), backgroundColor: colors }] },
+    data: { labels: cats.map(tr), datasets: [{ data: stats.byCategory.map((c) => c.total), backgroundColor: colors }] },
     options: {
-      maintainAspectRatio: false, plugins: { legend: { position: 'right', onClick: (e, item) => drillTo(item.text) } },
-      onClick: (e, els) => { if (els.length) drillTo(catChart.data.labels[els[0].index]); },
+      maintainAspectRatio: false, plugins: { legend: { position: 'right', onClick: (e, item) => drillTo(cats[item.index]) } },
+      onClick: (e, els) => { if (els.length) drillTo(cats[els[0].index]); },
     },
   }); cc.style.cursor = 'pointer'; }
-  else if (cc) cc.replaceWith(Object.assign(document.createElement('p'), { className: 'muted', textContent: 'No expenses this month yet.' }));
+  else if (cc) cc.replaceWith(Object.assign(document.createElement('p'), { className: 'muted', textContent: tr('No expenses this month yet.') }));
   const months = [...new Set([...stats.trend.map((t) => t.m), ...stats.incomeTrend.map((t) => t.m)])].sort();
   const tc = $('#trendChart'); if (tc && months.length) new Chart(tc, {
     type: 'bar',
     data: {
       labels: months,
       datasets: [
-        { label: 'Spent', data: months.map((m) => stats.trend.find((t) => t.m === m)?.total || 0), backgroundColor: '#b23a2e' },
-        { label: 'Income', data: months.map((m) => stats.incomeTrend.find((t) => t.m === m)?.total || 0), backgroundColor: '#2f6b5a' },
+        { label: tr('Spent'), data: months.map((m) => stats.trend.find((t) => t.m === m)?.total || 0), backgroundColor: '#b23a2e' },
+        { label: tr('Income'), data: months.map((m) => stats.incomeTrend.find((t) => t.m === m)?.total || 0), backgroundColor: '#2f6b5a' },
       ],
     },
     options: { maintainAspectRatio: false, scales: { y: { beginAtZero: true } } },
   });
-  else if (tc) tc.replaceWith(Object.assign(document.createElement('p'), { className: 'muted', textContent: 'History appears once you log expenses.' }));
+  else if (tc) tc.replaceWith(Object.assign(document.createElement('p'), { className: 'muted', textContent: tr('History appears once you log expenses.') }));
 }
 
 /* ---------- calendar ---------- */
@@ -461,7 +663,7 @@ async function renderCalendar(el, embedded) {
     const evs = byDate[date] || [];
     cells.push(`<div class="day${date === t ? ' today' : ''}"><div class="n">${d}</div>
       ${evs.slice(0, 3).map((r) => `<div class="ev ${daysClass(r.days_left)}" title="${esc(r.label + (r.entity ? ' — ' + r.entity : ''))}">${esc(r.label)}</div>`).join('')}
-      ${evs.length > 3 ? `<div class="muted" style="font-size:11px">+${evs.length - 3} more</div>` : ''}</div>`);
+      ${evs.length > 3 ? `<div class="muted" style="font-size:11px">+${evs.length - 3} ${tr('more')}</div>` : ''}</div>`);
   }
   const controls = `<div class="row"><button class="btn ghost small" id="calprev">←</button>
     <b style="min-width:130px;text-align:center;text-transform:capitalize">${esc(monthLabel)}</b>
@@ -529,7 +731,7 @@ async function moneyExpenses(body, f = {}) {
   body.innerHTML = `
     ${canWrite() ? `<div class="card"><h3>Add expense</h3><form id="expform" class="formgrid">
       <div><label>Date</label><input name="date" type="date" value="${today()}" required></div>
-      <div><label>Category</label><select name="category">${CATEGORIES.map((c) => `<option>${c}</option>`).join('')}</select></div>
+      <div><label>Category</label><select name="category">${CATEGORIES.map((c) => `<option value="${c}">${c}</option>`).join('')}</select></div>
       <div><label>Amount (${cur()})</label><input name="amount" type="number" step="0.01" min="0.01" required></div>
       <div><label>Person</label><select name="user_id">${members.map((m) => `<option value="${m.id}" ${m.id === ME.id ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}</select></div>
       ${properties.length || vehicles.length ? `<div><label>Link to (optional)</label><select name="link"><option value="">Nothing</option>
@@ -541,7 +743,7 @@ async function moneyExpenses(body, f = {}) {
       <div class="row" style="justify-content:space-between;gap:10px"><h3 style="margin:0">Expenses</h3><span class="amount"><b>${money(total)}</b></span></div>
       <div class="row" style="gap:8px;margin:10px 0;flex-wrap:wrap">
         ${whoFilter('wfilter', members, flt.who)}
-        <select id="cfilter" style="width:150px"><option value="all" ${flt.cat === 'all' ? 'selected' : ''}>All categories</option>${CATEGORIES.map((c) => `<option ${flt.cat === c ? 'selected' : ''}>${c}</option>`).join('')}</select>
+        <select id="cfilter" style="width:150px"><option value="all" ${flt.cat === 'all' ? 'selected' : ''}>All categories</option>${CATEGORIES.map((c) => `<option value="${c}" ${flt.cat === c ? 'selected' : ''}>${c}</option>`).join('')}</select>
         <input id="mfilter" type="month" value="${flt.month === 'all' ? '' : flt.month}" style="width:150px">
         <button class="btn ghost small" id="allmonths">${flt.month === 'all' ? '● All time' : 'All time'}</button>
         <input id="qfilter" type="search" placeholder="Search note…" value="${esc(flt.q)}" style="width:180px">
@@ -585,7 +787,7 @@ async function moneyIncome(body, who = 'all') {
     <div class="card" style="margin-top:16px"><h3>Recurring income (salaries)</h3>
       <p class="muted" style="margin-top:0">Logged automatically every month on the chosen day — no manual entry needed.</p>
       ${recurring.length ? `<table><tbody>${recurring.map((r) => `<tr style="${r.active ? '' : 'opacity:.55'}">
-        <td><b>${esc(r.source)}</b> <span class="muted">· ${esc(r.user_name || '')} · day ${r.day}</span>${r.active ? '' : ' <span class="badge role">paused</span>'}</td>
+        <td><b>${esc(r.source)}</b> <span class="muted">· ${esc(r.user_name || '')} · ${tr('day')} ${r.day}</span>${r.active ? '' : ' <span class="badge role">paused</span>'}</td>
         <td class="right amount">${money(r.amount)}<span class="muted">/mo</span></td>
         <td class="right">${canWrite() ? `<button class="btn ghost small" data-rtog="${r.id}">${r.active ? 'Pause' : 'Resume'}</button>
           <button class="btn danger small" data-rdel="${r.id}">✕</button>` : ''}</td></tr>`).join('')}</tbody></table>` : ''}
@@ -602,7 +804,7 @@ async function moneyIncome(body, who = 'all') {
       ${rows.length ? `<table><thead><tr><th>Date</th><th>Source</th><th>By</th><th class="right">Amount</th><th></th></tr></thead><tbody>
         ${rows.map((r) => `<tr><td>${fdate(r.date)}</td><td>${esc(r.source)}</td><td>${esc(mname[r.user_id] || '—')}</td><td class="right amount">${money(r.amount)}</td>
         <td class="right">${canWrite() ? `<button class="btn danger small" data-del="${r.id}">Delete</button>` : ''}</td></tr>`).join('')}
-      </tbody></table>` : `<div class="empty"><b>No income recorded yet${who === 'all' ? '' : ` for ${esc(mname[who] || '')}`}</b>Log salaries and other income to see the monthly balance.</div>`}
+      </tbody></table>` : `<div class="empty"><b>${tr('No income recorded yet')}${who === 'all' ? '' : ` — ${esc(mname[who] || '')}`}</b>Log salaries and other income to see the monthly balance.</div>`}
     </div>`;
   $('#wfilter').onchange = (e) => moneyIncome(body, e.target.value);
   $('#incform')?.addEventListener('submit', async (e) => {
@@ -745,7 +947,7 @@ async function moneyCredits(body) {
       if (P > 0 && n >= 1 && rate !== '' && Number(rate) >= 0) {
         const r = Number(rate) / 100 / 12;
         const pay = r > 0 ? (P * r) / (1 - Math.pow(1 + r, -n)) : P / n;
-        $('#credpreview').textContent = `Monthly: ${money(pay + com)}${com ? ` (rate ${money(pay)} + commission ${money(com)})` : ''} · total interest over ${n} months: ${money(pay * n - P)}`;
+        $('#credpreview').textContent = `${tr('Monthly')}: ${money(pay + com)}${com ? ` (${tr('rate')} ${money(pay)} + ${tr('commission')} ${money(com)})` : ''} · ${tr('total interest over')} ${n} ${tr('months')}: ${money(pay * n - P)}`;
       } else $('#credpreview').textContent = '';
     };
     f.addEventListener('input', preview);
@@ -775,24 +977,24 @@ function creditCard(c, members, properties, refresh) {
   wrap.className = 'entity';
   const saved = c.interest_saved > 0.005;
   wrap.innerHTML = `<summary><span><b>${esc(c.name)}</b> <span class="muted">${[c.lender, c.user_name || 'Whole family', c.property_name, `${money(c.monthly_total)}/mo`].filter(Boolean).map(esc).join(' · ')}</span>
-      ${saved ? `<span class="badge paid">saved ${money(c.interest_saved)}</span>` : ''}</span>
+      ${saved ? `<span class="badge paid">${tr('saved')} ${money(c.interest_saved)}</span>` : ''}</span>
     ${canWrite() ? `<span class="row"><button class="btn ghost small" data-edit>Edit</button><button class="btn danger small" data-del>Delete</button></span>` : ''}</summary>
     <div class="body">
       <div class="deadgrid">
         <div class="dead"><span class="muted">Holder</span><div class="d">${esc(c.user_name || 'Whole family')}</div></div>
         <div class="dead"><span class="muted">Property</span><div class="d">${esc(c.property_name || '—')}</div></div>
-        <div class="dead"><span class="muted">Monthly total · dobândă ${c.interest_rate}%</span><div class="d">${money(c.monthly_total)}<br><span class="muted">principal ${money(c.next_principal)} + interest ${money(c.next_interest)}${c.commission ? ` + com. ${money(c.commission)}` : ''}</span></div></div>
+        <div class="dead"><span class="muted">${tr('Monthly total')} · dobândă ${c.interest_rate}%</span><div class="d">${money(c.monthly_total)}<br><span class="muted">${tr('principal')} ${money(c.next_principal)} + ${tr('interest')} ${money(c.next_interest)}${c.commission ? ` + com. ${money(c.commission)}` : ''}</span></div></div>
         <div class="dead"><span class="muted">1 month in advance (principal + 1%)</span><div class="d">${money(c.advance_month_cost)}</div></div>
         <div class="dead"><span class="muted">Balance today</span><div class="d">${money(c.balance)}</div></div>
-        <div class="dead"><span class="muted">Payoff</span><div class="d">${fdate(c.payoff_date)} · ${c.months_left} mo left</div></div>
+        <div class="dead"><span class="muted">Payoff</span><div class="d">${fdate(c.payoff_date)} · ${c.months_left} ${tr('mo left')}</div></div>
         <div class="dead"><span class="muted">Anticipated payments</span><div class="d">${money(c.prepaid_total)}</div></div>
         <div class="dead"><span class="muted">Money saved (interest)</span><div class="d" style="color:#2f6b5a">${money(c.interest_saved)}</div></div>
-        <div class="dead"><span class="muted">Total interest projected</span><div class="d">${money(c.total_interest)} <span class="muted">vs ${money(c.base_total_interest)} without</span></div></div>
+        <div class="dead"><span class="muted">Total interest projected</span><div class="d">${money(c.total_interest)} <span class="muted">${tr('vs')} ${money(c.base_total_interest)} ${tr('without')}</span></div></div>
       </div>
       <div data-editbox hidden style="margin-top:12px"></div>
       <h3 style="margin-top:16px">Anticipated payments</h3>
       <p class="muted">Extra payments on top of the monthly one. The payment stays the same, the credit ends earlier — the interest you skip is your money saved.
-      <br>Paying <b>1 month in advance</b> now costs ≈ <b class="amount">${money(c.advance_month_cost)}</b> (next principal ${money(c.next_principal)} + 1%).</p>
+      <br>${tr('Paying 1 month in advance now costs ≈')} <b class="amount">${money(c.advance_month_cost)}</b> (${tr('next principal')} ${money(c.next_principal)} + 1%).</p>
       ${canWrite() ? `<form data-payform class="formgrid">
         <div><label>Date</label><input name="date" type="date" value="${today()}" required></div>
         <div><label>Amount (${cur()})</label><input name="amount" type="number" step="0.01" min="0.01" required></div>
@@ -819,7 +1021,7 @@ function creditCard(c, members, properties, refresh) {
   });
   wrap.querySelector('[data-del]')?.addEventListener('click', async (e) => {
     e.preventDefault();
-    if (!confirm(`Delete ${c.name} and its payment history?`)) return;
+    if (!confirm('Delete this credit and its payment history?')) return;
     await api('/credits/' + c.id, { method: 'DELETE' }); refresh();
   });
   wrap.querySelector('[data-edit]')?.addEventListener('click', (e) => {
@@ -862,11 +1064,11 @@ async function viewBills(el) {
       ${bills.map((b) => {
         const late = b.status === 'unpaid' && b.due_date < t;
         return `<tr>
-          <td><b>${esc(b.name)}</b><br><span class="muted">${esc(b.provider || BILL_CATS[b.category] || '')}${b.recur_months ? ` · every ${b.recur_months} mo` : ''}${b.auto_pay ? ' · auto-pay' : ''}${b.property_name ? ` · ${esc(b.property_name)}` : ''}</span></td>
+          <td><b>${esc(b.name)}</b><br><span class="muted">${esc(b.provider || tr(BILL_CATS[b.category]) || '')}${b.recur_months ? ` · ${tr('every')} ${b.recur_months} ${tr('mo')}` : ''}${b.auto_pay ? ' · auto-pay' : ''}${b.property_name ? ` · ${esc(b.property_name)}` : ''}</span></td>
           <td>${esc(b.owner_name || 'Family')}</td>
           <td>${fdate(b.due_date)}</td>
           <td class="right amount">${money(b.amount)}</td>
-          <td><span class="badge ${late ? 'late' : b.status}">${late ? 'overdue' : b.status}</span>${b.auto_pay && b.status === 'unpaid' ? '' : ''}</td>
+          <td><span class="badge ${late ? 'late' : b.status}">${tr(late ? 'overdue' : b.status)}</span></td>
           <td>${b.attachment ? `<a href="/api/bills/${b.id}/attachment" target="_blank">view</a>` : canWrite() ? `<label class="btn ghost small" style="display:inline-block">attach<input type="file" data-attach="${b.id}" accept=".pdf,image/*" hidden></label>` : '—'}</td>
           <td class="right">${canWrite() ? `
             ${b.status === 'unpaid' ? `<button class="btn small" data-pay="${b.id}" data-amt="${b.amount ?? ''}">Mark paid</button>` : ''}
@@ -884,7 +1086,7 @@ async function viewBills(el) {
     catch (err) { toast(err.message); }
   });
   el.querySelectorAll('[data-pay]').forEach((b) => (b.onclick = async () => {
-    const amt = prompt('Amount paid (' + cur() + '):', b.dataset.amt || '');
+    const amt = prompt(tr('Amount paid') + ' (' + cur() + '):', b.dataset.amt || '');
     if (amt === null) return;
     try { await api(`/bills/${b.dataset.pay}/pay`, { method: 'POST', body: { amount: Number(amt) } }); toast('Payment recorded — expense logged too'); viewBills(el); }
     catch (err) { toast(err.message); }
@@ -940,7 +1142,7 @@ async function viewVehicles(el) {
   const list = $('#vehlist');
   const vSlots = [['', 'Not a specific deadline'], ...V_DEADLINES.map(([k, l]) => [k, l])];
   for (const v of vehicles) list.appendChild(entityCard(v, {
-    subtitle: [v.plate, `Owner: ${mname[v.owner_id] || 'whole family'}`].filter(Boolean).join(' · '),
+    subtitle: [v.plate, `${tr('Owner')}: ${mname[v.owner_id] || tr('whole family')}`].filter(Boolean).join(' · '),
     deadlines: V_DEADLINES, route: 'vehicles',
     editExtra: [['owner_id', 'Owner', 'select', ownerOpts]],
     extra: (box, it) => renderEntityDocs(box, 'vehicle', it, vSlots, () => viewVehicles(el)),
@@ -974,11 +1176,11 @@ async function viewProperties(el) {
   for (const p of props) {
     const tenants = tenantsByProp[p.id] || [];
     // who a cost record is attributed to: owner by default, any member, or (if rented) bill the tenant
-    const attributeOpts = [['', `Owner${p.owner_id ? ' (' + esc(mname[p.owner_id] || '') + ')' : ' / family'}`],
+    const attributeOpts = [['', p.owner_id ? `${tr('Owner')} (${esc(mname[p.owner_id] || '')})` : tr('Owner / family')],
       ...members.map((m) => [m.id, m.name]),
-      ...(tenants.length ? [['tenant', `Tenant (bill ${esc(tenants[0].name)})`]] : [])];
+      ...(tenants.length ? [['tenant', `${tr('Tenant — bill to')} ${esc(tenants[0].name)}`]] : [])];
     list.appendChild(entityCard(p, {
-      subtitle: [p.address, `Owner: ${mname[p.owner_id] || 'whole family'}`, p.mortgage_lender ? `Mortgage: ${p.mortgage_lender}, ${money(p.mortgage_payment)} on day ${p.mortgage_due_day ?? '—'}` : null].filter(Boolean).join(' · '),
+      subtitle: [p.address, `${tr('Owner')}: ${mname[p.owner_id] || tr('whole family')}`, p.mortgage_lender ? `${tr('Mortgage')}: ${p.mortgage_lender}, ${money(p.mortgage_payment)} ${tr('on day')} ${p.mortgage_due_day ?? '—'}` : null].filter(Boolean).join(' · '),
       deadlines: P_DEADLINES, route: 'properties',
       editExtra: [['owner_id', 'Owner', 'select', ownerOpts], ['rent_amount', `Rent (${cur()}/mo)`, 'number'], ['rent_due_day', 'Rent due day (1-28)', 'number'],
         ['reading_day', 'Meter reading day (1-28)', 'number'],
@@ -1040,14 +1242,14 @@ async function renderTenantBox(box, p) {
     api(`/properties/${p.id}/tenant`), api(`/properties/${p.id}/charges`), api(`/properties/${p.id}/meter-requests`)]);
   const t = today();
   box.innerHTML = `<h3 style="margin-top:16px">Tenant & rent</h3>
-    <p class="muted">${p.rent_amount ? `Rent: <b>${money(p.rent_amount)}</b> / month, due day ${p.rent_due_day || 1} — this month's rent charge is generated automatically once a tenant has joined.` : 'No rent set — use <b>Edit</b> to set the monthly rent and due day.'}</p>
+    <p class="muted">${p.rent_amount ? `${tr('Rent:')} <b>${money(p.rent_amount)}</b> ${tr('/ month, due day')} ${p.rent_due_day || 1} — ${tr('the rent charge is generated automatically once a tenant has joined.')}` : 'No rent set — use <b>Edit</b> to set the monthly rent and due day.'}</p>
     ${canWrite() ? `<p class="row" style="flex-wrap:wrap">
       ${tinfo.invite_code ? `<span>Tenant code: <b class="amount" style="font-size:18px;letter-spacing:.12em">${esc(tinfo.invite_code)}</b></span>
       <button class="btn ghost small" data-copy="${esc(tinfo.invite_code)}">Copy code</button>
       <button class="btn ghost small" data-copy="${esc(registerLink(tinfo.invite_code))}">Copy link</button>` : `<span class="muted">No tenant code yet.</span>`}
       <button class="btn ghost small" data-tcode>${tinfo.invite_code ? 'Generate new code' : 'Generate code'}</button>
       <span class="muted">Your tenant registers with it on the sign-in screen → <b>Register</b> tab. They only see the charges below — nothing else.</span></p>` : ''}
-    ${tinfo.tenants.length ? `<p>Tenant${tinfo.tenants.length > 1 ? 's' : ''}: ${tinfo.tenants.map((x) => `<b>${esc(x.name)}</b> <span class="muted">(${esc(x.email)})</span>${canWrite() ? ` <button class="btn danger small" data-tdel="${x.id}">Remove</button>` : ''}`).join(' · ')}</p>`
+    ${tinfo.tenants.length ? `<p>${tr(tinfo.tenants.length > 1 ? 'Tenants' : 'Tenant')}: ${tinfo.tenants.map((x) => `<b>${esc(x.name)}</b> <span class="muted">(${esc(x.email)})</span>${canWrite() ? ` <button class="btn danger small" data-tdel="${x.id}">Remove</button>` : ''}`).join(' · ')}</p>`
       : `<p class="muted">No tenant has joined yet.</p>`}
     ${canWrite() ? `<form data-chform class="formgrid">
       <div><label>Type</label><select name="type"><option value="invoice">Invoice</option><option value="rent">Rent (extra)</option></select></div>
@@ -1064,8 +1266,8 @@ async function renderTenantBox(box, p) {
           <td><b>${esc(c.title)}</b>${c.type === 'rent' ? ' <span class="muted">· rent</span>' : ''}</td>
           <td class="right amount">${money(c.amount)}</td>
           <td>${c.attachment ? `<a href="/api/properties/${p.id}/charges/${c.id}/attachment" target="_blank">view</a>` : canWrite() ? `<label class="btn ghost small" style="display:inline-block">attach<input type="file" data-chattach="${c.id}" accept=".pdf,image/*" hidden></label>` : '—'}</td>
-          <td>${c.status === 'paid' ? `<span class="badge paid">paid${c.confirmed_at ? ' ' + fdate(c.confirmed_at) : ''}</span>`
-            : c.status === 'pending' ? `<span class="badge role">pending — tenant marked paid ${c.marked_paid_at ? fdate(c.marked_paid_at) : ''}</span>`
+          <td>${c.status === 'paid' ? `<span class="badge paid">${tr('paid')}${c.confirmed_at ? ' ' + fdate(c.confirmed_at) : ''}</span>`
+            : c.status === 'pending' ? `<span class="badge role">${tr('pending — tenant marked paid')} ${c.marked_paid_at ? fdate(c.marked_paid_at) : ''}</span>`
             : `<span class="badge unpaid">unpaid</span>`}</td>
           <td class="right">${canWrite() ? `
             ${c.status !== 'paid' ? `<button class="btn small" data-chconfirm="${c.id}">Confirm paid</button>` : ''}
@@ -1074,14 +1276,14 @@ async function renderTenantBox(box, p) {
         </tr>`;
       }).join('')}</tbody></table>` : `<p class="muted">Nothing shared with the tenant yet.</p>`}
     <h3 style="margin-top:16px">Meter readings</h3>
-    <p class="muted">${p.reading_day && p.reading_utilities ? `Scheduled: ${esc(p.reading_utilities)} on day ${p.reading_day} of every month (tenant gets an email).` : 'No monthly schedule — set "Meter reading day" and the meters via <b>Edit</b>, or request one now.'}</p>
+    <p class="muted">${p.reading_day && p.reading_utilities ? `${tr('Scheduled:')} ${esc(p.reading_utilities)} ${tr('on day')} ${p.reading_day} ${tr('of every month (tenant gets an email).')}` : 'No monthly schedule — set "Meter reading day" and the meters via <b>Edit</b>, or request one now.'}</p>
     ${canWrite() && tinfo.tenants.length ? `<p class="row">Request now:
       ${['electricity', 'gas', 'water'].map((u) => `<button class="btn ghost small" data-meterreq="${u}">${u[0].toUpperCase() + u.slice(1)}</button>`).join('')}</p>` : ''}
     ${meters.length ? `<table><thead><tr><th>Requested</th><th>Utility</th><th>Status</th><th>Reading</th><th></th></tr></thead><tbody>
       ${meters.map((m) => `<tr style="${m.status === 'done' ? '' : ''}">
         <td>${fdate(m.requested_at?.slice(0, 10))}</td>
-        <td>${esc(m.utility)}</td>
-        <td>${m.status === 'done' ? `<span class="badge paid">received ${m.provided_at ? fdate(m.provided_at) : ''}</span>` : '<span class="badge unpaid">waiting</span>'}</td>
+        <td>${esc(tr(m.utility))}</td>
+        <td>${m.status === 'done' ? `<span class="badge paid">${tr('received')} ${m.provided_at ? fdate(m.provided_at) : ''}</span>` : '<span class="badge unpaid">waiting</span>'}</td>
         <td>${m.reading ? `<b class="amount">${esc(m.reading)}</b>` : ''}${m.photo ? ` <a href="/api/properties/${p.id}/meter-requests/${m.id}/photo" target="_blank">photo</a>` : ''}</td>
         <td class="right">${canWrite() ? `<button class="btn danger small" data-meterdel="${m.id}">✕</button>` : ''}</td></tr>`).join('')}
     </tbody></table>` : `<p class="muted">No reading requests yet.</p>`}`;
@@ -1191,7 +1393,7 @@ function entityCard(item, cfg) {
         <span>Net <b class="amount" style="color:${net < 0 ? '#b23a2e' : '#2f6b5a'}">${money(net)}</b></span></div>`;
     }
     box.innerHTML = recs.length ? `${summary}<table><thead><tr><th>Date</th><th>Type</th><th>Note</th>${cfg.showRecordUser ? '<th>Paid by</th>' : ''}<th class="right">Amount</th><th></th></tr></thead><tbody>
-      ${recs.map((r) => `<tr><td>${fdate(r.date)}</td><td>${cfg.recordTypes[r.type] || r.type}${r.odometer ? ` <span class="muted">(${r.odometer.toLocaleString('ro-RO')} km)</span>` : ''}</td>
+      ${recs.map((r) => `<tr><td>${fdate(r.date)}</td><td>${tr(cfg.recordTypes[r.type] || r.type)}${r.odometer ? ` <span class="muted">(${r.odometer.toLocaleString('ro-RO')} km)</span>` : ''}</td>
         <td>${esc(r.note || '')}</td>${cfg.showRecordUser ? `<td>${esc(r.user_name || (isIncome(r) ? '—' : ''))}</td>` : ''}<td class="right amount" ${isIncome(r) ? 'style="color:#2f6b5a"' : ''}>${isIncome(r) ? '+' : ''}${money(r.amount)}</td>
         <td class="right">${canWrite() ? `<button class="btn danger small" data-recdel="${r.id}">✕</button>` : ''}</td></tr>`).join('')}</tbody></table>`
       : `<p class="muted">No records yet.</p>`;
@@ -1214,7 +1416,7 @@ function entityCard(item, cfg) {
   });
   wrap.querySelector('[data-del]')?.addEventListener('click', async (e) => {
     e.preventDefault();
-    if (!confirm(`Delete ${item.name} and all its history?`)) return;
+    if (!confirm(`${tr('Delete')} „${item.name}” ${tr('and all its history?')}`)) return;
     await api(`/${cfg.route}/${item.id}`, { method: 'DELETE' }); cfg.refresh();
   });
   wrap.querySelector('[data-edit]')?.addEventListener('click', (e) => {
@@ -1245,11 +1447,11 @@ function entityCard(item, cfg) {
 async function viewActe(el) {
   const [docs, members, vehicles, properties] = await Promise.all([api('/documents'), api('/family/members'), api('/vehicles'), api('/properties')]);
   const t = today();
-  const linkOpts = [['', 'Family (general)'],
-    ...members.map((m) => ['user:' + m.id, 'Person: ' + m.name]),
-    ...vehicles.map((v) => ['vehicle:' + v.id, 'Vehicle: ' + v.name]),
-    ...properties.map((p) => ['property:' + p.id, 'Property: ' + p.name])];
-  const belongsTo = (d) => d.person_name ? `Person: ${esc(d.person_name)}` : d.vehicle_name ? `Vehicle: ${esc(d.vehicle_name)}` : d.property_name ? `Property: ${esc(d.property_name)}` : 'Family';
+  const linkOpts = [['', tr('Family (general)')],
+    ...members.map((m) => ['user:' + m.id, tr('Person') + ': ' + m.name]),
+    ...vehicles.map((v) => ['vehicle:' + v.id, tr('Vehicle') + ': ' + v.name]),
+    ...properties.map((p) => ['property:' + p.id, tr('Property') + ': ' + p.name])];
+  const belongsTo = (d) => d.person_name ? `${tr('Person')}: ${esc(d.person_name)}` : d.vehicle_name ? `${tr('Vehicle')}: ${esc(d.vehicle_name)}` : d.property_name ? `${tr('Property')}: ${esc(d.property_name)}` : tr('Family');
   el.innerHTML = `<div class="pagehead"><div><h1>Acte</h1><p>ID cards, passports, certificates, talon auto, contracts — linked to a person, vehicle or property, with expiry reminders and scans.</p></div></div>
     ${canWrite() ? `<div class="card"><h3>Add document</h3><form id="docform" class="formgrid">
       <div><label>Name</label><input name="name" placeholder="Carte de identitate, Pasaport…" required></div>
@@ -1290,7 +1492,7 @@ async function viewActe(el) {
       if (file) {
         const fd = new FormData(); fd.append('file', file);
         try { await api(`/documents/${doc.id}/attachment`, { method: 'POST', body: fd }); }
-        catch (err) { toast('Document saved, but the scan failed: ' + err.message); viewActe(el); return; }
+        catch (err) { toast(tr('Document saved, but the scan failed:') + ' ' + err.message); viewActe(el); return; }
       }
       toast('Document added'); viewActe(el);
     } catch (err) { toast(err.message); }
@@ -1327,7 +1529,7 @@ async function viewLists(el, tab = 'buy') {
         ${tab === 'targets' ? `<div><label>Person</label><select name="user_id">${members.map((m) => `<option value="${m.id}" ${m.id === ME.id ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}</select></div>` : ''}
         <div><label>Note</label><input name="note" placeholder="optional"></div>
         <button class="btn">Add</button></form>` : ''}
-      ${rows.length ? `<p class="muted" style="margin:12px 0 4px">${openCount} open · ${rows.length - openCount} done</p>
+      ${rows.length ? `<p class="muted" style="margin:12px 0 4px">${openCount} ${tr('open')} · ${rows.length - openCount} ${tr('done')}</p>
       <table><tbody>
         ${rows.map((i) => `<tr style="${i.done ? 'opacity:.55' : ''}">
           <td style="width:30px">${canWrite() ? `<input type="checkbox" data-tog="${i.id}" ${i.done ? 'checked' : ''} style="width:auto">` : (i.done ? '✓' : '')}</td>
@@ -1463,13 +1665,13 @@ async function viewImport(el) {
     if (!txs.length) return toast('No valid transactions found — check the column mapping');
     IMPORT_STATE.txs = txs;
     $('#prevbox').innerHTML = `<div class="card" style="margin-top:16px"><h3>3 · Review & import</h3>
-      <p class="muted">${txs.length} transactions found. Untick anything you don't want; fix categories where the guess is wrong.</p>
+      <p class="muted">${txs.length} ${tr("transactions found. Untick anything you don't want; fix categories where the guess is wrong.")}</p>
       <div style="max-height:420px;overflow:auto"><table><thead><tr><th></th><th>Date</th><th>Description</th><th>Type</th><th>Category</th><th class="right">Amount</th></tr></thead><tbody>
       ${txs.map((t, i) => `<tr>
         <td><input type="checkbox" data-inc="${i}" checked style="width:auto"></td>
         <td>${fdate(t.date)}</td><td>${esc(t.description.slice(0, 60))}</td>
         <td>${t.type === 'expense' ? '<span class="badge unpaid">out</span>' : '<span class="badge paid">in</span>'}</td>
-        <td>${t.type === 'expense' ? `<select data-cat="${i}" style="width:150px">${CATEGORIES.map((c) => `<option ${c === t.category ? 'selected' : ''}>${c}</option>`).join('')}</select>` : '<span class="muted">income</span>'}</td>
+        <td>${t.type === 'expense' ? `<select data-cat="${i}" style="width:150px">${CATEGORIES.map((c) => `<option value="${c}" ${c === t.category ? 'selected' : ''}>${c}</option>`).join('')}</select>` : '<span class="muted">income</span>'}</td>
         <td class="right amount">${money(t.amount)}</td></tr>`).join('')}
       </tbody></table></div>
       <div style="margin-top:12px"><button class="btn" id="doimport">Import selected</button></div></div>`;
@@ -1480,7 +1682,7 @@ async function viewImport(el) {
       try {
         const r = await api('/import/transactions', { method: 'POST', body: { rows } });
         $('#prevbox').innerHTML = `<div class="card" style="margin-top:16px"><h3>Done</h3>
-          <p><b>${r.imported}</b> imported · <b>${r.skipped}</b> skipped (already imported before) · <b>${r.errors}</b> invalid.</p>
+          <p><b>${r.imported}</b> ${tr('imported')} · <b>${r.skipped}</b> ${tr('skipped (already imported before)')} · <b>${r.errors}</b> ${tr('invalid.')}</p>
           <p><a href="#money">See them in Budget & expenses →</a></p></div>`;
       } catch (err) { toast(err.message); }
     };
@@ -1550,7 +1752,7 @@ async function viewFamily(el) {
     <div class="card" style="margin-top:16px"><h3>Members</h3>
       <table><thead><tr><th>Name</th><th>Email</th><th>Role</th>${isAdmin ? '<th></th>' : ''}</tr></thead><tbody>
       ${members.map((m) => `<tr><td><span class="row" style="gap:8px">${avatarHtml(m)}<span>${esc(m.name)}${m.id === ME.id ? ' <span class="muted">(you)</span>' : ''}</span></span></td><td>${m.email ? esc(m.email) : '<span class="muted">no login</span>'}</td>
-        <td>${isAdmin && m.id !== ME.id && m.email ? `<select data-role="${m.id}">${['admin', 'adult', 'child'].map((r) => `<option ${r === m.role ? 'selected' : ''}>${r}</option>`).join('')}</select>` : `<span class="badge role">${m.role}</span>`}</td>
+        <td>${isAdmin && m.id !== ME.id && m.email ? `<select data-role="${m.id}">${['admin', 'adult', 'child'].map((r) => `<option value="${r}" ${r === m.role ? 'selected' : ''}>${r}</option>`).join('')}</select>` : `<span class="badge role">${tr(m.role)}</span>`}</td>
         ${isAdmin ? `<td class="right">${m.id !== ME.id ? `<button class="btn danger small" data-del="${m.id}">Remove</button>` : ''}</td>` : ''}</tr>`).join('')}
       </tbody></table></div>
     ${isAdmin ? `<div class="card" style="margin-top:16px"><h3>Family settings</h3>
@@ -1566,7 +1768,7 @@ async function viewFamily(el) {
   $('#inviteform')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     const email = new FormData(e.target).get('email');
-    try { await api('/family/invite/email', { method: 'POST', body: { email } }); toast('Invite sent to ' + email); e.target.reset(); }
+    try { await api('/family/invite/email', { method: 'POST', body: { email } }); toast(tr('Invite sent to') + ' ' + email); e.target.reset(); }
     catch (err) { toast(err.message); }
   });
   $('#childform')?.addEventListener('submit', async (e) => {
@@ -1667,12 +1869,12 @@ async function setupPushCard() {
   const btn = $('#pushbtn'), testBtn = $('#pushtest');
   if (!btn) return;
   if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-    btn.textContent = 'Not supported by this browser'; btn.disabled = true; return;
+    btn.textContent = tr('Not supported by this browser'); btn.disabled = true; return;
   }
   const reg = await navigator.serviceWorker.ready;
   let sub = await reg.pushManager.getSubscription();
   const paint = () => {
-    btn.textContent = sub ? 'Disable on this device' : 'Enable on this device';
+    btn.textContent = tr(sub ? 'Disable on this device' : 'Enable on this device');
     btn.classList.toggle('ghost', !!sub);
     testBtn.hidden = !sub;
   };
