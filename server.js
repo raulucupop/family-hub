@@ -480,10 +480,17 @@ function creditStats(credit, prepays) {
   if (balanceNow === null) balanceNow = bal; // already paid off before today
 
   const commission = Number(credit.commission) || 0;
+  // breakdown of the NEXT installment: interest accrues on today's balance, the rest is principal.
+  // paying one month in advance = that principal portion + 1% early-repayment fee.
+  const nextInterest = Math.max(0, balanceNow) * r;
+  const nextPrincipal = Math.max(0, Math.min(payment - nextInterest, Math.max(0, balanceNow)));
   return {
     monthly_payment: Math.round(payment * 100) / 100,
     commission: Math.round(commission * 100) / 100,
     monthly_total: Math.round((payment + commission) * 100) / 100, // rate + fixed commission
+    next_principal: Math.round(nextPrincipal * 100) / 100,
+    next_interest: Math.round(nextInterest * 100) / 100,
+    advance_month_cost: Math.round(nextPrincipal * 1.01 * 100) / 100, // next principal + 1%
     base_total_interest: Math.round(baseTotalInterest * 100) / 100,
     total_interest: Math.round(totalInterest * 100) / 100,
     interest_saved: Math.round(Math.max(0, baseTotalInterest - totalInterest) * 100) / 100,

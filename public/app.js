@@ -781,7 +781,8 @@ function creditCard(c, members, properties, refresh) {
       <div class="deadgrid">
         <div class="dead"><span class="muted">Holder</span><div class="d">${esc(c.user_name || 'Whole family')}</div></div>
         <div class="dead"><span class="muted">Property</span><div class="d">${esc(c.property_name || '—')}</div></div>
-        <div class="dead"><span class="muted">Monthly total · dobândă ${c.interest_rate}%</span><div class="d">${money(c.monthly_total)}${c.commission ? ` <span class="muted">(${money(c.monthly_payment)} + ${money(c.commission)} com.)</span>` : ''}</div></div>
+        <div class="dead"><span class="muted">Monthly total · dobândă ${c.interest_rate}%</span><div class="d">${money(c.monthly_total)}<br><span class="muted">principal ${money(c.next_principal)} + interest ${money(c.next_interest)}${c.commission ? ` + com. ${money(c.commission)}` : ''}</span></div></div>
+        <div class="dead"><span class="muted">1 month in advance (principal + 1%)</span><div class="d">${money(c.advance_month_cost)}</div></div>
         <div class="dead"><span class="muted">Balance today</span><div class="d">${money(c.balance)}</div></div>
         <div class="dead"><span class="muted">Payoff</span><div class="d">${fdate(c.payoff_date)} · ${c.months_left} mo left</div></div>
         <div class="dead"><span class="muted">Anticipated payments</span><div class="d">${money(c.prepaid_total)}</div></div>
@@ -790,7 +791,8 @@ function creditCard(c, members, properties, refresh) {
       </div>
       <div data-editbox hidden style="margin-top:12px"></div>
       <h3 style="margin-top:16px">Anticipated payments</h3>
-      <p class="muted">Extra payments on top of the monthly one. The payment stays the same, the credit ends earlier — the interest you skip is your money saved.</p>
+      <p class="muted">Extra payments on top of the monthly one. The payment stays the same, the credit ends earlier — the interest you skip is your money saved.
+      <br>Paying <b>1 month in advance</b> now costs ≈ <b class="amount">${money(c.advance_month_cost)}</b> (next principal ${money(c.next_principal)} + 1%).</p>
       ${canWrite() ? `<form data-payform class="formgrid">
         <div><label>Date</label><input name="date" type="date" value="${today()}" required></div>
         <div><label>Amount (${cur()})</label><input name="amount" type="number" step="0.01" min="0.01" required></div>
