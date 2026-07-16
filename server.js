@@ -56,8 +56,11 @@ function auth(req, res, next) {
     const payload = jwt.verify(token, JWT_SECRET);
     const user = db.prepare('SELECT id, family_id, name, email, role, tenant_property_id, avatar, theme, lang, birthday, phone FROM users WHERE id = ?').get(payload.uid);
     if (!user) return res.status(401).json({ error: 'Account no longer exists' });
-    // tenants only ever see their own charges — never the family's data
-    if (user.role === 'tenant' && req.path !== '/api/me' && !req.path.startsWith('/api/tenant')) {
+    // tenants only ever see their own charges — never the family's data.
+    // they may also manage their own profile: settings (name/lang/birthday/phone) and their own avatar.
+    const tenantAllowed = req.path === '/api/me' || req.path.startsWith('/api/tenant')
+      || req.path === '/api/settings' || req.path === `/api/users/${user.id}/avatar`;
+    if (user.role === 'tenant' && !tenantAllowed) {
       return res.status(403).json({ error: 'Tenant accounts can only access their own charges' });
     }
     req.user = user;
@@ -739,10 +742,10 @@ app.post('/api/settings', auth, (req, res) => {
   if (phone !== undefined) db.prepare('UPDATE users SET phone = ? WHERE id = ?').run(str(phone), req.user.id);
   res.json(db.prepare('SELECT id, family_id, name, email, role, avatar, theme, lang, birthday, phone FROM users WHERE id = ?').get(req.user.id));
 });
-// who may set a given member's picture: yourself (adult/admin), or a child if you can write
+// who may set a given member's picture: yourself (adult/admin/tenant), or a child if you can write
 function canEditAvatar(reqUser, target) {
   if (!target || target.family_id !== reqUser.family_id) return false;
-  if (target.id === reqUser.id) return reqUser.role === 'admin' || reqUser.role === 'adult';
+  if (target.id === reqUser.id) return ['admin', 'adult', 'tenant'].includes(reqUser.role);
   return (reqUser.role === 'admin' || reqUser.role === 'adult') && target.role === 'child';
 }
 app.post('/api/users/:id/avatar', auth, upload.single('file'), (req, res) => {

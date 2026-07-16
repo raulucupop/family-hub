@@ -531,6 +531,19 @@ async function renderTenantPortal() {
         </div>`).join('')}
       ${data.meters.filter((m) => m.status === 'done').slice(0, 5).map((m) => `
         <p class="muted" style="margin:4px 0">✓ <span style="text-transform:capitalize">${esc(tr(m.utility))}</span>: ${m.reading ? esc(m.reading) : tr('photo sent')} · ${fdate(m.provided_at)}</p>`).join('')}` : ''}
+    <h3 style="margin-top:20px">Your profile</h3>
+    <div class="row" style="gap:16px;align-items:center">${avatarHtml(ME, 'avatar-lg')}
+      <span class="row">
+        <label class="btn ghost small" style="display:inline-block">Upload picture<input type="file" id="tavatar" accept="image/*" hidden></label>
+        ${ME.avatar ? `<button class="btn danger small" id="tavadel">Remove</button>` : ''}
+      </span></div>
+    <form id="tprofile" class="formgrid" style="margin-top:10px;max-width:560px">
+      <div><label>Display name</label><input name="name" value="${esc(ME.name)}" required></div>
+      <div><label>Birthday</label><input name="birthday" type="date" value="${esc(ME.birthday || '')}"></div>
+      <div><label>Phone number</label><input name="phone" type="tel" value="${esc(ME.phone || '')}" placeholder="07xx xxx xxx"></div>
+      <button class="btn small">Save profile</button></form>
+    <p class="muted" style="margin:14px 0 6px">Language</p>
+    <div class="row">${[['en', '🇬🇧 English'], ['ro', '🇷🇴 Română']].map(([lg, lb]) => `<button class="btn ${(ME.lang || 'en') === lg ? '' : 'ghost'} small" data-tlang="${lg}">${lb}</button>`).join('')}</div>
   </div></div>`;
   $('#tlogout').onclick = async () => { await api('/auth/logout', { method: 'POST' }); ME = null; renderAuth(); };
   app.querySelectorAll('[data-pay]').forEach((b) => (b.onclick = async () => {
@@ -545,6 +558,27 @@ async function renderTenantPortal() {
   app.querySelectorAll('[data-mphoto]').forEach((inp) => (inp.onchange = async () => {
     const fd = new FormData(); fd.append('file', inp.files[0]);
     try { await api(`/tenant/meter/${inp.dataset.mphoto}/photo`, { method: 'POST', body: fd }); toast('Photo sent — thank you!'); renderTenantPortal(); }
+    catch (err) { toast(err.message); }
+  }));
+  // tenant profile: picture, name/birthday/phone, language
+  const refreshMe = async () => { const me = await api('/me'); ME = me.user; applyLang(); renderTenantPortal(); };
+  $('#tavatar').onchange = async () => {
+    if (!$('#tavatar').files[0]) return;
+    const fd = new FormData(); fd.append('file', $('#tavatar').files[0]);
+    try { await api(`/users/${ME.id}/avatar`, { method: 'POST', body: fd }); toast('Picture updated'); refreshMe(); }
+    catch (err) { toast(err.message); }
+  };
+  $('#tavadel')?.addEventListener('click', async () => {
+    try { await api(`/users/${ME.id}/avatar`, { method: 'DELETE' }); toast('Removed'); refreshMe(); }
+    catch (err) { toast(err.message); }
+  });
+  $('#tprofile').onsubmit = async (e) => {
+    e.preventDefault();
+    try { await api('/settings', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) }); toast('Saved'); refreshMe(); }
+    catch (err) { toast(err.message); }
+  };
+  app.querySelectorAll('[data-tlang]').forEach((b) => (b.onclick = async () => {
+    try { await api('/settings', { method: 'POST', body: { lang: b.dataset.tlang } }); refreshMe(); }
     catch (err) { toast(err.message); }
   }));
 }
