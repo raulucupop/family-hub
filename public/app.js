@@ -11,6 +11,21 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
    The UI is authored in English; when the user's language is Romanian, a post-render pass
    swaps matching text nodes and placeholders using this dictionary. Unmatched text stays English. */
 const RO = {
+  // navigation: the phone tab bar + the "More" sheet
+  'Money': 'Bani', 'More': 'Mai mult', 'Search': 'Căutare',
+  // search page
+  'Across expenses, income, bills, acte, credits, cars, properties and lists.': 'Prin cheltuieli, venituri, facturi, acte, credite, mașini, proprietăți și liste.',
+  'Type at least 2 characters.': 'Scrie cel puțin 2 caractere.', 'Nothing found': 'Nimic găsit',
+  'result': 'rezultat', 'results': 'rezultate',
+  // View, not Open — the word Open is already taken further down as the maintenance status
+  // (Deschis, adjective), and a later duplicate key silently wins over this button (Deschide, verb)
+  'View': 'Vezi',
+  'Expense': 'Cheltuială', 'List': 'Listă',
+  // first run
+  'Welcome — start here': 'Bun venit — începe aici',
+  'Nothing is set up yet. Add any one of these and this page fills in.': 'Nimic nu e configurat încă. Adaugă oricare dintre acestea și pagina se completează.',
+  'Add a bill': 'Adaugă o factură', 'Add your car': 'Adaugă mașina', 'Add a property': 'Adaugă o proprietate',
+  'Log an expense': 'Înregistrează o cheltuială', 'Invite the family': 'Invită familia',
   'Dashboard': 'Panou', 'Budget & expenses': 'Buget și cheltuieli', 'Bills': 'Facturi', 'Vehicles': 'Vehicule',
   'Properties': 'Proprietăți', 'Acte': 'Acte', 'Bank import': 'Import bancar', 'Family': 'Familie', 'Settings': 'Setări',
   '↩ Sign out': '↩ Deconectare', 'Sign out': 'Deconectare',
@@ -357,6 +372,15 @@ async function api(path, opts = {}) {
   if (!res.ok) throw new Error(data.error || 'Request failed');
   return data;
 }
+/* An "Add …" form sitting open at the top of a page pushed the actual data 1–2 screens down on a
+   phone. Collapse it there; a desktop has room for it to stay open. The "+" is its own element so
+   the label beside it still matches the RO dictionary exactly. */
+const wideScreen = () => window.innerWidth > 860;
+function addBox(title, inner) {
+  return `<details class="card addbox" ${wideScreen() ? 'open' : ''}>
+    <summary><span class="plus" aria-hidden="true">+</span> ${title}</summary>
+    <div class="addbody">${inner}</div></details>`;
+}
 function daysClass(d) { return d < 0 ? 'late' : d <= 14 ? 'warn' : ''; }
 // auto-paid subscriptions take care of themselves — list them, but without the
 // amber/red "this needs you" colour that every other deadline gets
@@ -367,7 +391,7 @@ function daysLabel(d) {
 }
 
 /* ---------- router ---------- */
-const routes = { dashboard: viewDashboard, money: viewMoney, bills: viewBills, vehicles: viewVehicles, properties: viewProperties, acte: viewActe, lists: viewLists, import: viewImport, alerts: viewAlerts, family: viewFamily, settings: viewSettings };
+const routes = { dashboard: viewDashboard, money: viewMoney, bills: viewBills, search: viewSearch, vehicles: viewVehicles, properties: viewProperties, acte: viewActe, lists: viewLists, import: viewImport, alerts: viewAlerts, family: viewFamily, settings: viewSettings };
 window.addEventListener('hashchange', render);
 
 /* ---------- site notifications: polling, badge, browser notifications ---------- */
@@ -377,8 +401,8 @@ async function pollNotifications() {
   if (!ME || ME.role === 'tenant') return;
   try {
     NOTIF = await api('/notifications');
-    const badge = $('#notifbadge');
-    if (badge) { badge.textContent = NOTIF.unread; badge.hidden = NOTIF.unread === 0; }
+    // two of them now: the desktop sidebar and the phone tab bar
+    document.querySelectorAll('.notifbadge').forEach((b) => { b.textContent = NOTIF.unread; b.hidden = NOTIF.unread === 0; });
     // fire browser notifications for anything newer than the last one we showed
     const lastShown = Number(localStorage.getItem('fh_last_notif') || 0);
     const fresh = NOTIF.items.filter((n) => !n.read && n.id > lastShown);
@@ -415,26 +439,50 @@ function render() {
   const page = (location.hash || '#dashboard').slice(1);
   const fn = routes[page] || viewDashboard;
   app.innerHTML = shell(page);
-  $('#logout').onclick = async () => { await api('/auth/logout', { method: 'POST' }); ME = null; renderAuth(); };
+  app.querySelectorAll('[data-logout]').forEach((b) => (b.onclick = async () => { await api('/auth/logout', { method: 'POST' }); ME = null; renderAuth(); }));
+  const sheet = $('#moresheet');
+  const closeSheet = () => (sheet.hidden = true);
+  $('#moretab').onclick = () => (sheet.hidden = !sheet.hidden);
+  sheet.querySelectorAll('[data-close], .sheetlink').forEach((x) => x.addEventListener('click', closeSheet));
   fn($('#page'));
   pollNotifications();
 }
+const NAV = [
+  ['dashboard', '⌂', 'Dashboard'], ['money', '₤', 'Budget & expenses'], ['bills', '☰', 'Bills'],
+  ['search', '⌕', 'Search'],
+  ['vehicles', '⛟', 'Vehicles'], ['properties', '⌂', 'Properties'], ['acte', '❏', 'Acte'], ['lists', '☑', 'Lists'],
+  ['import', '⇪', 'Bank import'], ['alerts', '◉', 'Alerts'], ['family', '☺', 'Family'], ['settings', '⚙', 'Settings'],
+];
+// the four that earn a permanent spot on a phone; everything else lives behind "More".
+// Alerts is here on purpose: its badge used to sit ~680px off-screen in the old scrolling strip,
+// which made the whole alerts feature invisible on a phone.
+const TABS = [['dashboard', '⌂', 'Dashboard'], ['money', '₤', 'Money'], ['bills', '☰', 'Bills'], ['alerts', '◉', 'Alerts']];
+const badgeHtml = () => `<span class="notifbadge" ${NOTIF.unread ? '' : 'hidden'}>${NOTIF.unread}</span>`;
 function shell(active) {
-  const links = [
-    ['dashboard', '⌂', 'Dashboard'], ['money', '₤', 'Budget & expenses'], ['bills', '☰', 'Bills'],
-    ['vehicles', '⛟', 'Vehicles'], ['properties', '⌂', 'Properties'], ['acte', '❏', 'Acte'], ['lists', '☑', 'Lists'], ['import', '⇪', 'Bank import'],
-    ['alerts', '◉', `Alerts<span id="notifbadge" class="notifbadge" ${NOTIF.unread ? '' : 'hidden'}>${NOTIF.unread}</span>`],
-    ['family', '☺', 'Family'], ['settings', '⚙', 'Settings'],
-  ];
+  const inTabs = (k) => TABS.some(([t]) => t === k);
   return `<div class="shell">
     <nav class="sidebar">
       <div class="brand">Family Hub<small>${esc(FAMILY.name)}</small></div>
-      ${links.map(([k, ic, l]) => `<a class="navlink ${k === active ? 'active' : ''}" href="#${k}"><span aria-hidden="true">${ic}</span>${l}</a>`).join('')}
+      ${NAV.map(([k, ic, l]) => `<a class="navlink ${k === active ? 'active' : ''}" href="#${k}"><span aria-hidden="true">${ic}</span>${l}${k === 'alerts' ? badgeHtml() : ''}</a>`).join('')}
       <div class="spacer"></div>
       <a class="whoami row" href="#settings" style="text-decoration:none;color:inherit;gap:8px">${avatarHtml(ME)}<span><b>${esc(ME.name)}</b>${tr(ME.role)} · ${esc(ME.email || '')}</span></a>
-      <button class="navlink" id="logout">↩ Sign out</button>
+      <button class="navlink" data-logout>↩ Sign out</button>
     </nav>
     <main class="main" id="page"></main>
+    <nav class="tabbar">
+      ${TABS.map(([k, ic, l]) => `<a class="tab ${k === active ? 'active' : ''}" href="#${k}">
+        <span class="ic" aria-hidden="true">${ic}${k === 'alerts' ? badgeHtml() : ''}</span><span class="tl">${l}</span></a>`).join('')}
+      <button class="tab ${inTabs(active) ? '' : 'active'}" id="moretab"><span class="ic" aria-hidden="true">⋯</span><span class="tl">More</span></button>
+    </nav>
+    <div class="sheet" id="moresheet" hidden>
+      <div class="sheetbg" data-close></div>
+      <div class="sheetbody">
+        <div class="sheetgrid">
+          ${NAV.filter(([k]) => !inTabs(k)).map(([k, ic, l]) => `<a class="sheetlink ${k === active ? 'active' : ''}" href="#${k}"><span class="ic" aria-hidden="true">${ic}</span>${l}</a>`).join('')}
+        </div>
+        <button class="btn ghost" style="width:100%;margin-top:12px" data-logout>↩ Sign out</button>
+      </div>
+    </div>
   </div>`;
 }
 
@@ -684,7 +732,19 @@ async function viewDashboard(el) {
   const spentMap = Object.fromEntries(budgets.spent.map((s) => [s.category, s.spent]));
   const scopeNote = DASH_VIEW === 'all' ? '' : ` <span class="muted">· ${esc((members.find((m) => String(m.id) === String(DASH_VIEW)) || {}).name || '')}</span>`;
   const periodLabel = PERIOD_LABELS[DASH_MONTHS];
+  // a brand-new family lands on a dashboard of zeroes with nothing telling them where to begin
+  const blank = !reminders.length && !stats.byCategory.length && !stats.income && !stats.spent && !budgets.budgets.length;
   $('#dash').innerHTML = `
+    ${blank ? `<section class="card" style="margin-bottom:18px">
+      <h3>Welcome — start here</h3>
+      <p class="muted" style="margin-top:0">Nothing is set up yet. Add any one of these and this page fills in.</p>
+      <div class="row" style="flex-wrap:wrap;gap:8px">
+        <a class="btn small" href="#bills">Add a bill</a>
+        <a class="btn ghost small" href="#vehicles">Add your car</a>
+        <a class="btn ghost small" href="#properties">Add a property</a>
+        <a class="btn ghost small" href="#money">Log an expense</a>
+        <a class="btn ghost small" href="#family">Invite the family</a>
+      </div></section>` : ''}
     <section>
       <h2>Coming up — next 60 days${scopeNote}</h2>
       ${reminders.length ? `<div class="ribbon">${reminders.map((r) => `
@@ -864,10 +924,10 @@ async function moneyExpenses(body, f = {}) {
   const total = rows.reduce((s, e) => s + e.amount, 0);
   const reload = (patch) => moneyExpenses(body, { ...flt, ...patch });
   body.innerHTML = `
-    ${canWrite() ? `<div class="card"><h3>Add expense</h3><form id="expform" class="formgrid">
+    ${canWrite() ? addBox('Add expense', `<form id="expform" class="formgrid">
       ${expenseFormFields(members, properties, vehicles)}
-      <button class="btn">Add expense</button></form></div>` : ''}
-    <div class="card" style="margin-top:16px"><h3>Recurring expenses</h3>
+      <button class="btn">Add expense</button></form>`) : ''}
+    <details class="card addbox" style="margin-top:16px" ${wideScreen() ? 'open' : ''}><summary><span class="plus" aria-hidden="true">+</span> Recurring expenses</summary><div class="addbody">
       <p class="muted" style="margin-top:0">Fixed monthly costs that aren't bills — logged automatically every month on the chosen day.</p>
       ${recurring.length ? `<table><tbody>${recurring.map((r) => `<tr style="${r.active ? '' : 'opacity:.55'}">
         <td><b>${esc(r.note || tr(r.category))}</b> <span class="muted">· ${tr(r.category)} · ${esc(r.user_name || tr('whole family'))} · ${tr('day')} ${r.day}${r.property_name ? ` · ⌂ ${esc(r.property_name)}` : ''}${r.vehicle_name ? ` · ⛟ ${esc(r.vehicle_name)}` : ''}</span>${r.active ? '' : ' <span class="badge role">paused</span>'}</td>
@@ -884,7 +944,7 @@ async function moneyExpenses(body, f = {}) {
           ${properties.map((p) => `<option value="property:${p.id}">⌂ ${esc(p.name)}</option>`).join('')}
           ${vehicles.map((v) => `<option value="vehicle:${v.id}">⛟ ${esc(v.name)}</option>`).join('')}</select></div>` : ''}
         <button class="btn small">Add recurring</button></form>` : ''}
-    </div>
+    </div></details>
     <div class="card" style="margin-top:16px">
       <div class="row" style="justify-content:space-between;gap:10px"><h3 style="margin:0">Expenses</h3><span class="amount"><b>${money(total)}</b></span></div>
       <div class="row" style="gap:8px;margin:10px 0;flex-wrap:wrap">
@@ -1247,9 +1307,9 @@ async function viewBills(el) {
   const t = today();
   const recurLabel = (b) => (RECUR_OPTS.find(([v]) => v === recurValue(b)) || [])[1];
   el.innerHTML = `<div class="pagehead"><div><h1>Bills & invoices</h1><p>Electricity, gas, internet, water, taxes — with due dates, owner, attachments and payment history. Auto-paid subscriptions are marked paid automatically once due.</p></div></div>
-    ${canWrite() ? `<div class="card"><h3>Add bill</h3><form id="billform" class="formgrid">
+    ${canWrite() ? addBox('Add bill', `<form id="billform" class="formgrid">
       ${billFormFields(members, properties, vehicles)}
-      <button class="btn">Add bill</button></form></div>` : ''}
+      <button class="btn">Add bill</button></form>`) : ''}
     <div class="card" style="margin-top:16px" id="billlist">
       ${bills.length ? `<table class="cards"><thead><tr><th>Bill</th><th>Owner</th><th>Due</th><th class="right">Amount</th><th>Status</th><th>Invoice</th><th></th></tr></thead><tbody>
       ${bills.map((b) => {
@@ -1546,11 +1606,11 @@ async function renderTenantBox(box, p) {
 
 /* shared entity helpers */
 function entityForm(id, title, fields) {
-  return `<div class="card"><h3>${title}</h3><form id="${id}" class="formgrid">
+  return addBox(title, `<form id="${id}" class="formgrid">
     ${fields.map(([n, l, t, ph]) => t === 'select'
       ? `<div><label>${l}</label><select name="${n}">${ph.map(([v, lab]) => `<option value="${v}">${esc(lab)}</option>`).join('')}</select></div>`
       : `<div><label>${l}</label><input name="${n}" type="${t}" step="${t === 'number' ? 'any' : ''}" placeholder="${ph}" ${n === 'name' ? 'required' : ''}></div>`).join('')}
-    <button class="btn">Add</button></form></div>`;
+    <button class="btn">Add</button></form>`);
 }
 function bindEntityForm(id, route, refresh) {
   const f = document.getElementById(id);
@@ -1663,14 +1723,14 @@ async function viewActe(el) {
     ...properties.map((p) => ['property:' + p.id, tr('Property') + ': ' + p.name])];
   const belongsTo = (d) => d.person_name ? `${tr('Person')}: ${esc(d.person_name)}` : d.vehicle_name ? `${tr('Vehicle')}: ${esc(d.vehicle_name)}` : d.property_name ? `${tr('Property')}: ${esc(d.property_name)}` : tr('Family');
   el.innerHTML = `<div class="pagehead"><div><h1>Acte</h1><p>ID cards, passports, certificates, talon auto, contracts — linked to a person, vehicle or property, with expiry reminders and scans.</p></div></div>
-    ${canWrite() ? `<div class="card"><h3>Add document</h3><form id="docform" class="formgrid">
+    ${canWrite() ? addBox('Add document', `<form id="docform" class="formgrid">
       <div><label>Name</label><input name="name" placeholder="Carte de identitate, Pasaport…" required></div>
       <div><label>Series / number</label><input name="number" placeholder="optional"></div>
       <div><label>Belongs to</label><select name="link">${linkOpts.map(([v, l]) => `<option value="${v}">${esc(l)}</option>`).join('')}</select></div>
       <div><label>Expiry date</label><input name="expiry_date" type="date"></div>
       <div><label>Notes</label><input name="notes" placeholder="optional"></div>
       <div><label>Scan (PDF or photo)</label><input name="file" type="file" accept=".pdf,image/*"></div>
-      <button class="btn">Add document</button></form></div>` : ''}
+      <button class="btn">Add document</button></form>`) : ''}
     <div class="card" style="margin-top:16px">
       ${docs.length ? `<table><thead><tr><th>Document</th><th>Belongs to</th><th>Expires</th><th>Scan</th><th></th></tr></thead><tbody>
         ${docs.map((d) => {
@@ -1897,6 +1957,42 @@ async function viewImport(el) {
       } catch (err) { toast(err.message); }
     };
   }
+}
+
+/* ---------- search ---------- */
+let SEARCH_Q = '';
+const SEARCH_KINDS = { expense: 'Expense', income: 'Income', bill: 'Bill', document: 'Document', credit: 'Credit', vehicle: 'Vehicle', property: 'Property', list: 'List' };
+async function viewSearch(el) {
+  el.innerHTML = `<div class="pagehead"><div><h1>Search</h1><p>Across expenses, income, bills, acte, credits, cars, properties and lists.</p></div></div>
+    <div class="card">
+      <input id="sq" type="search" placeholder="Digi, pasaport, Kaufland…" value="${esc(SEARCH_Q)}" autocomplete="off" style="font-size:16px">
+      <div id="sres" style="margin-top:12px"></div>
+    </div>`;
+  const box = $('#sres'), input = $('#sq');
+  const run = async () => {
+    const q = input.value.trim();
+    SEARCH_Q = q;
+    if (q.length < 2) { box.innerHTML = `<p class="muted">Type at least 2 characters.</p>`; return; }
+    const { results } = await api('/search?q=' + encodeURIComponent(q));
+    if (!results.length) { box.innerHTML = `<div class="empty"><b>Nothing found</b>No match for "${esc(q)}".</div>`; return; }
+    box.innerHTML = `<p class="muted">${results.length} ${tr(results.length === 1 ? 'result' : 'results')}</p>
+      <table class="cards"><tbody>${results.map((r) => `<tr>
+        <td data-label="Type"><span class="badge role">${tr(SEARCH_KINDS[r.kind] || r.kind)}</span></td>
+        <td><b>${esc(r.title || '')}</b>${r.sub ? `<br><span class="muted">${esc(r.sub)}</span>` : ''}</td>
+        <td data-label="Date">${r.date ? fdate(r.date) : ''}</td>
+        <td class="right amount" data-label="Amount">${r.amount != null ? money(r.amount) : ''}</td>
+        <td class="right"><a class="btn ghost small" href="#${r.tab}" data-go="${r.kind}">${tr('View')}</a></td>
+      </tr>`).join('')}</tbody></table>`;
+    // an expense result lands on the Expenses tab already filtered to what was searched
+    box.querySelectorAll('[data-go]').forEach((a) => (a.onclick = () => {
+      const k = a.dataset.go;
+      if (k === 'expense' || k === 'income' || k === 'credit') PENDING_MONEY_TAB = k === 'expense' ? 'expenses' : k === 'income' ? 'income' : 'credits';
+      if (k === 'expense') PENDING_EXPENSE_FILTER = { q: SEARCH_Q, month: 'all', who: 'all', cat: 'all' };
+    }));
+  };
+  input.oninput = () => { clearTimeout(input._h); input._h = setTimeout(run, 250); };
+  input.focus();
+  if (SEARCH_Q) run(); else box.innerHTML = `<p class="muted">Type at least 2 characters.</p>`;
 }
 
 /* ---------- alerts (site notifications) ---------- */
@@ -2184,6 +2280,19 @@ document.addEventListener('input', (e) => {
   if (!t.classList || !t.classList.contains('dateinput')) return;
   const d = t.value.replace(/\D/g, '').slice(0, 8);
   t.value = d.length > 4 ? `${d.slice(0, 2)}/${d.slice(2, 4)}/${d.slice(4)}` : d.length > 2 ? `${d.slice(0, 2)}/${d.slice(2)}` : d;
+});
+
+/* money fields: a number input can't carry thousands separators, so echo the grouped value under
+   it. 247500 and 24750 are one keystroke and one glance apart otherwise. */
+const AMOUNT_FIELDS = 'input[type="number"][name="amount"], input[type="number"][name="principal"], input[type="number"][name="target"], input[type="number"][name="mortgage_payment"], input[type="number"][name="rent_amount"]';
+document.addEventListener('input', (e) => {
+  const t = e.target;
+  if (!t.matches || !t.matches(AMOUNT_FIELDS) || !t.parentElement) return;
+  let hint = t.parentElement.querySelector(':scope > .amounthint');
+  const v = Number(t.value);
+  if (!t.value || !isFinite(v) || v === 0) { if (hint) hint.remove(); return; }
+  if (!hint) { hint = document.createElement('small'); hint.className = 'amounthint'; t.parentElement.appendChild(hint); }
+  hint.textContent = money(v);
 });
 
 boot();

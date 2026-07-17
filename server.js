@@ -455,6 +455,57 @@ app.delete('/api/expenses/:id', auth, canWrite, (req, res) => {
   })();
   res.json({ ok: true });
 });
+// ---------- search ----------
+// One box over everything a household actually goes looking for later ("that Digi invoice from
+// March"). Family-scoped; each source capped so one noisy table cannot swamp the rest.
+app.get('/api/search', auth, (req, res) => {
+  const q = String(req.query.q || '').trim().toLowerCase();
+  if (q.length < 2) return res.json({ results: [] });
+  const fid = req.user.family_id;
+  const like = `%${q}%`;
+  const results = [];
+  const add = (kind, tab, rows, map) => { for (const r of rows) results.push({ kind, tab, ...map(r) }); };
+
+  add('expense', 'money', db.prepare(`
+    SELECT e.id, e.date, e.note, e.category, e.amount, u.name AS who FROM expenses e LEFT JOIN users u ON u.id = e.user_id
+    WHERE e.family_id = ? AND (lower(e.note) LIKE ? OR lower(e.category) LIKE ?) ORDER BY e.date DESC LIMIT 25
+  `).all(fid, like, like), (r) => ({ id: r.id, title: r.note || r.category, sub: [r.category, r.who].filter(Boolean).join(' · '), date: r.date, amount: r.amount }));
+
+  add('income', 'money', db.prepare(`
+    SELECT i.id, i.date, i.source, i.amount, u.name AS who FROM incomes i LEFT JOIN users u ON u.id = i.user_id
+    WHERE i.family_id = ? AND lower(i.source) LIKE ? ORDER BY i.date DESC LIMIT 10
+  `).all(fid, like), (r) => ({ id: r.id, title: r.source, sub: r.who || '', date: r.date, amount: r.amount }));
+
+  add('bill', 'bills', db.prepare(`
+    SELECT id, name, provider, due_date, amount, status FROM bills
+    WHERE family_id = ? AND (lower(name) LIKE ? OR lower(provider) LIKE ?) ORDER BY due_date DESC LIMIT 15
+  `).all(fid, like, like), (r) => ({ id: r.id, title: r.name, sub: [r.provider, r.status === 'paid' ? 'paid' : null].filter(Boolean).join(' · '), date: r.due_date, amount: r.amount }));
+
+  add('document', 'acte', db.prepare(`
+    SELECT d.id, d.name, d.number, d.expiry_date, u.name AS person, v.name AS veh, p.name AS prop FROM documents d
+    LEFT JOIN users u ON u.id = d.user_id LEFT JOIN vehicles v ON v.id = d.vehicle_id LEFT JOIN properties p ON p.id = d.property_id
+    WHERE d.family_id = ? AND (lower(d.name) LIKE ? OR lower(COALESCE(d.number,'')) LIKE ? OR lower(COALESCE(d.notes,'')) LIKE ?) LIMIT 15
+  `).all(fid, like, like, like), (r) => ({ id: r.id, title: r.name, sub: [r.number, r.person || r.veh || r.prop].filter(Boolean).join(' · '), date: r.expiry_date }));
+
+  add('credit', 'money', db.prepare(`
+    SELECT id, name, lender FROM credits WHERE family_id = ? AND (lower(name) LIKE ? OR lower(COALESCE(lender,'')) LIKE ?) LIMIT 10
+  `).all(fid, like, like), (r) => ({ id: r.id, title: r.name, sub: r.lender || '' }));
+
+  add('vehicle', 'vehicles', db.prepare(`
+    SELECT id, name, plate FROM vehicles WHERE family_id = ? AND (lower(name) LIKE ? OR lower(COALESCE(plate,'')) LIKE ?) LIMIT 10
+  `).all(fid, like, like), (r) => ({ id: r.id, title: r.name, sub: r.plate || '' }));
+
+  add('property', 'properties', db.prepare(`
+    SELECT id, name, address FROM properties WHERE family_id = ? AND (lower(name) LIKE ? OR lower(COALESCE(address,'')) LIKE ?) LIMIT 10
+  `).all(fid, like, like), (r) => ({ id: r.id, title: r.name, sub: r.address || '' }));
+
+  add('list', 'lists', db.prepare(`
+    SELECT id, title, list, note FROM list_items WHERE family_id = ? AND (lower(title) LIKE ? OR lower(COALESCE(note,'')) LIKE ?) LIMIT 10
+  `).all(fid, like, like), (r) => ({ id: r.id, title: r.title, sub: r.list }));
+
+  res.json({ results });
+});
+
 // ---------- recurring expenses ----------
 // the fixed monthly costs that are not a bill (no due date to chase) and not a credit.
 // Logged on their day each month, through the same path as a hand-entered expense so a linked

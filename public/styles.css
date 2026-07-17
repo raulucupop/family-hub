@@ -201,21 +201,71 @@ canvas { max-width: 100%; }
 }
 .dot { display: inline-block; width: 8px; height: 8px; border-radius: 999px; background: var(--amber); }
 
+/* collapsible "Add …" cards — closed on a phone so the page opens on your data, not a form */
+details.addbox > summary {
+  list-style: none; cursor: pointer; display: flex; align-items: center; gap: 8px;
+  font-family: var(--display); font-weight: 600; font-size: 1rem; color: var(--ink);
+}
+details.addbox > summary::-webkit-details-marker { display: none; }
+details.addbox > summary .plus {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; border-radius: 999px; flex-shrink: 0;
+  background: var(--accent-soft); color: var(--accent); font-size: 16px; line-height: 1;
+}
+details.addbox[open] > summary { margin-bottom: 12px; }
+details.addbox[open] > summary .plus { transform: rotate(45deg); } /* a + becomes an × when open */
+
+/* an amount echoed back formatted, so 247500 and 24750 stop looking alike */
+.amounthint { display: block; font-family: var(--mono); font-size: 11.5px; color: var(--ink-soft); margin-top: 3px; }
+
+/* bottom tab bar + "More" sheet: phone only, hidden on desktop where the sidebar does the job */
+.tabbar, .sheet { display: none; }
+
 /* mobile */
 @media (max-width: 860px) {
   .shell { grid-template-columns: 1fr; }
+  /* the strip that used to hold the nav is now just the brand: 1392px of links in a 375px
+     viewport meant one was reachable and the alert badge sat ~680px off-screen. */
   .sidebar {
     position: sticky; top: 0; z-index: 40; height: auto;
     flex-direction: row; align-items: center; gap: 2px;
-    overflow-x: auto; padding: 8px 10px;
-    scrollbar-width: none; -webkit-overflow-scrolling: touch;
+    overflow: hidden; padding: 8px 12px;
   }
-  .sidebar::-webkit-scrollbar { display: none; }
-  .brand { margin: 0 8px 0 2px; font-size: 1.02rem; flex-shrink: 0; }
+  .brand { margin: 0; font-size: 1.02rem; flex-shrink: 0; }
   .brand small { display: none; }
-  .navlink { padding: 10px 12px; white-space: nowrap; min-height: 42px; font-size: 14px; flex-shrink: 0; }
-  .whoami, .sidebar .spacer { display: none; }
-  .main { padding: 16px 12px 70px; }
+  .sidebar .navlink, .whoami, .sidebar .spacer { display: none; } /* nav lives in the tab bar now */
+
+  .tabbar {
+    display: flex; position: fixed; bottom: 0; left: 0; right: 0; z-index: 45;
+    background: var(--card); border-top: 1px solid var(--line);
+    padding-bottom: env(safe-area-inset-bottom, 0); /* clears the iPhone home indicator */
+  }
+  .tabbar .tab {
+    flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+    padding: 7px 2px 6px; min-height: 54px; border: 0; background: transparent;
+    color: var(--ink-soft); text-decoration: none; font-size: 11px; font-weight: 600;
+  }
+  .tabbar .tab .ic { font-size: 17px; line-height: 1; position: relative; }
+  .tabbar .tab.active { color: var(--accent); }
+  .tabbar .tab .notifbadge { position: absolute; top: -6px; left: 10px; margin: 0; padding: 0 5px; font-size: 10px; }
+
+  .sheet { display: block; position: fixed; inset: 0; z-index: 50; }
+  .sheet[hidden] { display: none; } /* a plain display:block here would beat the UA's [hidden] rule */
+  .sheet .sheetbg { position: absolute; inset: 0; background: rgba(0,0,0,.35); }
+  .sheet .sheetbody {
+    position: absolute; left: 0; right: 0; bottom: 0;
+    background: var(--card); border-radius: 14px 14px 0 0; padding: 14px 14px calc(14px + env(safe-area-inset-bottom, 0));
+    box-shadow: 0 -8px 30px rgba(0,0,0,.18);
+  }
+  .sheet .sheetgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .sheet .sheetlink {
+    display: flex; align-items: center; gap: 9px; padding: 12px 10px; min-height: 46px;
+    border: 1px solid var(--line); border-radius: 10px; text-decoration: none; color: var(--ink); font-size: 14px; font-weight: 600;
+  }
+  .sheet .sheetlink.active { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+  .sheet .sheetlink .ic { font-size: 16px; }
+
+  .main { padding: 16px 12px 78px; } /* clear of the fixed tab bar */
   .grid2, .grid3, .kpi { grid-template-columns: 1fr; }
   .pagehead { flex-direction: column; align-items: flex-start; gap: 8px; margin-bottom: 14px; }
   h1 { font-size: 1.45rem; }
@@ -280,7 +330,7 @@ canvas { max-width: 100%; }
   details.entity .body { padding: 12px 14px; }
   .chartbox { height: 200px; }
   .deadgrid { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); }
-  .toast { width: calc(100% - 32px); text-align: center; bottom: 14px; }
+  .toast { width: calc(100% - 32px); text-align: center; bottom: 74px; } /* above the tab bar */
 }
 @media (max-width: 480px) {
   .formgrid { grid-template-columns: 1fr; }
