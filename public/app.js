@@ -125,6 +125,7 @@ const RO = {
   // expenses
   'Link to (optional)': 'Asociază cu (opțional)', 'Nothing': 'Nimic', '● All time': '● Tot timpul',
   'Expense added': 'Cheltuială adăugată', 'Delete this expense?': 'Ștergi această cheltuială?',
+  'Deleted': 'Șters', 'Undo': 'Anulează',
   'Expense updated': 'Cheltuială actualizată',
   'Recurring expenses': 'Cheltuieli recurente',
   "Fixed monthly costs that aren't bills — logged automatically every month on the chosen day.": 'Costuri lunare fixe care nu sunt facturi — înregistrate automat în fiecare lună în ziua aleasă.',
@@ -342,10 +343,51 @@ const today = () => new Date().toISOString().slice(0, 10);
 const thisMonth = () => today().slice(0, 7);
 const canWrite = () => ME && ME.role !== 'child';
 
-function toast(msg) {
+function toast(msg, action) {
   const t = $('#toast');
-  t.textContent = tr(msg); t.hidden = false;
-  clearTimeout(t._h); t._h = setTimeout(() => (t.hidden = true), 2600);
+  clearTimeout(t._h);
+  if (action) {
+    // toast with an inline button (used for Undo)
+    t.textContent = '';
+    const span = document.createElement('span'); span.textContent = tr(msg);
+    const btn = document.createElement('button'); btn.className = 'toastbtn'; btn.textContent = tr(action.label || 'Undo');
+    btn.onclick = () => { t.hidden = true; clearTimeout(t._h); action.onAction(); };
+    t.append(span, btn);
+    t.hidden = false;
+    t._h = setTimeout(() => (t.hidden = true), action.duration || 5000);
+  } else {
+    t.textContent = tr(msg); t.hidden = false;
+    t._h = setTimeout(() => (t.hidden = true), 2600);
+  }
+}
+// Undo-on-delete: hide the item now, delete on the server only after the Undo window closes.
+// Clicking Undo cancels it — nothing was ever deleted, so no re-creation and no lost links.
+// A second delete (or leaving the page) commits any still-pending one first.
+let _pendingDelete = null;
+function undoableDelete({ message = 'Deleted', hide, restore, commit }) {
+  if (_pendingDelete) _pendingDelete.flush();
+  hide();
+  let settled = false;
+  const timer = setTimeout(doCommit, 5000);
+  function doCommit() {
+    if (settled) return; settled = true; _pendingDelete = null; clearTimeout(timer);
+    Promise.resolve().then(commit).catch((err) => { restore(); toast(err.message); });
+  }
+  _pendingDelete = { flush: doCommit };
+  toast(message, { label: 'Undo', duration: 5000, onAction: () => {
+    if (settled) return; settled = true; _pendingDelete = null; clearTimeout(timer); restore();
+  } });
+}
+function flushPendingDelete() { if (_pendingDelete) _pendingDelete.flush(); }
+// hide a table row (and its paired edit row, if any) for the undo window, with a way to bring it back
+function rowHide(btn) {
+  const row = btn.closest('tr');
+  const next = row && row.nextElementSibling;
+  const paired = next && /^(exprow-|row-)/.test(next.id || '') ? next : null;
+  return {
+    hide: () => { if (row) row.style.display = 'none'; if (paired) paired.style.display = 'none'; },
+    restore: () => { if (row) row.style.display = ''; if (paired) paired.style.display = ''; },
+  };
 }
 const registerLink = (code) => `${location.origin}/#register=${encodeURIComponent(code)}`;
 const inviteLink = () => registerLink(FAMILY.invite_code);
@@ -436,6 +478,7 @@ async function boot() {
   } catch { renderAuth(); }
 }
 function render() {
+  flushPendingDelete(); // a pending undo-delete commits before the page it lived on is torn down
   if (location.hash.startsWith('#reset=')) return renderReset();
   if (!ME) return renderAuth();
   applyTheme(); applyLang();
@@ -1073,9 +1116,9 @@ async function moneyExpenses(body, f = {}) {
       catch (err) { toast(err.message); }
     };
   }));
-  body.querySelectorAll('[data-del]').forEach((b) => (b.onclick = async () => {
-    if (!confirm('Delete this expense?')) return;
-    await api('/expenses/' + b.dataset.del, { method: 'DELETE' }); reload();
+  body.querySelectorAll('[data-del]').forEach((b) => (b.onclick = () => {
+    const { hide, restore } = rowHide(b);
+    undoableDelete({ hide, restore, commit: () => api('/expenses/' + b.dataset.del, { method: 'DELETE' }).then(() => reload()) });
   }));
 }
 async function moneyIncome(body, who = 'all') {
@@ -1129,8 +1172,9 @@ async function moneyIncome(body, who = 'all') {
     if (!confirm('Delete this recurring income? Already-logged months stay.')) return;
     await api('/recurring-incomes/' + b.dataset.rdel, { method: 'DELETE' }); moneyIncome(body, who);
   }));
-  body.querySelectorAll('[data-del]').forEach((b) => (b.onclick = async () => {
-    await api('/incomes/' + b.dataset.del, { method: 'DELETE' }); moneyIncome(body, who);
+  body.querySelectorAll('[data-del]').forEach((b) => (b.onclick = () => {
+    const { hide, restore } = rowHide(b);
+    undoableDelete({ hide, restore, commit: () => api('/incomes/' + b.dataset.del, { method: 'DELETE' }).then(() => moneyIncome(body, who)) });
   }));
 }
 async function moneyBudgets(body, month = thisMonth()) {
@@ -1220,9 +1264,9 @@ async function moneySavings(body) {
     try { await api('/savings', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) }); toast('Saved'); moneySavings(body); }
     catch (err) { toast(err.message); }
   });
-  body.querySelectorAll('[data-del]').forEach((b) => (b.onclick = async () => {
-    if (!confirm('Delete this entry?')) return;
-    await api('/savings/' + b.dataset.del, { method: 'DELETE' }); moneySavings(body);
+  body.querySelectorAll('[data-del]').forEach((b) => (b.onclick = () => {
+    const { hide, restore } = rowHide(b);
+    undoableDelete({ hide, restore, commit: () => api('/savings/' + b.dataset.del, { method: 'DELETE' }).then(() => moneySavings(body)) });
   }));
 }
 
@@ -1314,8 +1358,9 @@ function creditCard(c, members, properties, refresh) {
       ${pays.map((p) => `<tr><td>${fdate(p.date)}</td><td>${esc(p.paid_by_name || '')}</td><td class="right amount">${money(p.amount)}</td>
         <td class="right">${canWrite() ? `<button class="btn danger small" data-paydel="${p.id}">✕</button>` : ''}</td></tr>`).join('')}</tbody></table>`
       : `<p class="muted">No anticipated payments yet.</p>`;
-    box.querySelectorAll('[data-paydel]').forEach((b) => (b.onclick = async () => {
-      await api(`/credits/${c.id}/payments/${b.dataset.paydel}`, { method: 'DELETE' }); refresh();
+    box.querySelectorAll('[data-paydel]').forEach((b) => (b.onclick = () => {
+      const { hide, restore } = rowHide(b);
+      undoableDelete({ hide, restore, commit: () => api(`/credits/${c.id}/payments/${b.dataset.paydel}`, { method: 'DELETE' }).then(() => refresh()) });
     }));
   };
   wrap.addEventListener('toggle', () => { if (wrap.open && !wrap._loaded) { wrap._loaded = true; loadPays(); } });
@@ -1430,9 +1475,9 @@ async function viewBills(el) {
       catch (err) { toast(err.message); }
     };
   }));
-  el.querySelectorAll('[data-del]').forEach((b) => (b.onclick = async () => {
-    if (!confirm('Delete this bill and its history?')) return;
-    await api('/bills/' + b.dataset.del, { method: 'DELETE' }); viewBills(el);
+  el.querySelectorAll('[data-del]').forEach((b) => (b.onclick = () => {
+    const { hide, restore } = rowHide(b);
+    undoableDelete({ hide, restore, commit: () => api('/bills/' + b.dataset.del, { method: 'DELETE' }).then(() => viewBills(el)) });
   }));
   el.querySelectorAll('[data-hist]').forEach((b) => (b.onclick = async () => {
     const row = $('#row-' + b.dataset.hist);
@@ -1741,8 +1786,9 @@ function entityCard(item, cfg) {
         <td>${esc(r.note || '')}</td>${cfg.showRecordUser ? `<td>${esc(r.user_name || (isIncome(r) ? '—' : ''))}</td>` : ''}<td class="right amount" ${isIncome(r) ? 'style="color:#2f6b5a"' : ''}>${isIncome(r) ? '+' : ''}${money(r.amount)}</td>
         <td class="right">${canWrite() ? `<button class="btn danger small" data-recdel="${r.id}">✕</button>` : ''}</td></tr>`).join('')}</tbody></table>`
       : `<p class="muted">No records yet.</p>`;
-    box.querySelectorAll('[data-recdel]').forEach((b) => (b.onclick = async () => {
-      await api(`/${cfg.route}/${item.id}/records/${b.dataset.recdel}`, { method: 'DELETE' }); loadRecords();
+    box.querySelectorAll('[data-recdel]').forEach((b) => (b.onclick = () => {
+      const { hide, restore } = rowHide(b);
+      undoableDelete({ hide, restore, commit: () => api(`/${cfg.route}/${item.id}/records/${b.dataset.recdel}`, { method: 'DELETE' }).then(() => loadRecords()) });
     }));
   };
   wrap.addEventListener('toggle', () => {
@@ -1892,8 +1938,9 @@ async function viewLists(el, tab = 'buy') {
   el.querySelectorAll('[data-tog]').forEach((c) => (c.onchange = async () => {
     await api(`/lists/${c.dataset.tog}/toggle`, { method: 'POST' }); viewLists(el, tab);
   }));
-  el.querySelectorAll('[data-del]').forEach((b) => (b.onclick = async () => {
-    await api('/lists/' + b.dataset.del, { method: 'DELETE' }); viewLists(el, tab);
+  el.querySelectorAll('[data-del]').forEach((b) => (b.onclick = () => {
+    const { hide, restore } = rowHide(b);
+    undoableDelete({ hide, restore, commit: () => api('/lists/' + b.dataset.del, { method: 'DELETE' }).then(() => viewLists(el, tab)) });
   }));
 }
 

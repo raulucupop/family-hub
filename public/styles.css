@@ -164,7 +164,13 @@ td.right, th.right { text-align: right; }
 .toast {
   position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
   background: var(--sidebar); color: #fff; padding: 10px 18px; border-radius: 10px; font-size: 14px; z-index: 50;
+  display: flex; align-items: center; gap: 14px;
 }
+.toast .toastbtn {
+  background: transparent; border: 0; color: var(--accent); font-weight: 700; font-size: 14px;
+  padding: 2px 4px; text-transform: uppercase; letter-spacing: .03em;
+}
+:root[data-theme="dark"] .toast .toastbtn { color: #7fd0b6; } /* brand green is dim on the dark toast */
 .empty { text-align: center; color: var(--ink-soft); padding: 26px 10px; }
 .empty b { display: block; font-family: var(--display); font-size: 1.05rem; color: var(--ink); }
 details.entity { border: 1px solid var(--line); border-radius: 12px; background: var(--card); margin-bottom: 12px; }
