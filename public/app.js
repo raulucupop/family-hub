@@ -51,6 +51,11 @@ const RO = {
   'This month': 'Luna aceasta', 'Last 3 months': 'Ultimele 3 luni', 'Last 6 months': 'Ultimele 6 luni', 'Last 12 months': 'Ultimele 12 luni',
   'Whole family (total)': 'Toată familia (total)', 'Left over': 'Rămas', 'Income vs spending': 'Venituri vs cheltuieli',
   'Coming up — next 60 days': 'Urmează — următoarele 60 de zile', 'Nothing due soon': 'Nimic scadent curând',
+  'Show less': 'Arată mai puțin',
+  // (the KPI comparison sentence is written per language inside deltaHtml, not composed here)
+  // rent on the dashboard
+  'Rent this month': 'Chiria luna aceasta', 'due': 'scadentă', 'day late': 'zi întârziere', 'days late': 'zile întârziere',
+  'Open Properties': 'Deschide Proprietăți',
   // bills
   'Bills & invoices': 'Facturi', 'Add bill': 'Adaugă factură', 'Name': 'Nume', 'Provider': 'Furnizor', 'Due date': 'Scadență',
   'Repeats': 'Se repetă', 'Responsible person': 'Persoana responsabilă', 'Linked property': 'Proprietate asociată',
@@ -727,7 +732,10 @@ async function viewDashboard(el) {
   $('#dashview').onchange = (e) => { DASH_VIEW = e.target.value; viewDashboard(el); };
   $('#dashperiod').onchange = (e) => { DASH_MONTHS = Number(e.target.value); viewDashboard(el); };
   const userQ = DASH_VIEW === 'all' ? '' : `&user=${DASH_VIEW}`;
-  const [reminders, stats, budgets] = await Promise.all([api(`/reminders?days=60${userQ}`), api(`/stats?months=${DASH_MONTHS}${userQ}`), api('/budgets')]);
+  const [reminders, stats, budgets, rent, savings] = await Promise.all([
+    api(`/reminders?days=60${userQ}`), api(`/stats?months=${DASH_MONTHS}${userQ}`), api('/budgets'),
+    api('/rent-status').catch(() => []), api('/savings').catch(() => ({ goals: [] })),
+  ]);
   const net = stats.income - stats.spent;
   const spentMap = Object.fromEntries(budgets.spent.map((s) => [s.category, s.spent]));
   const scopeNote = DASH_VIEW === 'all' ? '' : ` <span class="muted">· ${esc((members.find((m) => String(m.id) === String(DASH_VIEW)) || {}).name || '')}</span>`;
@@ -747,19 +755,21 @@ async function viewDashboard(el) {
       </div></section>` : ''}
     <section>
       <h2>Coming up — next 60 days${scopeNote}</h2>
-      ${reminders.length ? `<div class="ribbon">${reminders.map((r) => `
-        <div class="stub ${remClass(r)}">
+      ${reminders.length ? `<div class="ribbon ${reminders.length > RIBBON_MAX ? 'clipped' : ''}" id="ribbon">${reminders.map((r, i) => `
+        <div class="stub ${remClass(r)} ${i >= RIBBON_MAX ? 'extra' : ''}">
           <div class="days">${daysLabel(r.days_left)}</div>
           <div class="what">${esc(r.label)}</div>
           <div class="who">${esc(r.entity || '')} · ${fdate(r.date)}${r.amount ? ` · <span class="amount">${money(r.amount)}</span>` : ''}</div>
-        </div>`).join('')}</div>`
+        </div>`).join('')}</div>
+        ${reminders.length > RIBBON_MAX ? `<button class="btn ghost small ribbonmore" id="rmore">+${reminders.length - RIBBON_MAX} ${tr('more')}</button>` : ''}`
       : `<div class="card empty"><b>Nothing due soon</b>${DASH_VIEW === 'all' ? 'Add bills, vehicle or property deadlines and they will line up here.' : 'Nothing assigned to this person is coming up.'}</div>`}
     </section>
     <section class="kpi" style="margin-top:18px">
-      <a class="card clickcard" href="#money" data-tab="income"><div class="label">${tr('Income')} · ${esc(tr(periodLabel))}</div><div class="value">${money(stats.income)}</div></a>
-      <a class="card clickcard" href="#money" data-tab="expenses"><div class="label">${tr('Spent')} · ${esc(tr(periodLabel))}</div><div class="value">${money(stats.spent)}</div></a>
-      <div class="card"><div class="label">Left over</div><div class="value ${net < 0 ? 'neg' : ''}">${money(net)}</div></div>
+      <a class="card clickcard" href="#money" data-tab="income"><div class="label">${tr('Income')} · ${esc(tr(periodLabel))}</div><div class="value">${money(stats.income)}</div>${deltaHtml(stats.income, stats.prev?.income, 'up-good')}</a>
+      <a class="card clickcard" href="#money" data-tab="expenses"><div class="label">${tr('Spent')} · ${esc(tr(periodLabel))}</div><div class="value">${money(stats.spent)}</div>${deltaHtml(stats.spent, stats.prev?.spent, 'up-bad')}</a>
+      <div class="card"><div class="label">Left over</div><div class="value ${net < 0 ? 'neg' : ''}">${money(net)}</div>${deltaHtml(net, (stats.prev?.income ?? 0) - (stats.prev?.spent ?? 0), 'up-good')}</div>
     </section>
+    ${rentHtml(rent)}
     <section class="grid2" style="margin-top:18px">
       <div class="card"><h3>${tr('Spending by category')} · ${esc(tr(periodLabel))}</h3><div class="chartbox"><canvas id="catChart"></canvas></div></div>
       <div class="card"><h3>Income vs spending</h3><div class="chartbox"><canvas id="trendChart"></canvas></div></div>
@@ -773,11 +783,67 @@ async function viewDashboard(el) {
           <div class="bar"><i class="${s > b.amount ? 'over' : ''}" style="width:${pct}%"></i></div></div>`;
       }).join('') : `<p class="muted">No budgets set for this month yet — set them in <a href="#money">Budget & expenses</a>.</p>`}
     </section>
+    ${goalsHtml(savings.goals)}
     <section class="card" id="dashcal" style="margin-top:18px"><p class="muted">Loading calendar…</p></section>`;
   $('#dash').querySelectorAll('[data-tab]').forEach((a) => a.addEventListener('click', () => { PENDING_MONEY_TAB = a.dataset.tab; }));
+  $('#rmore')?.addEventListener('click', (e) => {
+    const rb = $('#ribbon');
+    rb.classList.toggle('expanded');
+    const open = rb.classList.contains('expanded');
+    e.target.textContent = open ? tr('Show less') : `+${reminders.length - RIBBON_MAX} ${tr('more')}`;
+  });
   drawCharts(stats, DASH_VIEW, DASH_MONTHS);
   renderCalendar($('#dashcal'), true);
 }
+/* A number on its own says little: 5.589 spent is only meaningful next to what it usually is.
+   `sense` says which direction is good, so spending more reads amber and earning more reads green.
+   The sentence is written out per language rather than glued together from single words — the
+   dictionary is exact-match, and "more" already means "altele" ("+2 more" on the calendar). */
+function deltaHtml(now, before, sense) {
+  if (before == null || !isFinite(before) || Math.abs(before) < 0.005) return ''; // no baseline, no claim
+  const pct = Math.round(((now - before) / Math.abs(before)) * 100);
+  const ro = LANG === 'ro';
+  const period = DASH_MONTHS === 1
+    ? (ro ? 'luna trecută' : 'last month')
+    : (ro ? `precedentele ${DASH_MONTHS} luni` : `the previous ${DASH_MONTHS} months`);
+  if (pct === 0) return `<div class="delta">${ro ? 'la fel ca' : 'same as'} ${period}</div>`;
+  const up = pct > 0;
+  const good = sense === 'up-good' ? up : !up;
+  const word = ro ? (up ? 'mai mult' : 'mai puțin') : (up ? 'more' : 'less');
+  return `<div class="delta ${good ? 'good' : 'bad'}">${up ? '▲' : '▼'} ${Math.abs(pct)}% ${word} ${ro ? 'decât' : 'than'} ${period}</div>`;
+}
+/* the landlord's first question of the month, answered without opening the property */
+function rentHtml(rent) {
+  if (!rent || !rent.length || DASH_VIEW !== 'all') return '';
+  return `<section class="card" style="margin-top:18px"><h3>Rent this month</h3>
+    ${rent.map((r) => `<div class="row" style="justify-content:space-between;gap:10px;flex-wrap:wrap;padding:5px 0">
+      <span><b>${esc(r.property)}</b> <span class="muted">· ${tr('due')} ${fdate(r.due_date)}</span></span>
+      <span class="row" style="gap:8px"><span class="amount">${money(r.amount)}</span>
+        ${r.status === 'paid' ? `<span class="badge paid">${tr('paid')}</span>`
+          : r.status === 'pending' ? `<span class="badge role">${tr('confirmation pending')}</span>`
+          : r.days_late ? `<span class="badge late">${r.days_late} ${tr(r.days_late === 1 ? 'day late' : 'days late')}</span>`
+          : `<span class="badge unpaid">${tr('to pay')}</span>`}</span>
+    </div>`).join('')}
+    <p class="muted" style="margin:6px 0 0"><a href="#properties">${tr('Open Properties')} →</a></p></section>`;
+}
+/* goals only nudge you if you see them; they lived two clicks away under Money → Savings */
+function goalsHtml(goals) {
+  const open = (goals || []).filter((g) => !g.done
+    && (DASH_VIEW === 'all' || g.user_id == null || String(g.user_id) === String(DASH_VIEW)));
+  if (!open.length) return '';
+  return `<section class="card" style="margin-top:18px"><h3>${tr('Savings goals')}</h3>
+    ${open.slice(0, 4).map((g) => {
+      const pct = Math.min(100, Math.max(0, (g.saved / g.target) * 100));
+      return `<div style="margin-bottom:10px"><div class="row" style="justify-content:space-between;gap:8px">
+        <span>${esc(g.title)}${g.user_name ? ` <span class="muted">· ${esc(g.user_name)}</span>` : ''}${g.saved >= g.target ? ` <span class="badge paid">${tr('reached!')}</span>` : ''}</span>
+        <span class="amount muted">${money(g.saved)} / ${money(g.target)}</span></div>
+        <div class="bar"><i style="width:${pct}%"></i></div></div>`;
+    }).join('')}
+    ${open.length > 4 ? `<p class="muted" style="margin:0"><a href="#money">+${open.length - 4} ${tr('more')} →</a></p>` : ''}</section>`;
+}
+// on a phone the ribbon stacks vertically, so only the first few show until "+N more" is tapped —
+// 9 upcoming items used to mean 2018px of horizontal scroll in a 375px viewport, one item visible
+const RIBBON_MAX = 4;
 let PENDING_MONEY_TAB = null, PENDING_EXPENSE_FILTER = null;
 function drawCharts(stats, scopeView = 'all', scopeMonths = 1) {
   const c0 = getComputedStyle(document.documentElement).getPropertyValue('--ink-soft').trim();

@@ -97,6 +97,12 @@ label { display: block; font-size: 12.5px; font-weight: 600; color: var(--ink-so
 .stub.late::before { border-color: var(--red); }
 .stub.late .days { color: var(--red); }
 .stub.warn .days { color: var(--amber); }
+.ribbonmore { display: none; } /* desktop scrolls the ribbon; only a phone needs the toggle */
+
+/* KPI comparison line */
+.delta { font-size: 12px; margin-top: 3px; color: var(--ink-soft); }
+.delta.good { color: var(--ok); }
+.delta.bad { color: var(--amber); }
 
 /* numbers */
 .amount, .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
@@ -266,6 +272,17 @@ details.addbox[open] > summary .plus { transform: rotate(45deg); } /* a + become
   .sheet .sheetlink .ic { font-size: 16px; }
 
   .main { padding: 16px 12px 78px; } /* clear of the fixed tab bar */
+
+  /* "Coming up" stacks instead of scrolling sideways: 9 items were 2018px of horizontal content
+     in a 375px viewport, so exactly one was visible. Show the first few, rest behind "+N more". */
+  .ribbon { flex-direction: column; overflow-x: visible; gap: 8px; padding: 4px 0 6px; }
+  .ribbon .stub { min-width: 0; width: 100%; display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .ribbon .stub .days { font-size: 15px; min-width: 76px; }
+  .ribbon .stub .what { margin-top: 0; flex: 1; min-width: 110px; }
+  .ribbon .stub .who { width: 100%; padding-left: 86px; }
+  .ribbon.clipped .stub.extra { display: none; }
+  .ribbon.clipped.expanded .stub.extra { display: flex; }
+  .ribbonmore { display: block; width: 100%; }
   .grid2, .grid3, .kpi { grid-template-columns: 1fr; }
   .pagehead { flex-direction: column; align-items: flex-start; gap: 8px; margin-bottom: 14px; }
   h1 { font-size: 1.45rem; }

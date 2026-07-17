@@ -1221,6 +1221,23 @@ function ensureRentCharge(prop) {
 function familyProperty(req) {
   return db.prepare('SELECT * FROM properties WHERE id = ? AND family_id = ?').get(req.params.id, req.user.family_id);
 }
+// "has the tenant paid this month?" — a landlord's first question, and it used to live three
+// clicks deep inside the property card. One row per rented property, for the dashboard.
+app.get('/api/rent-status', auth, (req, res) => {
+  const period = new Date().toISOString().slice(0, 7);
+  const today = new Date().toISOString().slice(0, 10);
+  const out = [];
+  for (const p of db.prepare('SELECT * FROM properties WHERE family_id = ? AND rent_amount > 0').all(req.user.family_id)) {
+    ensureRentCharge(p); // no-op unless a tenant has actually joined
+    const c = db.prepare("SELECT * FROM tenant_charges WHERE property_id = ? AND type = 'rent' AND period = ?").get(p.id, period);
+    if (!c) continue; // rent set but nobody renting yet — nothing to chase
+    out.push({
+      property_id: p.id, property: p.name, amount: c.amount, status: c.status, due_date: c.due_date,
+      days_late: c.status !== 'paid' && c.due_date < today ? Math.round((new Date(today) - new Date(c.due_date)) / 86400000) : 0,
+    });
+  }
+  res.json(out);
+});
 
 // owner side: tenant info & invite code for a property
 app.get('/api/properties/:id/tenant', auth, (req, res) => {
@@ -2197,7 +2214,16 @@ app.get('/api/stats', auth, (req, res) => {
     SELECT substr(date,1,7) AS m, SUM(amount) AS total FROM incomes
     WHERE family_id = ? AND substr(date,1,7) >= ?${uf} GROUP BY m ORDER BY m
   `).all(fid, startMonth, ...ua);
-  res.json({ month, months, startMonth, byCategory, income, spent, trend, incomeTrend });
+  // the window of the same length immediately before this one, so a number can be compared to
+  // something instead of floating on its own ("5.589 spent" vs "5.589 spent, 12% more than last month")
+  const shifted = (back) => { const d = new Date(); d.setUTCDate(1); d.setUTCMonth(d.getUTCMonth() - back); return d.toISOString().slice(0, 7); };
+  const prevStart = shifted(months * 2 - 1), prevEnd = shifted(months);
+  const between = ` AND substr(date,1,7) >= ? AND substr(date,1,7) <= ?`;
+  const prev = {
+    income: db.prepare(`SELECT COALESCE(SUM(amount),0) AS total FROM incomes WHERE family_id = ?${between}${uf}`).get(fid, prevStart, prevEnd, ...ua).total,
+    spent: db.prepare(`SELECT COALESCE(SUM(amount),0) AS total FROM expenses WHERE family_id = ?${between}${uf}`).get(fid, prevStart, prevEnd, ...ua).total,
+  };
+  res.json({ month, months, startMonth, byCategory, income, spent, trend, incomeTrend, prev, prevStart, prevEnd });
 });
 
 // ---------- savings / economy account & goals ----------
