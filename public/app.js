@@ -2350,4 +2350,19 @@ document.addEventListener('input', (e) => {
   hint.textContent = money(v);
 });
 
+/* double-submit guard: on a slow phone connection a double-tap on "Add" fires the handler twice
+   before the first request returns, creating duplicate expenses/bills. The second submit is
+   swallowed while the first is still in flight (capture phase, before any handler runs), and the
+   button is greyed out. Handlers re-render and replace the form; the timeout clears the flag if a
+   request fails without re-rendering, so a form is never left permanently dead. */
+const submitting = new WeakSet();
+document.addEventListener('submit', (e) => {
+  const f = e.target;
+  if (submitting.has(f)) { e.preventDefault(); e.stopImmediatePropagation(); return; }
+  submitting.add(f);
+  const btn = f.querySelector('button:not([type="button"])') || f.querySelector('.btn');
+  if (btn) btn.disabled = true;
+  setTimeout(() => { submitting.delete(f); if (btn) btn.disabled = false; }, 4000);
+}, true);
+
 boot();
