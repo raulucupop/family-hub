@@ -1424,44 +1424,46 @@ const ALERT_KINDS = new Set(['rca', 'casco', 'vignette', 'itp', 'road_tax', 'pro
 function generateNotifications(fid) {
   const ins = db.prepare('INSERT OR IGNORE INTO notifications (family_id, key, title, body, owner_id) VALUES (?,?,?,?,?)');
   const upd = db.prepare('UPDATE notifications SET title = ?, body = ? WHERE family_id = ? AND key = ? AND (title != ? OR body != ?)');
-  const sweep = db.prepare('DELETE FROM notifications WHERE family_id = ? AND key LIKE ? AND key != ?');
+  const unread = db.prepare('DELETE FROM notification_reads WHERE notification_id IN (SELECT id FROM notifications WHERE family_id = ? AND key = ?)');
   const fresh = [];
-  // keys are stable per item+threshold; the text is refreshed on every pass so "X days left"
-  // always matches the dashboard, and crossing a tighter threshold replaces the older alert.
-  const add = (key, prefix, title, body, owner) => {
+  const live = new Set(); // every key this pass still considers unsolved
+  // keys are stable per item+threshold, so the text is refreshed on every pass and "X days left"
+  // always matches the dashboard.
+  const add = (key, title, body, owner) => {
+    live.add(key);
     if (ins.run(fid, key, title, body, owner).changes > 0) {
-      sweep.run(fid, `${prefix}%`, key);
       fresh.push({ title, body, owner });
-    } else {
-      upd.run(title, body, fid, key, title, body);
+    } else if (upd.run(title, body, fid, key, title, body).changes > 0) {
+      // the item is still unsolved and its message moved on (another day gone by): a read alert
+      // would otherwise stay buried, so put it back in front of the family.
+      unread.run(fid, key);
     }
   };
-  // a "tenant hasn't paid" alert must not outlive the payment, so drop any whose charge is no
-  // longer unpaid-and-overdue. Deadline alerts keep theirs — they are a record of the renewal.
-  const stillOwed = new Set(db.prepare("SELECT id FROM tenant_charges WHERE family_id = ? AND status = 'unpaid' AND due_date < ?")
-    .all(fid, new Date().toISOString().slice(0, 10)).map((r) => r.id));
-  const delNote = db.prepare('DELETE FROM notifications WHERE id = ?');
-  for (const n of db.prepare("SELECT id, key FROM notifications WHERE family_id = ? AND key LIKE 'tenant_unpaid:%'").all(fid)) {
-    if (!stillOwed.has(Number(n.key.split(':')[1]))) delNote.run(n.id);
-  }
   for (const r of collectReminders(fid, 31)) {
     if (!ALERT_KINDS.has(r.kind)) continue;
     const prefix = `${r.kind}:${r.ref_id}:${r.date}:`;
     if (r.days_left < 0) {
-      add(`${prefix}overdue`, prefix,
-        `Overdue: ${r.label}`, `${r.entity || ''} — was due ${r.date}${r.amount ? `, ${r.amount}` : ''}`.trim(), r.owner_id);
+      const late = -r.days_left;
+      // the days-late count keeps the text moving, so an unsolved overdue item resurfaces daily
+      add(`${prefix}overdue`, `Overdue: ${r.label}`,
+        `${r.entity || ''} — was due ${r.date}, ${late} day${late === 1 ? '' : 's'} ago${r.amount ? `, ${r.amount}` : ''}`.trim(), r.owner_id);
       continue;
     }
     for (const t of THRESHOLDS) {
       if (r.days_left <= t) {
-        add(`${prefix}${t}`, prefix,
+        add(`${prefix}${t}`,
           r.days_left === 0 ? `Due today: ${r.label}` : `${r.label} — ${r.days_left} day${r.days_left === 1 ? '' : 's'} left`,
           `${r.entity || ''} — due ${r.date}${r.amount ? `, ${r.amount}` : ''}`.trim(), r.owner_id);
         break; // only the tightest threshold crossed right now
       }
     }
   }
-  // brand-new alerts also go out as push notifications to subscribed devices
+  // Anything not regenerated above is solved — renewed deadline, paid charge, deleted item, or an
+  // older threshold superseded by a tighter one. Solved alerts are deleted rather than left stale.
+  const keep = [...live];
+  db.prepare(`DELETE FROM notifications WHERE family_id = ?${keep.length ? ` AND key NOT IN (${keep.map(() => '?').join(',')})` : ''}`)
+    .run(fid, ...keep);
+  // only genuinely new alerts push to devices — a resurfaced one would push every single day
   for (const n of fresh) sendPushToFamily(fid, { title: n.title, body: n.body }, n.owner).catch(() => {});
 }
 app.get('/api/notifications', auth, (req, res) => {
