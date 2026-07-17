@@ -49,6 +49,40 @@ function setAuthCookie(res, token) {
     maxAge: 30 * 24 * 3600 * 1000,
   });
 }
+
+// ---------- brute-force throttle on sign-in ----------
+// Counted per account *and* per IP: the account key stops a botnet spread across IPs, the IP key
+// stops one attacker spraying many accounts. `trust proxy` is on, so req.ip is the real client.
+// The IP allowance is deliberately much looser: a whole household shares one home IP, and one
+// person fumbling their password must never lock everyone else out.
+// In-memory on purpose — a single small instance, and a restart clearing it is not worth a table.
+const LOGIN_LIMITS = { em: 8, ip: 30 }; // failures allowed inside the window, by key type
+const LOGIN_WINDOW = 10 * 60 * 1000;    // ...before the lock kicks in
+const LOGIN_LOCK = 10 * 60 * 1000;      // how long the lock lasts
+const loginFails = new Map(); // key -> { n, first, until }
+const loginKeys = (req, email) => [`ip:${req.ip}`, `em:${email}`];
+function loginLockedFor(keys) {
+  const now = Date.now();
+  let until = 0;
+  for (const k of keys) { const r = loginFails.get(k); if (r?.until > now) until = Math.max(until, r.until); }
+  return until ? Math.ceil((until - now) / 60000) : 0; // minutes left, 0 = not locked
+}
+function loginFailed(keys) {
+  const now = Date.now();
+  for (const k of keys) {
+    let r = loginFails.get(k);
+    if (!r || now - r.first > LOGIN_WINDOW) r = { n: 0, first: now, until: 0 };
+    r.n += 1;
+    if (r.n >= LOGIN_LIMITS[k.slice(0, 2)]) { r.until = now + LOGIN_LOCK; r.n = 0; r.first = now; }
+    loginFails.set(k, r);
+  }
+}
+function loginSucceeded(keys) { for (const k of keys) loginFails.delete(k); }
+// keep the map from growing forever on a long-lived process
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, r] of loginFails) if (now - r.first > LOGIN_WINDOW && !(r.until > now)) loginFails.delete(k);
+}, LOGIN_WINDOW).unref();
 function auth(req, res, next) {
   const token = req.cookies[COOKIE];
   if (!token) return res.status(401).json({ error: 'Not signed in' });
@@ -142,12 +176,20 @@ app.post('/api/auth/register', (req, res) => {
   res.json({ user });
 });
 
-app.post('/api/auth/login', (req, res) => {
-  const { email, password } = req.body || {};
-  const user = db.prepare('SELECT * FROM users WHERE email = ?').get(String(email || '').trim().toLowerCase());
-  if (!user || !user.password_hash || !bcrypt.compareSync(String(password || ''), user.password_hash)) {
+app.post('/api/auth/login', async (req, res) => {
+  const email = String(req.body?.email || '').trim().toLowerCase();
+  const keys = loginKeys(req, email);
+  const lockedFor = loginLockedFor(keys);
+  if (lockedFor) return res.status(429).json({ error: `Too many attempts — try again in ${lockedFor} minute${lockedFor === 1 ? '' : 's'}` });
+  const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
+  // async compare: bcrypt is deliberately slow, and the sync form would block the single
+  // Node thread for every other request while it runs
+  const ok = !!user && !!user.password_hash && await bcrypt.compare(String(req.body?.password || ''), user.password_hash);
+  if (!ok) {
+    loginFailed(keys);
     return res.status(401).json({ error: 'Wrong email or password' });
   }
+  loginSucceeded(keys);
   setAuthCookie(res, signToken(user));
   res.json({ user: { id: user.id, family_id: user.family_id, name: user.name, email: user.email, role: user.role } });
 });
@@ -1490,7 +1532,10 @@ app.post('/api/push/test', auth, async (req, res) => {
 });
 
 // ---------- site notifications ----------
-const THRESHOLDS = [30, 14, 7, 1, 0];
+// ascending on purpose: the loop below breaks on the first threshold crossed, which must be the
+// TIGHTEST one. Descending order meant everything from 30 days down to 0 landed on the same key,
+// so an alert was raised once at 30 days and never re-notified as the deadline closed in.
+const THRESHOLDS = [0, 1, 7, 14, 30];
 // only the important stuff raises alerts: insurance, car deadlines, PAD, personal papers,
 // and money a tenant owes past its due date.
 // regular bills stay visible in the dashboard ribbon but never notify.
@@ -1717,9 +1762,33 @@ async function runMonthlyReports() {
   }
 }
 
-// ---------- weekly database backup by email ----------
-// a consistent snapshot (VACUUM INTO) of the whole database, gzipped and mailed to the admins.
-// note: uploaded files (invoices, scans, photos) live in DATA_DIR/uploads and are not included.
+// ---------- weekly backup by email ----------
+// A consistent snapshot (VACUUM INTO) of the database, plus the uploaded files, gzipped and
+// mailed to the admins. The database alone is useless for restoring: it holds the metadata for
+// each act/invoice ("Pașaport, expires 2029") while the actual scan lives in DATA_DIR/uploads.
+
+// Minimal USTAR writer: a tar is just 512-byte headers followed by NUL-padded bodies. Adding a
+// dependency for that on a host where native builds are blocked is not worth it.
+function tarFiles(dir, names) {
+  const parts = [];
+  const padTo512 = (buf) => (buf.length % 512 ? Buffer.concat([buf, Buffer.alloc(512 - (buf.length % 512))]) : buf);
+  for (const name of names) {
+    const body = fs.readFileSync(path.join(dir, name));
+    const h = Buffer.alloc(512);
+    h.write(name.slice(0, 99), 0, 'utf8');                                              // name
+    h.write('0000644\0', 100); h.write('0000000\0', 108); h.write('0000000\0', 116);    // mode, uid, gid
+    h.write(body.length.toString(8).padStart(11, '0') + '\0', 124);                      // size, octal
+    h.write(Math.floor(fs.statSync(path.join(dir, name)).mtimeMs / 1000).toString(8).padStart(11, '0') + '\0', 136);
+    h.write('        ', 148);                                                            // checksum: spaces while summing
+    h.write('0', 156);                                                                   // typeflag: regular file
+    h.write('ustar\0', 257); h.write('00', 263);                                         // magic + version
+    let sum = 0; for (const b of h) sum += b;
+    h.write(sum.toString(8).padStart(6, '0') + '\0 ', 148);                              // real checksum
+    parts.push(h, padTo512(body));
+  }
+  parts.push(Buffer.alloc(1024)); // two zero blocks terminate the archive
+  return Buffer.concat(parts);
+}
 async function runWeeklyBackup() {
   if (!process.env.MAIL_FROM) return;
   const fams = db.prepare('SELECT id FROM families').all();
@@ -1731,24 +1800,73 @@ async function runWeeklyBackup() {
   const key = `backup:${now.getUTCFullYear()}-W${week}`;
   if (!claimKeys([key]).length) return;
   const tmp = path.join(DATA_DIR, `backup-tmp-${Date.now()}.db`);
+  const size = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${(n / 1024).toFixed(1)} KB`);
+  const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+  const CAP = 20 * 1024 * 1024; // keep the whole message under the usual ~25 MB mailbox limit
   try {
+    const zlib = require('zlib');
     db.exec(`VACUUM INTO '${tmp.replace(/\\/g, '/').replace(/'/g, "''")}'`);
-    const gz = require('zlib').gzipSync(fs.readFileSync(tmp));
+    const gz = zlib.gzipSync(fs.readFileSync(tmp));
     fs.unlinkSync(tmp);
     const stamp = now.toISOString().slice(0, 10);
-    if (gz.length > 15 * 1024 * 1024) {
+    if (gz.length > CAP) {
       await sendMail(to, `Family Hub — backup ${stamp} too large to email`,
-        `The weekly database backup is ${(gz.length / 1048576).toFixed(1)} MB — too large to attach.\nDownload DATA_DIR/familyhub.db from the server manually.\n`);
+        `The weekly database backup is ${size(gz.length)} — too large to attach.\nCopy DATA_DIR/familyhub.db and DATA_DIR/uploads off the server manually.\n`);
       return;
     }
+    const attachments = [{ filename: `familyhub-${stamp}.db.gz`, content: gz }];
+
+    // the uploads (scans, invoices, meter photos, avatars) — the database is only metadata without them
+    const names = fs.readdirSync(UPLOAD_DIR).filter((f) => { try { return fs.statSync(path.join(UPLOAD_DIR, f)).isFile(); } catch { return false; } });
+    let filesNote;
+    if (!names.length) {
+      filesNote = 'There are no uploaded files yet.';
+    } else {
+      const tgz = zlib.gzipSync(tarFiles(UPLOAD_DIR, names));
+      if (gz.length + tgz.length > CAP) {
+        // already-compressed jpg/pdf will not shrink, so this is the honest failure mode:
+        // say so loudly instead of quietly shipping a backup that cannot restore the scans
+        filesNote = `⚠ The ${plural(names.length, 'uploaded file', 'uploaded files')} (${size(tgz.length)}) were TOO LARGE to attach and are NOT in this backup.\n`
+          + `  Copy DATA_DIR/uploads off the server yourself — without it the scans and invoices cannot be restored.`;
+      } else {
+        attachments.push({ filename: `familyhub-uploads-${stamp}.tar.gz`, content: tgz });
+        filesNote = `Also attached: ${plural(names.length, 'uploaded file', 'uploaded files')} (${size(tgz.length)}) — the scans, invoices, meter photos and profile pictures.`;
+      }
+    }
     await sendMail(to, `Family Hub — weekly backup ${stamp}`,
-      `Attached is this week's database backup (${(gz.length / 1024).toFixed(1)} KB gzipped).\n\nTo restore: stop the app, gunzip the file and replace familyhub.db in your DATA_DIR, then start the app.\nNote: uploaded files (invoices, scans, meter photos) are stored separately in DATA_DIR/uploads and are not part of this file.\n`,
-      [{ filename: `familyhub-${stamp}.db.gz`, content: gz }]);
+      `Attached is this week's backup.\n\n`
+      + `- Database: ${(gz.length / 1024).toFixed(1)} KB gzipped\n- ${filesNote}\n\n`
+      + `To restore: stop the app, gunzip the .db.gz over familyhub.db in your DATA_DIR, and untar the uploads archive into DATA_DIR/uploads. Then start the app.\n`,
+      attachments);
   } catch (err) {
     try { fs.unlinkSync(tmp); } catch {}
     releaseKeys([key]);
     console.error('weekly backup:', err.message);
   }
+}
+
+// Cascading deletes remove rows, not the files they point at, so a deleted property or vehicle
+// leaves its scans behind forever. Sweep anything no row references any more.
+function sweepOrphanUploads() {
+  const referenced = new Set();
+  for (const [table, col] of [['users', 'avatar'], ['documents', 'attachment'], ['bills', 'attachment'],
+    ['tenant_charges', 'attachment'], ['meter_requests', 'photo'], ['maintenance_requests', 'photo']]) {
+    for (const r of db.prepare(`SELECT ${col} AS f FROM ${table} WHERE ${col} IS NOT NULL AND ${col} != ''`).all()) referenced.add(r.f);
+  }
+  let removed = 0;
+  for (const name of fs.readdirSync(UPLOAD_DIR)) {
+    try {
+      const st = fs.statSync(path.join(UPLOAD_DIR, name));
+      if (!st.isFile() || referenced.has(name)) continue;
+      // grace period: multer writes the file before the row exists, so a file uploaded moments
+      // ago is not an orphan — it is a request still in flight
+      if (Date.now() - st.mtimeMs < 24 * 3600 * 1000) continue;
+      fs.unlinkSync(path.join(UPLOAD_DIR, name));
+      removed++;
+    } catch { /* leave anything we cannot stat or delete */ }
+  }
+  if (removed) console.log(`swept ${removed} orphaned upload(s)`);
+  return removed;
 }
 
 // runs shortly after every start (visits wake the app) and every 6 hours while it stays alive;
@@ -1761,11 +1879,22 @@ async function emailReminderTick() {
   try { await runEmailReminders(); } catch (err) { console.error('email reminders:', err.message); }
   try { await runMonthlyReports(); } catch (err) { console.error('monthly report:', err.message); }
   try { await runWeeklyBackup(); } catch (err) { console.error('weekly backup:', err.message); }
+  try { sweepOrphanUploads(); } catch (err) { console.error('orphan sweep:', err.message); }
 }
 setTimeout(emailReminderTick, 30 * 1000);
 setInterval(emailReminderTick, 6 * 3600 * 1000);
+// This does real work (auto-pay, auto-log, sends mail), so it must not be world-callable.
+// A token is required; with none configured we fail closed in production rather than leaving a
+// fresh install open to anyone who guesses the URL. Locally it stays open for testing.
 app.get('/api/cron/email-reminders', async (req, res) => {
-  if (process.env.CRON_TOKEN && req.query.token !== process.env.CRON_TOKEN) return res.status(403).json({ error: 'Bad token' });
+  const token = process.env.CRON_TOKEN;
+  if (token) {
+    const given = String(req.query.token || '');
+    const a = Buffer.from(given), b = Buffer.from(token);
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return res.status(403).json({ error: 'Bad token' });
+  } else if (process.env.NODE_ENV === 'production') {
+    return res.status(403).json({ error: 'CRON_TOKEN is not configured on this server' });
+  }
   await emailReminderTick(); // full daily housekeeping: auto-pay, auto-log, meters, reminder emails, monthly report
   res.json({ ok: true });
 });
