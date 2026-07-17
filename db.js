@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS users (
   lang TEXT NOT NULL DEFAULT 'en',     -- 'en' | 'ro'
   birthday TEXT,                       -- YYYY-MM-DD
   phone TEXT,
+  token_version INTEGER NOT NULL DEFAULT 0, -- bumped on password change; older tokens stop working
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -395,6 +396,9 @@ if (!vehCols.includes('owner_id')) db.exec('ALTER TABLE vehicles ADD COLUMN owne
 
 const userCols = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name);
 if (!userCols.includes('avatar')) db.exec('ALTER TABLE users ADD COLUMN avatar TEXT');
+// bumped whenever the password changes; tokens carrying an older value stop being accepted,
+// so changing your password actually signs the other devices out
+if (!userCols.includes('token_version')) db.exec('ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0');
 if (!userCols.includes('theme')) db.exec("ALTER TABLE users ADD COLUMN theme TEXT NOT NULL DEFAULT 'light'");
 
 const notifCols = db.prepare('PRAGMA table_info(notifications)').all().map((c) => c.name);

@@ -106,6 +106,14 @@ const RO = {
   // expenses
   'Link to (optional)': 'Asociază cu (opțional)', 'Nothing': 'Nimic', '● All time': '● Tot timpul',
   'Expense added': 'Cheltuială adăugată', 'Delete this expense?': 'Ștergi această cheltuială?',
+  'Expense updated': 'Cheltuială actualizată',
+  // password ('Password' itself is already in the auth block above)
+  'Changing it signs you out on every other device.': 'Schimbarea ei te deconectează de pe toate celelalte dispozitive.',
+  'Current password': 'Parola actuală', 'Change password': 'Schimbă parola',
+  'Password changed — your other devices are signed out': 'Parolă schimbată — celelalte dispozitive au fost deconectate',
+  'Your current password is not right': 'Parola actuală nu este corectă',
+  'The new password must be at least 8 characters': 'Parola nouă trebuie să aibă cel puțin 8 caractere',
+  'Password changed — sign in again': 'Parola a fost schimbată — autentifică-te din nou',
   // income
   'Recurring income (salaries)': 'Venituri recurente (salarii)',
   'Logged automatically every month on the chosen day — no manual entry needed.': 'Înregistrate automat în fiecare lună în ziua aleasă — fără introducere manuală.',
@@ -584,6 +592,12 @@ async function renderTenantPortal() {
       <button class="btn small">Save profile</button></form>
     <p class="muted" style="margin:14px 0 6px">Language</p>
     <div class="row">${[['en', '🇬🇧 English'], ['ro', '🇷🇴 Română']].map(([lg, lb]) => `<button class="btn ${(ME.lang || 'en') === lg ? '' : 'ghost'} small" data-tlang="${lg}">${lb}</button>`).join('')}</div>
+    <h3 style="margin-top:20px">Password</h3>
+    <p class="muted">Changing it signs you out on every other device.</p>
+    <form id="tpwform" class="formgrid" style="max-width:560px">
+      <div><label>Current password</label><input name="current" type="password" autocomplete="current-password" required></div>
+      <div><label>New password (min. 8 characters)</label><input name="next" type="password" autocomplete="new-password" minlength="8" required></div>
+      <button class="btn small">Change password</button></form>
   </div></div>`;
   $('#tlogout').onclick = async () => { await api('/auth/logout', { method: 'POST' }); ME = null; renderAuth(); };
   app.querySelectorAll('[data-pay]').forEach((b) => (b.onclick = async () => {
@@ -634,6 +648,14 @@ async function renderTenantPortal() {
     try { await api('/settings', { method: 'POST', body: { lang: b.dataset.tlang } }); refreshMe(); }
     catch (err) { toast(err.message); }
   }));
+  $('#tpwform').onsubmit = async (e) => {
+    e.preventDefault();
+    try {
+      await api('/auth/change-password', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) });
+      e.target.reset();
+      toast('Password changed — your other devices are signed out');
+    } catch (err) { toast(err.message); }
+  };
 }
 
 /* ---------- dashboard ---------- */
@@ -803,6 +825,27 @@ function whoFilter(id, members, who) {
     ${members.map((m) => `<option value="${m.id}" ${String(m.id) === String(who) ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}
   </select>`;
 }
+// shared by "Add expense" and the inline edit row, so the two can never drift apart
+function expenseFormFields(members, properties, vehicles, e = {}) {
+  const link = e.property_id ? `property:${e.property_id}` : e.vehicle_id ? `vehicle:${e.vehicle_id}` : '';
+  return `
+    <div><label>Date</label><input name="date" type="date" value="${e.date || today()}" required></div>
+    <div><label>Category</label><select name="category">${CATEGORIES.map((c) => `<option value="${c}" ${e.category === c ? 'selected' : ''}>${c}</option>`).join('')}</select></div>
+    <div><label>Amount (${cur()})</label><input name="amount" type="number" step="0.01" min="0.01" value="${e.amount ?? ''}" required></div>
+    <div><label>Person</label><select name="user_id">${members.map((m) => `<option value="${m.id}" ${String(e.user_id ?? ME.id) === String(m.id) ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}</select></div>
+    ${properties.length || vehicles.length ? `<div><label>Link to (optional)</label><select name="link"><option value="">Nothing</option>
+      ${properties.map((p) => `<option value="property:${p.id}" ${link === `property:${p.id}` ? 'selected' : ''}>⌂ ${esc(p.name)}</option>`).join('')}
+      ${vehicles.map((v) => `<option value="vehicle:${v.id}" ${link === `vehicle:${v.id}` ? 'selected' : ''}>⛟ ${esc(v.name)}</option>`).join('')}</select></div>` : ''}
+    <div><label>Note</label><input name="note" placeholder="optional" value="${esc(e.note || '')}"></div>`;
+}
+// the combined link select unpacks into real columns; both keys are always written so
+// clearing the link on edit actually clears it server-side
+function unpackExpenseBody(b) {
+  const l = String(b.link || ''); delete b.link;
+  b.property_id = null; b.vehicle_id = null;
+  if (l) { const [kind, id] = l.split(':'); b[kind + '_id'] = Number(id); }
+  return b;
+}
 async function moneyExpenses(body, f = {}) {
   const flt = { month: thisMonth(), who: 'all', cat: 'all', q: '', ...f };
   const [all, members, properties, vehicles] = await Promise.all([api('/expenses'), api('/family/members'), api('/properties'), api('/vehicles')]);
@@ -817,14 +860,7 @@ async function moneyExpenses(body, f = {}) {
   const reload = (patch) => moneyExpenses(body, { ...flt, ...patch });
   body.innerHTML = `
     ${canWrite() ? `<div class="card"><h3>Add expense</h3><form id="expform" class="formgrid">
-      <div><label>Date</label><input name="date" type="date" value="${today()}" required></div>
-      <div><label>Category</label><select name="category">${CATEGORIES.map((c) => `<option value="${c}">${c}</option>`).join('')}</select></div>
-      <div><label>Amount (${cur()})</label><input name="amount" type="number" step="0.01" min="0.01" required></div>
-      <div><label>Person</label><select name="user_id">${members.map((m) => `<option value="${m.id}" ${m.id === ME.id ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}</select></div>
-      ${properties.length || vehicles.length ? `<div><label>Link to (optional)</label><select name="link"><option value="">Nothing</option>
-        ${properties.map((p) => `<option value="property:${p.id}">⌂ ${esc(p.name)}</option>`).join('')}
-        ${vehicles.map((v) => `<option value="vehicle:${v.id}">⛟ ${esc(v.name)}</option>`).join('')}</select></div>` : ''}
-      <div><label>Note</label><input name="note" placeholder="optional"></div>
+      ${expenseFormFields(members, properties, vehicles)}
       <button class="btn">Add expense</button></form></div>` : ''}
     <div class="card" style="margin-top:16px">
       <div class="row" style="justify-content:space-between;gap:10px"><h3 style="margin:0">Expenses</h3><span class="amount"><b>${money(total)}</b></span></div>
@@ -835,10 +871,14 @@ async function moneyExpenses(body, f = {}) {
         <button class="btn ghost small" id="allmonths">${flt.month === 'all' ? '● All time' : 'All time'}</button>
         <input id="qfilter" type="search" placeholder="Search note…" value="${esc(flt.q)}" style="width:180px">
       </div>
-      ${rows.length ? `<table><thead><tr><th>Date</th><th>Category</th><th>By</th><th>Note</th><th class="right">Amount</th><th></th></tr></thead><tbody>
-        ${rows.map((e) => { const link = e.property_name ? `⌂ ${esc(e.property_name)}` : e.vehicle_name ? `⛟ ${esc(e.vehicle_name)}` : ''; return `<tr><td>${fdate(e.date)}</td><td>${esc(e.category)}</td><td>${esc(mname[e.user_id] || '—')}</td><td>${esc(e.note || '')}${link ? `${e.note ? ' · ' : ''}<span class="muted">${link}</span>` : ''}</td>
-          <td class="right amount">${money(e.amount)}</td>
-          <td class="right">${canWrite() ? `<button class="btn danger small" data-del="${e.id}">Delete</button>` : ''}</td></tr>`; }).join('')}
+      ${rows.length ? `<table class="cards"><thead><tr><th>Date</th><th>Category</th><th>By</th><th>Note</th><th class="right">Amount</th><th></th></tr></thead><tbody>
+        ${rows.map((e) => { const link = e.property_name ? `⌂ ${esc(e.property_name)}` : e.vehicle_name ? `⛟ ${esc(e.vehicle_name)}` : ''; return `<tr>
+          <td data-label="Date">${fdate(e.date)}</td><td data-label="Category">${esc(e.category)}</td><td data-label="By">${esc(mname[e.user_id] || '—')}</td>
+          <td data-label="Note">${esc(e.note || '')}${link ? `${e.note ? ' · ' : ''}<span class="muted">${link}</span>` : ''}</td>
+          <td class="right amount" data-label="Amount">${money(e.amount)}</td>
+          <td class="right"><span class="rowacts">${canWrite() ? `<button class="btn ghost small" data-edit="${e.id}">Edit</button>
+            <button class="btn danger small" data-del="${e.id}">Delete</button>` : ''}</span></td></tr>
+          <tr id="exprow-${e.id}" hidden><td colspan="6"></td></tr>`; }).join('')}
       </tbody></table>` : `<div class="empty"><b>No matching expenses</b>Adjust the filters or add one above.</div>`}
     </div>`;
   $('#mfilter').onchange = (e) => reload({ month: e.target.value || thisMonth() });
@@ -849,12 +889,21 @@ async function moneyExpenses(body, f = {}) {
   qEl.oninput = () => { clearTimeout(qEl._h); qEl._h = setTimeout(() => reload({ q: qEl.value }), 250); };
   $('#expform')?.addEventListener('submit', async (e) => {
     e.preventDefault();
-    const body = Object.fromEntries(new FormData(e.target));
-    if (body.link) { const [kind, id] = body.link.split(':'); body[kind + '_id'] = Number(id); }
-    delete body.link;
-    try { await api('/expenses', { method: 'POST', body }); toast('Expense added'); reload(); }
+    try { await api('/expenses', { method: 'POST', body: unpackExpenseBody(Object.fromEntries(new FormData(e.target))) }); toast('Expense added'); reload(); }
     catch (err) { toast(err.message); }
   });
+  const byId = Object.fromEntries(rows.map((e) => [e.id, e]));
+  body.querySelectorAll('[data-edit]').forEach((b) => (b.onclick = () => {
+    const row = $('#exprow-' + b.dataset.edit);
+    if (!row.hidden) { row.hidden = true; return; }
+    row.firstElementChild.innerHTML = `<form class="formgrid" style="padding:6px 0">${expenseFormFields(members, properties, vehicles, byId[b.dataset.edit])}<button class="btn small">Save changes</button></form>`;
+    row.hidden = false;
+    row.querySelector('form').onsubmit = async (ev) => {
+      ev.preventDefault();
+      try { await api('/expenses/' + b.dataset.edit, { method: 'PUT', body: unpackExpenseBody(Object.fromEntries(new FormData(ev.target))) }); toast('Expense updated'); reload(); }
+      catch (err) { toast(err.message); }
+    };
+  }));
   body.querySelectorAll('[data-del]').forEach((b) => (b.onclick = async () => {
     if (!confirm('Delete this expense?')) return;
     await api('/expenses/' + b.dataset.del, { method: 'DELETE' }); reload();
@@ -1947,6 +1996,13 @@ async function viewSettings(el) {
         <div><label>Phone number</label><input name="phone" type="tel" value="${esc(ME.phone || '')}" placeholder="07xx xxx xxx"></div>
         <button class="btn small">Save profile</button></form>` : ''}
     </div>
+    ${ME.email ? `<div class="card" style="margin-top:16px"><h3>Password</h3>
+      <p class="muted" style="margin-top:0">Changing it signs you out on every other device.</p>
+      <form id="pwform" class="formgrid" style="max-width:560px">
+        <div><label>Current password</label><input name="current" type="password" autocomplete="current-password" required></div>
+        <div><label>New password (min. 8 characters)</label><input name="next" type="password" autocomplete="new-password" minlength="8" required></div>
+        <button class="btn small">Change password</button></form>
+    </div>` : ''}
     ${canEditKids && kids.length ? `<div class="card" style="margin-top:16px"><h3>Children's pictures</h3>
       <div class="row" style="gap:22px;flex-wrap:wrap">${kids.map((k) => `<div style="text-align:center">${avatarHtml(k, 'avatar-lg')}
         <div style="margin-top:6px"><b>${esc(k.name)}</b></div>
@@ -1962,6 +2018,15 @@ async function viewSettings(el) {
     catch (err) { toast(err.message); }
   }));
   setupPushCard();
+  $('#pwform')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const f = e.target;
+    try {
+      await api('/auth/change-password', { method: 'POST', body: Object.fromEntries(new FormData(f)) });
+      f.reset();
+      toast('Password changed — your other devices are signed out');
+    } catch (err) { toast(err.message); }
+  });
   $('#nameform')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     try { const u = await api('/settings', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) }); ME = { ...ME, ...u }; toast('Saved'); render(); }

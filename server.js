@@ -39,7 +39,9 @@ app.use(express.static(path.join(__dirname, 'public')));
 // ---------- helpers ----------
 const COOKIE = 'fh_token';
 function signToken(user) {
-  return jwt.sign({ uid: user.id, fid: user.family_id, role: user.role }, JWT_SECRET, { expiresIn: '30d' });
+  // tv pins the token to the account's current password: bump token_version and every token
+  // issued before it stops verifying, which is what signs other devices out on a password change
+  return jwt.sign({ uid: user.id, fid: user.family_id, role: user.role, tv: user.token_version ?? 0 }, JWT_SECRET, { expiresIn: '30d' });
 }
 function setAuthCookie(res, token) {
   res.cookie(COOKIE, token, {
@@ -88,12 +90,15 @@ function auth(req, res, next) {
   if (!token) return res.status(401).json({ error: 'Not signed in' });
   try {
     const payload = jwt.verify(token, JWT_SECRET);
-    const user = db.prepare('SELECT id, family_id, name, email, role, tenant_property_id, avatar, theme, lang, birthday, phone FROM users WHERE id = ?').get(payload.uid);
+    const user = db.prepare('SELECT id, family_id, name, email, role, tenant_property_id, avatar, theme, lang, birthday, phone, token_version FROM users WHERE id = ?').get(payload.uid);
     if (!user) return res.status(401).json({ error: 'Account no longer exists' });
+    // the password changed since this token was handed out — that session is over
+    if ((payload.tv ?? 0) !== user.token_version) return res.status(401).json({ error: 'Password changed — sign in again' });
     // tenants only ever see their own charges — never the family's data.
     // they may also manage their own profile: settings (name/lang/birthday/phone) and their own avatar.
     const tenantAllowed = req.path === '/api/me' || req.path.startsWith('/api/tenant')
-      || req.path === '/api/settings' || req.path === `/api/users/${user.id}/avatar`;
+      || req.path === '/api/settings' || req.path === '/api/auth/change-password'
+      || req.path === `/api/users/${user.id}/avatar`;
     if (user.role === 'tenant' && !tenantAllowed) {
       return res.status(403).json({ error: 'Tenant accounts can only access their own charges' });
     }
@@ -171,7 +176,7 @@ app.post('/api/auth/register', (req, res) => {
   }
   const info = db.prepare('INSERT INTO users (family_id, name, email, password_hash, role, tenant_property_id) VALUES (?,?,?,?,?,?)')
     .run(familyId, String(name).trim(), emailNorm, hash, role, tenantPropertyId);
-  const user = db.prepare('SELECT id, family_id, name, email, role FROM users WHERE id = ?').get(info.lastInsertRowid);
+  const user = db.prepare('SELECT id, family_id, name, email, role, token_version FROM users WHERE id = ?').get(info.lastInsertRowid);
   setAuthCookie(res, signToken(user));
   res.json({ user });
 });
@@ -226,11 +231,33 @@ app.post('/api/auth/reset', (req, res) => {
   const hash = crypto.createHash('sha256').update(String(token || '')).digest('hex');
   const row = db.prepare("SELECT * FROM password_resets WHERE token_hash = ? AND used = 0 AND expires_at > datetime('now')").get(hash);
   if (!row) return res.status(400).json({ error: 'This reset link is invalid or expired — request a new one' });
-  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(bcrypt.hashSync(String(password), 10), row.user_id);
+  // bump token_version: whoever prompted this reset (a thief with a stolen cookie, an old
+  // shared laptop) is signed out everywhere. The person resetting gets a fresh token below.
+  db.prepare('UPDATE users SET password_hash = ?, token_version = token_version + 1 WHERE id = ?')
+    .run(bcrypt.hashSync(String(password), 10), row.user_id);
   db.prepare('UPDATE password_resets SET used = 1 WHERE id = ?').run(row.id);
-  const user = db.prepare('SELECT id, family_id, name, email, role FROM users WHERE id = ?').get(row.user_id);
+  // any other pending reset links for this account are void now too
+  db.prepare('UPDATE password_resets SET used = 1 WHERE user_id = ? AND used = 0').run(row.user_id);
+  const user = db.prepare('SELECT id, family_id, name, email, role, token_version FROM users WHERE id = ?').get(row.user_id);
   setAuthCookie(res, signToken(user));
   res.json({ user });
+});
+// change your own password while signed in. Requires the current one, so a borrowed session
+// cannot lock the real owner out of their account.
+app.post('/api/auth/change-password', auth, async (req, res) => {
+  const { current, next } = req.body || {};
+  if (String(next || '').length < 8) return res.status(400).json({ error: 'The new password must be at least 8 characters' });
+  const row = db.prepare('SELECT password_hash FROM users WHERE id = ?').get(req.user.id);
+  if (!row?.password_hash) return res.status(400).json({ error: 'This account has no password to change' });
+  if (!(await bcrypt.compare(String(current || ''), row.password_hash))) {
+    return res.status(403).json({ error: 'Your current password is not right' });
+  }
+  db.prepare('UPDATE users SET password_hash = ?, token_version = token_version + 1 WHERE id = ?')
+    .run(bcrypt.hashSync(String(next), 10), req.user.id);
+  // everything else is signed out; keep *this* device signed in with a token on the new version
+  const user = db.prepare('SELECT id, family_id, name, email, role, token_version FROM users WHERE id = ?').get(req.user.id);
+  setAuthCookie(res, signToken(user));
+  res.json({ ok: true });
 });
 
 app.post('/api/auth/logout', (req, res) => {
@@ -344,39 +371,79 @@ app.get('/api/expenses', auth, (req, res) => {
     WHERE e.family_id = ? ORDER BY e.date DESC, e.id DESC
   `).all(req.user.family_id));
 });
+// shared by create and edit: returns an error string, or the cleaned fields
+function validateExpense(b, fid) {
+  if (!b.category) return 'Category is required';
+  if (!(Number(b.amount) > 0)) return 'Amount must be greater than 0';
+  if (!isDate(b.date)) return 'Date must be YYYY-MM-DD';
+  if (num(b.user_id) != null && !db.prepare('SELECT id FROM users WHERE id = ? AND family_id = ?').get(num(b.user_id), fid)) {
+    return 'Person must be a member of the family';
+  }
+  const propId = num(b.property_id), vehId = num(b.vehicle_id);
+  if (propId != null && vehId != null) return 'Link the expense to a property or a vehicle, not both';
+  if (propId != null && !db.prepare('SELECT id FROM properties WHERE id = ? AND family_id = ?').get(propId, fid)) return 'Linked property not found';
+  if (vehId != null && !db.prepare('SELECT id FROM vehicles WHERE id = ? AND family_id = ?').get(vehId, fid)) return 'Linked vehicle not found';
+  return null;
+}
+// Keep the property/vehicle cost-history rows that mirror an expense in step.
+//
+// Two link shapes exist and they must not be confused:
+//  - expense-first: added on the Expenses tab, `expenses.property_id` is set and the mirror row
+//    belongs to the expense — it is ours to rebuild.
+//  - record-first: added on a property/vehicle card, the record owns the link and the expense it
+//    created carries no *_id. That row keeps its own type and note (a "maintenance" entry must not
+//    become "other", nor its note be overwritten) — we only follow the amount and date.
+// `oldRow` is the expense as stored before this edit; absent on create.
+function mirrorExpense(fid, eid, b, uid, oldRow) {
+  const label = `${str(b.category)}${b.note ? ': ' + str(b.note) : ''}`;
+  const sync = (table, key, parentCol, insert) => {
+    const existing = db.prepare(`SELECT * FROM ${table} WHERE expense_id = ? AND family_id = ?`).get(eid, fid);
+    const oldId = oldRow ? num(oldRow[key]) : null;
+    const newId = num(b[key]);
+    if (existing && oldId == null) { // the entity's card owns this row — never rebuild it
+      db.prepare(`UPDATE ${table} SET date = ?, amount = ? WHERE id = ?`).run(b.date, Number(b.amount), existing.id);
+      return;
+    }
+    if (existing && oldId === newId) { // same link, just changed values
+      db.prepare(`UPDATE ${table} SET date = ?, amount = ?, note = ? WHERE id = ?`).run(b.date, Number(b.amount), label, existing.id);
+      return;
+    }
+    if (existing) db.prepare(`DELETE FROM ${table} WHERE id = ?`).run(existing.id); // link moved or cleared
+    if (newId != null) insert(newId);
+  };
+  sync('property_records', 'property_id', 'property_id', (id) =>
+    db.prepare('INSERT INTO property_records (property_id, family_id, type, date, amount, note, user_id, expense_id) VALUES (?,?,?,?,?,?,?,?)')
+      .run(id, fid, 'other', b.date, Number(b.amount), label, uid, eid));
+  sync('vehicle_records', 'vehicle_id', 'vehicle_id', (id) =>
+    db.prepare('INSERT INTO vehicle_records (vehicle_id, family_id, type, date, amount, note, expense_id) VALUES (?,?,?,?,?,?,?)')
+      .run(id, fid, 'other', b.date, Number(b.amount), label, eid));
+}
 app.post('/api/expenses', auth, canWrite, (req, res) => {
   const b = req.body || {};
-  if (!b.category) return res.status(400).json({ error: 'Category is required' });
-  if (!(Number(b.amount) > 0)) return res.status(400).json({ error: 'Amount must be greater than 0' });
-  if (!isDate(b.date)) return res.status(400).json({ error: 'Date must be YYYY-MM-DD' });
-  if (num(b.user_id) != null && !db.prepare('SELECT id FROM users WHERE id = ? AND family_id = ?').get(num(b.user_id), req.user.family_id)) {
-    return res.status(400).json({ error: 'Person must be a member of the family' });
-  }
-  const propId = num(b.property_id);
-  const vehId = num(b.vehicle_id);
-  if (propId != null && vehId != null) return res.status(400).json({ error: 'Link the expense to a property or a vehicle, not both' });
-  if (propId != null && !db.prepare('SELECT id FROM properties WHERE id = ? AND family_id = ?').get(propId, req.user.family_id)) {
-    return res.status(400).json({ error: 'Linked property not found' });
-  }
-  if (vehId != null && !db.prepare('SELECT id FROM vehicles WHERE id = ? AND family_id = ?').get(vehId, req.user.family_id)) {
-    return res.status(400).json({ error: 'Linked vehicle not found' });
-  }
+  const err = validateExpense(b, req.user.family_id);
+  if (err) return res.status(400).json({ error: err });
   const uid = num(b.user_id) ?? req.user.id;
   const eid = db.transaction(() => {
     const info = db.prepare('INSERT INTO expenses (family_id, user_id, category, amount, note, date, property_id, vehicle_id) VALUES (?,?,?,?,?,?,?,?)')
-      .run(req.user.family_id, uid, str(b.category), Number(b.amount), str(b.note), b.date, propId, vehId);
-    const label = `${str(b.category)}${b.note ? ': ' + str(b.note) : ''}`;
-    if (propId != null) {
-      db.prepare('INSERT INTO property_records (property_id, family_id, type, date, amount, note, user_id, expense_id) VALUES (?,?,?,?,?,?,?,?)')
-        .run(propId, req.user.family_id, 'other', b.date, Number(b.amount), label, uid, info.lastInsertRowid);
-    }
-    if (vehId != null) {
-      db.prepare('INSERT INTO vehicle_records (vehicle_id, family_id, type, date, amount, note, expense_id) VALUES (?,?,?,?,?,?,?)')
-        .run(vehId, req.user.family_id, 'other', b.date, Number(b.amount), label, info.lastInsertRowid);
-    }
+      .run(req.user.family_id, uid, str(b.category), Number(b.amount), str(b.note), b.date, num(b.property_id), num(b.vehicle_id));
+    mirrorExpense(req.user.family_id, info.lastInsertRowid, b, uid);
     return info.lastInsertRowid;
   })();
   res.json(db.prepare('SELECT * FROM expenses WHERE id = ?').get(eid));
+});
+app.put('/api/expenses/:id', auth, canWrite, (req, res) => {
+  const row = db.prepare('SELECT * FROM expenses WHERE id = ? AND family_id = ?').get(req.params.id, req.user.family_id);
+  if (!row) return res.status(404).json({ error: 'Not found' });
+  const b = { ...row, ...req.body };
+  const err = validateExpense(b, req.user.family_id);
+  if (err) return res.status(400).json({ error: err });
+  const uid = num(b.user_id) ?? req.user.id;
+  db.transaction(() => {
+    mirrorExpense(req.user.family_id, row.id, b, uid, row); // `row` = the link as it was, before we overwrite it
+    db.prepare('UPDATE expenses SET user_id=?, category=?, amount=?, note=?, date=?, property_id=?, vehicle_id=? WHERE id=?')
+      .run(uid, str(b.category), Number(b.amount), str(b.note), b.date, num(b.property_id), num(b.vehicle_id), row.id);
+  })();
+  res.json(db.prepare('SELECT * FROM expenses WHERE id = ?').get(row.id));
 });
 app.delete('/api/expenses/:id', auth, canWrite, (req, res) => {
   const row = db.prepare('SELECT * FROM expenses WHERE id = ? AND family_id = ?').get(req.params.id, req.user.family_id);
