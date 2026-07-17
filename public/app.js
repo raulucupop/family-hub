@@ -253,8 +253,11 @@ const RO = {
   'Test sent — check your notifications': 'Test trimis — verifică notificările', 'Picture updated': 'Poză actualizată',
 };
 // pattern rules for text that embeds a name/number and can't be a fixed dictionary key
+// order matters: the first match wins, so the more specific patterns come first
 const RO_RX = [
   [/^🎂 (.+)'s birthday$/, '🎂 Ziua de naștere: $1'],
+  [/^Overdue: (.+) — unpaid by tenant$/, 'Restant: $1 — neplătit de chiriaș'],
+  [/^(.+) — unpaid by tenant$/, '$1 — neplătit de chiriaș'],
 ];
 let LANG = 'en';
 function applyLang() { LANG = (ME && ME.lang) || 'en'; document.documentElement.lang = LANG; }

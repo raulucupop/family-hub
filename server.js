@@ -1267,7 +1267,7 @@ app.delete('/api/lists/:id', auth, canWrite, (req, res) => {
 function collectReminders(fid, horizon, scopeUserId = null) {
   const items = [];
   // priority: birthdays, cars & documents rank above property, above bills (tiebreaker on same date)
-  const PRIO = { birthday: 3, document: 3, rca: 3, casco: 3, vignette: 3, itp: 3, road_tax: 3, property_insurance: 2, property_tax: 2, bill: 1 };
+  const PRIO = { birthday: 3, document: 3, rca: 3, casco: 3, vignette: 3, itp: 3, road_tax: 3, tenant_unpaid: 2, property_insurance: 2, property_tax: 2, bill: 1 };
   const push = (kind, label, entity, date, id, owner, extra) => {
     if (!date) return;
     items.push({ kind, label, entity, date, ref_id: id, owner_id: owner ?? null, priority: PRIO[kind] || 1, ...extra });
@@ -1298,6 +1298,16 @@ function collectReminders(fid, horizon, scopeUserId = null) {
   }
   for (const d of db.prepare(`${DOC_SELECT} WHERE d.family_id = ? AND d.expiry_date IS NOT NULL`).all(fid)) {
     push('document', `Act: ${d.name}`, d.person_name || d.vehicle_name || d.property_name || 'Family', d.expiry_date, d.id, d.user_id);
+  }
+  // charges the tenant has not paid past their due date — the owner has to chase them.
+  // only overdue ones surface: an upcoming rent charge is the tenant's business, not a family deadline.
+  const todayISO = new Date().toISOString().slice(0, 10);
+  for (const c of db.prepare(`
+    SELECT c.*, p.name AS property_name, p.owner_id FROM tenant_charges c
+    JOIN properties p ON p.id = c.property_id
+    WHERE c.family_id = ? AND c.status = 'unpaid' AND c.due_date < ?
+  `).all(fid, todayISO)) {
+    push('tenant_unpaid', `${c.title} — unpaid by tenant`, c.property_name, c.due_date, c.id, c.owner_id, { amount: c.amount });
   }
   // birthdays repeat yearly; show the next upcoming one. Family-wide (owner null) so everyone is reminded.
   for (const u of db.prepare("SELECT id, name, birthday FROM users WHERE family_id = ? AND role != 'tenant' AND birthday IS NOT NULL AND birthday != ''").all(fid)) {
@@ -1407,9 +1417,10 @@ app.post('/api/push/test', auth, async (req, res) => {
 
 // ---------- site notifications ----------
 const THRESHOLDS = [30, 14, 7, 1, 0];
-// only the important stuff raises alerts: insurance, car deadlines, PAD and personal papers.
+// only the important stuff raises alerts: insurance, car deadlines, PAD, personal papers,
+// and money a tenant owes past its due date.
 // regular bills stay visible in the dashboard ribbon but never notify.
-const ALERT_KINDS = new Set(['rca', 'casco', 'vignette', 'itp', 'road_tax', 'property_insurance', 'document', 'birthday']);
+const ALERT_KINDS = new Set(['rca', 'casco', 'vignette', 'itp', 'road_tax', 'property_insurance', 'document', 'birthday', 'tenant_unpaid']);
 function generateNotifications(fid) {
   const ins = db.prepare('INSERT OR IGNORE INTO notifications (family_id, key, title, body, owner_id) VALUES (?,?,?,?,?)');
   const upd = db.prepare('UPDATE notifications SET title = ?, body = ? WHERE family_id = ? AND key = ? AND (title != ? OR body != ?)');
@@ -1425,6 +1436,14 @@ function generateNotifications(fid) {
       upd.run(title, body, fid, key, title, body);
     }
   };
+  // a "tenant hasn't paid" alert must not outlive the payment, so drop any whose charge is no
+  // longer unpaid-and-overdue. Deadline alerts keep theirs — they are a record of the renewal.
+  const stillOwed = new Set(db.prepare("SELECT id FROM tenant_charges WHERE family_id = ? AND status = 'unpaid' AND due_date < ?")
+    .all(fid, new Date().toISOString().slice(0, 10)).map((r) => r.id));
+  const delNote = db.prepare('DELETE FROM notifications WHERE id = ?');
+  for (const n of db.prepare("SELECT id, key FROM notifications WHERE family_id = ? AND key LIKE 'tenant_unpaid:%'").all(fid)) {
+    if (!stillOwed.has(Number(n.key.split(':')[1]))) delNote.run(n.id);
+  }
   for (const r of collectReminders(fid, 31)) {
     if (!ALERT_KINDS.has(r.kind)) continue;
     const prefix = `${r.kind}:${r.ref_id}:${r.date}:`;
