@@ -1630,6 +1630,67 @@ app.post('/api/notifications/read', auth, (req, res) => {
 // insurance / deadline / document expiries at 30, 14, 7 and 3 days.
 // email_log keeps one send per item per threshold; MAIL_FROM unset = feature off.
 const MAIL_THRESHOLDS = [3, 7, 14, 30]; // ascending, so .find() returns the tightest crossed
+
+// ---------- email copy, in the recipient's own language ----------
+// Recipients are grouped by their `lang` and each group gets its own email. Kept deliberately
+// small and local: the UI dictionary lives in the browser, and these are the only strings the
+// server itself writes. Reminder labels come from collectReminders in English, so they are
+// mapped here too — otherwise a Romanian email would read "Rovinieta (vignette)".
+const MAIL_LABELS_RO = {
+  'RCA insurance': 'Asigurare RCA', 'Casco insurance': 'Asigurare Casco', 'Rovinieta (vignette)': 'Rovinietă',
+  'ITP inspection': 'Inspecție ITP', 'Vehicle tax': 'Taxă auto', 'Property insurance (PAD)': 'Asigurare locuință (PAD)',
+  'Additional home insurance': 'Asigurare facultativă locuință', 'Property tax': 'Impozit proprietate',
+};
+const mailDate = (iso) => { const p = String(iso).slice(0, 10).split('-'); return p.length === 3 ? `${p[2]}/${p[1]}/${p[0]}` : String(iso); };
+function mailLabel(lang, label) {
+  if (lang !== 'ro') return label;
+  if (MAIL_LABELS_RO[label]) return MAIL_LABELS_RO[label];
+  let m;
+  if ((m = /^🎂 (.+)'s birthday$/.exec(label))) return `🎂 Ziua de naștere: ${m[1]}`;
+  if ((m = /^(.+) — unpaid by tenant$/.exec(label))) return `${m[1]} — neplătit de chiriaș`;
+  return label; // user-entered text (a bill or document name) stays as they typed it
+}
+const mailDays = (lang, d) => (lang === 'ro'
+  ? (d === 0 ? 'astăzi' : `în ${d} ${d === 1 ? 'zi' : 'zile'}`)
+  : (d === 0 ? 'today' : `in ${d} day${d === 1 ? '' : 's'}`));
+// split a recipient list into { en: [...], ro: [...] } so each person reads their own language
+function byLanguage(rows) {
+  const groups = {};
+  for (const r of rows) (groups[r.lang === 'ro' ? 'ro' : 'en'] ||= []).push(r.email);
+  return groups;
+}
+function familyDigestMail(lang, famName, items, cur) {
+  const lines = items.map((i) => `- ${mailLabel(lang, i.label)}${i.entity ? ` (${i.entity})` : ''}: `
+    + `${lang === 'ro' ? 'scadent' : 'due'} ${mailDate(i.date)}, ${mailDays(lang, i.days_left)}`
+    + `${i.amount ? ` — ${Number(i.amount).toFixed(2)} ${cur}` : ''}`).join('\n');
+  if (lang === 'ro') {
+    return {
+      subject: `Family Hub — ${items.length} ${items.length === 1 ? 'termen se apropie' : 'termene se apropie'}`,
+      text: `Bună,\n\nAceste lucruri din Family Hub-ul familiei ${famName} au nevoie de atenție în curând:\n\n${lines}\n\nDeschide Family Hub pentru detalii și ca să le marchezi rezolvate.\n`,
+    };
+  }
+  return {
+    subject: `Family Hub — ${items.length} deadline${items.length === 1 ? '' : 's'} coming up`,
+    text: `Hello,\n\nThese items in ${famName}'s Family Hub need attention soon:\n\n${lines}\n\nOpen Family Hub for details and to mark them done.\n`,
+  };
+}
+function tenantDigestMail(lang, propName, charges, total, cur) {
+  const lines = charges.map((c) => `- ${c.title}: ${Number(c.amount).toFixed(2)} ${cur}, `
+    + `${lang === 'ro' ? 'scadent' : 'due'} ${mailDate(c.due_date)}`).join('\n');
+  if (lang === 'ro') {
+    return {
+      subject: `Plăți pentru ${propName} — scadente în curând`,
+      text: `Bună,\n\nUn memento prietenos despre plățile care urmează pentru ${propName}:\n\n${lines}\n\n`
+        + `Total de plată: ${total.toFixed(2)} ${cur}\n\nDupă ce plătești, deschide portalul de chiriaș și apasă „Marchează plătit”, ca proprietarul să poată confirma.\n`,
+    };
+  }
+  return {
+    subject: `Payments for ${propName} — due soon`,
+    text: `Hello,\n\nA friendly reminder about your upcoming payments for ${propName}:\n\n${lines}\n\n`
+      + `Total to pay: ${total.toFixed(2)} ${cur}\n\nAfter you pay, open your tenant portal and press "Mark as paid" so the owner can confirm it.\n`,
+  };
+}
+
 let mailTransport = null;
 function getMailTransport() {
   if (mailTransport) return mailTransport;
@@ -1687,15 +1748,15 @@ async function runEmailReminders() {
     if (due.length) {
       const claimed = claimKeys(keys);
       if (claimed.length) {
-        const to = db.prepare("SELECT email FROM users WHERE family_id = ? AND role IN ('admin','adult') AND email IS NOT NULL").all(fam.id).map((u) => u.email);
-        if (to.length) {
-          const lines = due.map((i) => `- ${i.label}${i.entity ? ` (${i.entity})` : ''}: due ${i.date}, ${i.days_left === 0 ? 'today' : `in ${i.days_left} day${i.days_left === 1 ? '' : 's'}`}${i.amount ? ` — ${Number(i.amount).toFixed(2)} ${cur}` : ''}`);
-          try {
-            await sendMail(to, `Family Hub — ${due.length} deadline${due.length === 1 ? '' : 's'} coming up`,
-              `Hello,\n\nThese items in ${fam.name}'s Family Hub need attention soon:\n\n${lines.join('\n')}\n\nOpen Family Hub for details and to mark them done.\n`);
-            sent++;
-          } catch (err) { errors++; releaseKeys(claimed); console.error('email reminders (family):', err.message); }
+        const groups = byLanguage(db.prepare("SELECT email, lang FROM users WHERE family_id = ? AND role IN ('admin','adult') AND email IS NOT NULL").all(fam.id));
+        let anySent = false;
+        for (const [lang, addrs] of Object.entries(groups)) {
+          const { subject, text } = familyDigestMail(lang, fam.name, due, cur);
+          try { await sendMail(addrs, subject, text); sent++; anySent = true; }
+          catch (err) { errors++; console.error('email reminders (family):', err.message); }
         }
+        // only unclaim if nobody got it — otherwise a retry would double-send to the group that did
+        if (!anySent) releaseKeys(claimed);
       }
     }
     // --- tenants: rent due ≤ 7 days pulls every unpaid charge into one email ---
@@ -1706,15 +1767,16 @@ async function runEmailReminders() {
       if (!trigger.length) continue;
       const claimed = claimKeys(trigger.map((c) => `ten:${c.id}:${c.due_date}`));
       if (!claimed.length) continue;
-      const tenants = db.prepare("SELECT email FROM users WHERE role = 'tenant' AND tenant_property_id = ? AND email IS NOT NULL").all(prop.id).map((u) => u.email);
-      if (!tenants.length) { releaseKeys(claimed); continue; }
+      const groups = byLanguage(db.prepare("SELECT email, lang FROM users WHERE role = 'tenant' AND tenant_property_id = ? AND email IS NOT NULL").all(prop.id));
+      if (!Object.keys(groups).length) { releaseKeys(claimed); continue; }
       const total = unpaid.reduce((s, c) => s + c.amount, 0);
-      const lines = unpaid.map((c) => `- ${c.title}: ${Number(c.amount).toFixed(2)} ${cur}, due ${c.due_date}`);
-      try {
-        await sendMail(tenants, `Payments for ${prop.name} — due soon`,
-          `Hello,\n\nA friendly reminder about your upcoming payments for ${prop.name}:\n\n${lines.join('\n')}\n\nTotal to pay: ${total.toFixed(2)} ${cur}\n\nAfter you pay, open your tenant portal and press "Mark as paid" so the owner can confirm it.\n`);
-        sent++;
-      } catch (err) { errors++; releaseKeys(claimed); console.error('email reminders (tenant):', err.message); }
+      let anySent = false;
+      for (const [lang, addrs] of Object.entries(groups)) {
+        const { subject, text } = tenantDigestMail(lang, prop.name, unpaid, total, cur);
+        try { await sendMail(addrs, subject, text); sent++; anySent = true; }
+        catch (err) { errors++; console.error('email reminders (tenant):', err.message); }
+      }
+      if (!anySent) releaseKeys(claimed);
     }
   }
   return { sent, errors };
