@@ -248,6 +248,25 @@ canvas { max-width: 100%; }
   table { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; font-size: 13.5px; }
   th, td { padding: 8px 8px; }
   td .btn.small { white-space: nowrap; }
+
+  /* table.cards: the wide ones (bills, expenses) become one card per row on a phone, so the
+     actions are reachable without swiping the table sideways to find them */
+  table.cards { display: block; overflow-x: visible; }
+  table.cards thead { display: none; }
+  table.cards tbody, table.cards tr, table.cards td { display: block; width: 100%; }
+  table.cards tr { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; }
+  table.cards tr:last-child { margin-bottom: 0; }
+  table.cards td { border: 0; padding: 2px 0; text-align: left; }
+  /* the header each cell lost with thead, put back in front of its value */
+  table.cards td[data-label]::before {
+    content: attr(data-label); display: inline-block; min-width: 84px;
+    color: var(--ink-soft); font-size: 12px; font-weight: 600;
+  }
+  table.cards td:empty { display: none; }
+  table.cards td .rowacts { display: flex; flex-direction: column; align-items: stretch; gap: 6px; margin-top: 8px; }
+  /* an edit form opened inside a card row must not inherit the card padding twice */
+  table.cards tr[hidden] { display: none; }
+  table.cards td .formgrid { margin-top: 6px; }
   /* narrow screens: stack row actions into an evenly spaced, equal-width column
      instead of four buttons touching each other with ragged edges */
   td .rowacts { display: flex; flex-direction: column; align-items: stretch; gap: 6px; min-width: 92px; }
