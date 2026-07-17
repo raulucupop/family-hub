@@ -80,7 +80,7 @@ const RO = {
   'Copied:': 'Copiat:', 'Copy failed — select it manually': 'Copierea a eșuat — selectează manual',
   'view': 'vezi', 'attach': 'atașează', 'photo': 'poză', 'Saved': 'Salvat', 'Added': 'Adăugat', 'Removed': 'Eliminat', 'Done': 'Gata',
   'paid': 'plătit', 'unpaid': 'neplătit', 'overdue': 'întârziat', 'waiting': 'în așteptare', 'Request failed': 'Cererea a eșuat',
-  'whole family': 'toată familia', 'Family': 'Familie', 'day': 'ziua', 'more': 'altele', 'None': 'Niciuna',
+  'whole family': 'toată familia', 'day': 'ziua', 'more': 'altele', 'None': 'Niciuna',
   // categories (display only — option values stay English)
   'Groceries': 'Alimente', 'Utilities': 'Utilități', 'Transportation': 'Transport', 'Entertainment': 'Divertisment',
   'Healthcare': 'Sănătate', 'Education': 'Educație', 'Taxes': 'Taxe', 'Subscriptions': 'Abonamente', 'Other': 'Altele',
@@ -192,6 +192,16 @@ const RO = {
   'Tenant portal ·': 'Portal chiriaș ·', 'Signed in as': 'Autentificat ca', '· rent': '· chirie', 'invoice': 'factură',
   'to pay': 'de plată', 'confirmation pending': 'confirmare în așteptare', 'Pay': 'Plătește', 'Mark as paid': 'Marchează plătit',
   'Pay with Revolut': 'Plătește cu Revolut', 'Pick a date': 'Alege data',
+  // maintenance requests
+  'Request maintenance': 'Cere reparație', 'Maintenance requests': 'Cereri de reparație',
+  'Something broken or not working? Tell the owner, and add a photo if it helps.': 'S-a stricat ceva sau nu funcționează? Anunță proprietarul și adaugă o poză dacă ajută.',
+  'What needs fixing?': 'Ce trebuie reparat?', 'Details (optional)': 'Detalii (opțional)', 'Photo (optional)': 'Poză (opțional)',
+  'Send request': 'Trimite cererea', 'Sent': 'Trimis', 'Reported': 'Raportat', 'Photo': 'Poză',
+  // distinct from the list/goal wording on purpose — RO keys are exact-match and must not collide
+  'Open': 'Deschis', 'Fixed': 'Rezolvat', 'Mark fixed': 'Marchează rezolvat',
+  'No maintenance requests yet.': 'Nicio cerere de reparație încă.', 'Nothing reported by the tenant.': 'Nimic raportat de chiriaș.',
+  'Request sent — the owner has been notified': 'Cerere trimisă — proprietarul a fost anunțat',
+  'Delete this maintenance request?': 'Ștergi această cerere de reparație?',
   'Nothing to pay yet': 'Nimic de plată încă', 'Rent and shared invoices from your landlord will appear here.': 'Chiria și facturile trimise de proprietar vor apărea aici.',
   'Pay with Revolut:': 'Plătește cu Revolut:',
   'After you mark something as paid, the owner confirms it — until then it shows as "confirmation pending".': 'După ce marchezi ceva ca plătit, proprietarul confirmă — până atunci apare ca „confirmare în așteptare”.',
@@ -546,6 +556,20 @@ async function renderTenantPortal() {
         </div>`).join('')}
       ${data.meters.filter((m) => m.status === 'done').slice(0, 5).map((m) => `
         <p class="muted" style="margin:4px 0">✓ <span style="text-transform:capitalize">${esc(tr(m.utility))}</span>: ${m.reading ? esc(m.reading) : tr('photo sent')} · ${fdate(m.provided_at)}</p>`).join('')}` : ''}
+    <h3 style="margin-top:20px">Request maintenance</h3>
+    <p class="muted">Something broken or not working? Tell the owner, and add a photo if it helps.</p>
+    <form id="mreqform" class="formgrid">
+      <div><label>What needs fixing?</label><input name="title" placeholder="Robinet care picură…" required></div>
+      <div><label>Details (optional)</label><input name="note" placeholder="Where it is, since when…"></div>
+      <div><label>Photo (optional)</label><input name="file" type="file" accept="image/*"></div>
+      <button class="btn small">Send request</button></form>
+    ${(data.maintenance || []).length ? `<table style="margin-top:10px"><thead><tr><th>Sent</th><th>What</th><th>Photo</th><th>Status</th></tr></thead><tbody>
+      ${data.maintenance.map((m) => `<tr>
+        <td>${fdate(m.created_at?.slice(0, 10))}</td>
+        <td><b>${esc(m.title)}</b>${m.note ? `<br><span class="muted">${esc(m.note)}</span>` : ''}</td>
+        <td>${m.photo ? `<a href="/api/tenant/maintenance/${m.id}/photo" target="_blank">photo</a>` : '<span class="muted">—</span>'}</td>
+        <td>${m.status === 'done' ? `<span class="badge paid">${tr('Fixed')}${m.resolved_at ? ' ' + fdate(m.resolved_at) : ''}</span>` : `<span class="badge unpaid">${tr('Open')}</span>`}</td>
+      </tr>`).join('')}</tbody></table>` : `<p class="muted">No maintenance requests yet.</p>`}
     <h3 style="margin-top:20px">Your profile</h3>
     <div class="row" style="gap:16px;align-items:center">${avatarHtml(ME, 'avatar-lg')}
       <span class="row">
@@ -575,6 +599,19 @@ async function renderTenantPortal() {
     try { await api(`/tenant/meter/${inp.dataset.mphoto}/photo`, { method: 'POST', body: fd }); toast('Photo sent — thank you!'); renderTenantPortal(); }
     catch (err) { toast(err.message); }
   }));
+  $('#mreqform').onsubmit = async (e) => {
+    e.preventDefault();
+    const fd0 = new FormData(e.target);
+    const file = fd0.get('file'); fd0.delete('file');
+    try {
+      const r = await api('/tenant/maintenance', { method: 'POST', body: Object.fromEntries(fd0) });
+      if (file && file.size > 0) {
+        const fd = new FormData(); fd.append('file', file);
+        await api(`/tenant/maintenance/${r.id}/photo`, { method: 'POST', body: fd });
+      }
+      toast('Request sent — the owner has been notified'); renderTenantPortal();
+    } catch (err) { toast(err.message); }
+  };
   // tenant profile: picture, name/birthday/phone, language
   const refreshMe = async () => { const me = await api('/me'); ME = me.user; applyLang(); renderTenantPortal(); };
   $('#tavatar').onchange = async () => {
@@ -1307,8 +1344,9 @@ async function renderEntityDocs(box, kind, item, slots, refresh) {
 
 /* tenant & rent section inside a property card (owner view) */
 async function renderTenantBox(box, p) {
-  const [tinfo, charges, meters] = await Promise.all([
-    api(`/properties/${p.id}/tenant`), api(`/properties/${p.id}/charges`), api(`/properties/${p.id}/meter-requests`)]);
+  const [tinfo, charges, meters, maint] = await Promise.all([
+    api(`/properties/${p.id}/tenant`), api(`/properties/${p.id}/charges`), api(`/properties/${p.id}/meter-requests`),
+    api(`/properties/${p.id}/maintenance`)]);
   const t = today();
   box.innerHTML = `<h3 style="margin-top:16px">Tenant & rent</h3>
     <p class="muted">${p.rent_amount ? `${tr('Rent:')} <b>${money(p.rent_amount)}</b> ${tr('/ month, due day')} ${p.rent_due_day || 1} — ${tr('the rent charge is generated automatically once a tenant has joined.')}` : 'No rent set — use <b>Edit</b> to set the monthly rent and due day.'}</p>
@@ -1355,8 +1393,26 @@ async function renderTenantBox(box, p) {
         <td>${m.status === 'done' ? `<span class="badge paid">${tr('received')} ${m.provided_at ? fdate(m.provided_at) : ''}</span>` : '<span class="badge unpaid">waiting</span>'}</td>
         <td>${m.reading ? `<b class="amount">${esc(m.reading)}</b>` : ''}${m.photo ? ` <a href="/api/properties/${p.id}/meter-requests/${m.id}/photo" target="_blank">photo</a>` : ''}</td>
         <td class="right">${canWrite() ? `<button class="btn danger small" data-meterdel="${m.id}">✕</button>` : ''}</td></tr>`).join('')}
-    </tbody></table>` : `<p class="muted">No reading requests yet.</p>`}`;
+    </tbody></table>` : `<p class="muted">No reading requests yet.</p>`}
+    <h3 style="margin-top:16px">Maintenance requests</h3>
+    ${maint.length ? `<table><thead><tr><th>Reported</th><th>What</th><th>Photo</th><th>Status</th><th></th></tr></thead><tbody>
+      ${maint.map((m) => `<tr style="${m.status === 'done' ? 'opacity:.6' : ''}">
+        <td>${fdate(m.created_at?.slice(0, 10))}<br><span class="muted">${esc(m.reported_by || '')}</span></td>
+        <td><b>${esc(m.title)}</b>${m.note ? `<br><span class="muted">${esc(m.note)}</span>` : ''}</td>
+        <td>${m.photo ? `<a href="/api/properties/${p.id}/maintenance/${m.id}/photo" target="_blank">photo</a>` : '<span class="muted">—</span>'}</td>
+        <td>${m.status === 'done' ? `<span class="badge paid">${tr('Fixed')}${m.resolved_at ? ' ' + fdate(m.resolved_at) : ''}</span>` : `<span class="badge unpaid">${tr('Open')}</span>`}</td>
+        <td class="right"><span class="rowacts">${canWrite() ? `<button class="btn ${m.status === 'done' ? 'ghost ' : ''}small" data-mdone="${m.id}">${m.status === 'done' ? 'Reopen' : tr('Mark fixed')}</button>
+          <button class="btn danger small" data-mdel="${m.id}">✕</button>` : ''}</span></td></tr>`).join('')}
+    </tbody></table>` : `<p class="muted">Nothing reported by the tenant.</p>`}`;
   const reload = () => renderTenantBox(box, p);
+  box.querySelectorAll('[data-mdone]').forEach((b) => (b.onclick = async () => {
+    try { await api(`/properties/${p.id}/maintenance/${b.dataset.mdone}/resolve`, { method: 'POST' }); reload(); }
+    catch (err) { toast(err.message); }
+  }));
+  box.querySelectorAll('[data-mdel]').forEach((b) => (b.onclick = async () => {
+    if (!confirm('Delete this maintenance request?')) return;
+    await api(`/properties/${p.id}/maintenance/${b.dataset.mdel}`, { method: 'DELETE' }); reload();
+  }));
   box.querySelectorAll('[data-copy]').forEach((b) => (b.onclick = () => copyText(b.dataset.copy)));
   box.querySelector('[data-tcode]')?.addEventListener('click', async () => {
     await api(`/properties/${p.id}/tenant/invite`, { method: 'POST' }); toast('Tenant code generated'); reload();

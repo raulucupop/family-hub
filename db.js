@@ -244,6 +244,21 @@ CREATE TABLE IF NOT EXISTS meter_requests (
 );
 CREATE INDEX IF NOT EXISTS idx_meter_requests_property ON meter_requests(property_id);
 
+-- maintenance the tenant reports (something broke): description, optional photo, owner marks it done
+CREATE TABLE IF NOT EXISTS maintenance_requests (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  family_id INTEGER NOT NULL REFERENCES families(id) ON DELETE CASCADE,
+  property_id INTEGER NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,   -- the tenant who reported it
+  title TEXT NOT NULL,
+  note TEXT,
+  photo TEXT,                -- uploaded filename
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','done')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  resolved_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_maintenance_property ON maintenance_requests(property_id);
+
 CREATE TABLE IF NOT EXISTS property_records (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   property_id INTEGER NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
