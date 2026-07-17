@@ -97,7 +97,6 @@ label { display: block; font-size: 12.5px; font-weight: 600; color: var(--ink-so
 .stub.late::before { border-color: var(--red); }
 .stub.late .days { color: var(--red); }
 .stub.warn .days { color: var(--amber); }
-.ribbonmore { display: none; } /* desktop scrolls the ribbon; only a phone needs the toggle */
 
 /* KPI comparison line */
 .delta { font-size: 12px; margin-top: 3px; color: var(--ink-soft); }
@@ -247,13 +246,13 @@ details.addbox[open] > summary .plus { transform: rotate(45deg); } /* a + become
     padding-bottom: env(safe-area-inset-bottom, 0); /* clears the iPhone home indicator */
   }
   .tabbar .tab {
-    flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
-    padding: 7px 2px 6px; min-height: 54px; border: 0; background: transparent;
-    color: var(--ink-soft); text-decoration: none; font-size: 11px; font-weight: 600;
+    flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+    padding: 10px 2px 9px; min-height: 66px; border: 0; background: transparent;
+    color: var(--ink-soft); text-decoration: none; font-size: 12.5px; font-weight: 600;
   }
-  .tabbar .tab .ic { font-size: 17px; line-height: 1; position: relative; }
+  .tabbar .tab .ic { font-size: 23px; line-height: 1; position: relative; }
   .tabbar .tab.active { color: var(--accent); }
-  .tabbar .tab .notifbadge { position: absolute; top: -6px; left: 10px; margin: 0; padding: 0 5px; font-size: 10px; }
+  .tabbar .tab .notifbadge { position: absolute; top: -6px; left: 12px; margin: 0; padding: 0 5px; font-size: 10px; }
 
   .sheet { display: block; position: fixed; inset: 0; z-index: 50; }
   .sheet[hidden] { display: none; } /* a plain display:block here would beat the UA's [hidden] rule */
@@ -271,18 +270,10 @@ details.addbox[open] > summary .plus { transform: rotate(45deg); } /* a + become
   .sheet .sheetlink.active { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
   .sheet .sheetlink .ic { font-size: 16px; }
 
-  .main { padding: 16px 12px 78px; } /* clear of the fixed tab bar */
+  .main { padding: 16px 12px 90px; } /* clear of the fixed tab bar */
 
   /* "Coming up" stacks instead of scrolling sideways: 9 items were 2018px of horizontal content
      in a 375px viewport, so exactly one was visible. Show the first few, rest behind "+N more". */
-  .ribbon { flex-direction: column; overflow-x: visible; gap: 8px; padding: 4px 0 6px; }
-  .ribbon .stub { min-width: 0; width: 100%; display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
-  .ribbon .stub .days { font-size: 15px; min-width: 76px; }
-  .ribbon .stub .what { margin-top: 0; flex: 1; min-width: 110px; }
-  .ribbon .stub .who { width: 100%; padding-left: 86px; }
-  .ribbon.clipped .stub.extra { display: none; }
-  .ribbon.clipped.expanded .stub.extra { display: flex; }
-  .ribbonmore { display: block; width: 100%; }
   .grid2, .grid3, .kpi { grid-template-columns: 1fr; }
   .pagehead { flex-direction: column; align-items: flex-start; gap: 8px; margin-bottom: 14px; }
   h1 { font-size: 1.45rem; }
@@ -347,7 +338,7 @@ details.addbox[open] > summary .plus { transform: rotate(45deg); } /* a + become
   details.entity .body { padding: 12px 14px; }
   .chartbox { height: 200px; }
   .deadgrid { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); }
-  .toast { width: calc(100% - 32px); text-align: center; bottom: 74px; } /* above the tab bar */
+  .toast { width: calc(100% - 32px); text-align: center; bottom: 86px; } /* above the tab bar */
 }
 @media (max-width: 480px) {
   .formgrid { grid-template-columns: 1fr; }

@@ -51,7 +51,6 @@ const RO = {
   'This month': 'Luna aceasta', 'Last 3 months': 'Ultimele 3 luni', 'Last 6 months': 'Ultimele 6 luni', 'Last 12 months': 'Ultimele 12 luni',
   'Whole family (total)': 'Toată familia (total)', 'Left over': 'Rămas', 'Income vs spending': 'Venituri vs cheltuieli',
   'Coming up — next 60 days': 'Urmează — următoarele 60 de zile', 'Nothing due soon': 'Nimic scadent curând',
-  'Show less': 'Arată mai puțin',
   // (the KPI comparison sentence is written per language inside deltaHtml, not composed here)
   // rent on the dashboard
   'Rent this month': 'Chiria luna aceasta', 'due': 'scadentă', 'day late': 'zi întârziere', 'days late': 'zile întârziere',
@@ -755,13 +754,12 @@ async function viewDashboard(el) {
       </div></section>` : ''}
     <section>
       <h2>Coming up — next 60 days${scopeNote}</h2>
-      ${reminders.length ? `<div class="ribbon ${reminders.length > RIBBON_MAX ? 'clipped' : ''}" id="ribbon">${reminders.map((r, i) => `
-        <div class="stub ${remClass(r)} ${i >= RIBBON_MAX ? 'extra' : ''}">
+      ${reminders.length ? `<div class="ribbon">${reminders.map((r) => `
+        <div class="stub ${remClass(r)}">
           <div class="days">${daysLabel(r.days_left)}</div>
           <div class="what">${esc(r.label)}</div>
           <div class="who">${esc(r.entity || '')} · ${fdate(r.date)}${r.amount ? ` · <span class="amount">${money(r.amount)}</span>` : ''}</div>
-        </div>`).join('')}</div>
-        ${reminders.length > RIBBON_MAX ? `<button class="btn ghost small ribbonmore" id="rmore">+${reminders.length - RIBBON_MAX} ${tr('more')}</button>` : ''}`
+        </div>`).join('')}</div>`
       : `<div class="card empty"><b>Nothing due soon</b>${DASH_VIEW === 'all' ? 'Add bills, vehicle or property deadlines and they will line up here.' : 'Nothing assigned to this person is coming up.'}</div>`}
     </section>
     <section class="kpi" style="margin-top:18px">
@@ -786,12 +784,6 @@ async function viewDashboard(el) {
     ${goalsHtml(savings.goals)}
     <section class="card" id="dashcal" style="margin-top:18px"><p class="muted">Loading calendar…</p></section>`;
   $('#dash').querySelectorAll('[data-tab]').forEach((a) => a.addEventListener('click', () => { PENDING_MONEY_TAB = a.dataset.tab; }));
-  $('#rmore')?.addEventListener('click', (e) => {
-    const rb = $('#ribbon');
-    rb.classList.toggle('expanded');
-    const open = rb.classList.contains('expanded');
-    e.target.textContent = open ? tr('Show less') : `+${reminders.length - RIBBON_MAX} ${tr('more')}`;
-  });
   drawCharts(stats, DASH_VIEW, DASH_MONTHS);
   renderCalendar($('#dashcal'), true);
 }
@@ -841,9 +833,6 @@ function goalsHtml(goals) {
     }).join('')}
     ${open.length > 4 ? `<p class="muted" style="margin:0"><a href="#money">+${open.length - 4} ${tr('more')} →</a></p>` : ''}</section>`;
 }
-// on a phone the ribbon stacks vertically, so only the first few show until "+N more" is tapped —
-// 9 upcoming items used to mean 2018px of horizontal scroll in a 375px viewport, one item visible
-const RIBBON_MAX = 4;
 let PENDING_MONEY_TAB = null, PENDING_EXPENSE_FILTER = null;
 function drawCharts(stats, scopeView = 'all', scopeMonths = 1) {
   const c0 = getComputedStyle(document.documentElement).getPropertyValue('--ink-soft').trim();
