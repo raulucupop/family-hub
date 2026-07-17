@@ -332,6 +332,9 @@ async function api(path, opts = {}) {
   return data;
 }
 function daysClass(d) { return d < 0 ? 'late' : d <= 14 ? 'warn' : ''; }
+// auto-paid subscriptions take care of themselves — list them, but without the
+// amber/red "this needs you" colour that every other deadline gets
+function remClass(r) { return r.auto_pay ? '' : daysClass(r.days_left); }
 function daysLabel(d) {
   if (LANG === 'ro') return d < 0 ? `întârziat ${-d}z` : d === 0 ? 'azi' : `în ${d}z`;
   return d < 0 ? `${-d}d overdue` : d === 0 ? 'today' : `in ${d}d`;
@@ -618,7 +621,7 @@ async function viewDashboard(el) {
     <section>
       <h2>Coming up — next 60 days${scopeNote}</h2>
       ${reminders.length ? `<div class="ribbon">${reminders.map((r) => `
-        <div class="stub ${daysClass(r.days_left)}">
+        <div class="stub ${remClass(r)}">
           <div class="days">${daysLabel(r.days_left)}</div>
           <div class="what">${esc(r.label)}</div>
           <div class="who">${esc(r.entity || '')} · ${fdate(r.date)}${r.amount ? ` · <span class="amount">${money(r.amount)}</span>` : ''}</div>
@@ -705,7 +708,7 @@ async function renderCalendar(el, embedded) {
     const date = `${CAL_MONTH}-${String(d).padStart(2, '0')}`;
     const evs = byDate[date] || [];
     cells.push(`<div class="day${date === t ? ' today' : ''}"><div class="n">${d}</div>
-      ${evs.slice(0, 3).map((r) => `<div class="ev ${daysClass(r.days_left)}" title="${esc(r.label + (r.entity ? ' — ' + r.entity : ''))}">${esc(r.label)}</div>`).join('')}
+      ${evs.slice(0, 3).map((r) => `<div class="ev ${remClass(r)}" title="${esc(r.label + (r.entity ? ' — ' + r.entity : ''))}">${esc(r.label)}</div>`).join('')}
       ${evs.length > 3 ? `<div class="muted" style="font-size:11px">+${evs.length - 3} ${tr('more')}</div>` : ''}</div>`);
   }
   const controls = `<div class="row"><button class="btn ghost small" id="calprev">←</button>

@@ -1273,7 +1273,8 @@ function collectReminders(fid, horizon, scopeUserId = null) {
     items.push({ kind, label, entity, date, ref_id: id, owner_id: owner ?? null, priority: PRIO[kind] || 1, ...extra });
   };
   for (const b of db.prepare("SELECT * FROM bills WHERE family_id = ? AND status = 'unpaid'").all(fid)) {
-    push('bill', b.name, b.provider || b.category, b.due_date, b.id, b.owner_id, { amount: b.amount });
+    // auto_pay travels with the item so the UI can show it without the "needs you" colour
+    push('bill', b.name, b.provider || b.category, b.due_date, b.id, b.owner_id, { amount: b.amount, auto_pay: b.auto_pay });
   }
   // a document tied to an entity slot (e.g. property PAD) replaces that field's reminder — no duplicates
   const covered = new Set();
