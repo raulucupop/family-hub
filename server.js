@@ -120,6 +120,10 @@ function adminOnly(req, res, next) {
 const num = (v) => (v === '' || v === null || v === undefined ? null : Number(v));
 const str = (v) => (v === undefined || v === null ? null : String(v).trim() || null);
 const isDate = (v) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
+// a positive money value with an upper bound: two 1e308 entries otherwise overflow a SUM to
+// Infinity and blank the whole dashboard. A billion is far above any household figure.
+const MONEY_MAX = 1e9;
+const okAmount = (v) => { const n = Number(v); return Number.isFinite(n) && n > 0 && n <= MONEY_MAX; };
 function inviteCode() {
   return crypto.randomBytes(4).toString('hex').toUpperCase();
 }
@@ -374,7 +378,8 @@ app.get('/api/expenses', auth, (req, res) => {
 // shared by create and edit: returns an error string, or the cleaned fields
 function validateExpense(b, fid) {
   if (!b.category) return 'Category is required';
-  if (!(Number(b.amount) > 0)) return 'Amount must be greater than 0';
+  if (!EXPENSE_CATEGORIES.includes(String(b.category))) return 'Unknown category';
+  if (!okAmount(b.amount)) return 'Amount must be greater than 0';
   if (!isDate(b.date)) return 'Date must be YYYY-MM-DD';
   if (num(b.user_id) != null && !db.prepare('SELECT id FROM users WHERE id = ? AND family_id = ?').get(num(b.user_id), fid)) {
     return 'Person must be a member of the family';
@@ -564,7 +569,7 @@ crud({
   orderBy: 'date DESC, id DESC',
   validate: (b) => {
     if (!b.source) return 'Source is required';
-    if (!(Number(b.amount) > 0)) return 'Amount must be greater than 0';
+    if (!okAmount(b.amount)) return 'Amount must be greater than 0';
     if (!isDate(b.date)) return 'Date must be YYYY-MM-DD';
     return null;
   },
@@ -589,7 +594,7 @@ app.get('/api/recurring-incomes', auth, (req, res) => {
 app.post('/api/recurring-incomes', auth, canWrite, (req, res) => {
   const b = req.body || {};
   if (!str(b.source)) return res.status(400).json({ error: 'Source is required' });
-  if (!(Number(b.amount) > 0)) return res.status(400).json({ error: 'Amount must be greater than 0' });
+  if (!okAmount(b.amount)) return res.status(400).json({ error: 'Amount must be greater than 0' });
   const day = Math.round(Number(b.day));
   if (!(day >= 1 && day <= 28)) return res.status(400).json({ error: 'Day must be between 1 and 28' });
   let uid = num(b.user_id);
@@ -750,7 +755,7 @@ function autoLogCreditExpenses() {
 }
 function validateCredit(b, fid) {
   if (!b.name) return 'Credit name is required';
-  if (!(Number(b.principal) > 0)) return 'Principal must be greater than 0';
+  if (!okAmount(b.principal)) return 'Principal must be greater than 0';
   if (!(Number(b.interest_rate) >= 0)) return 'Dobanda (interest %) must be 0 or more';
   if (!(Number(b.term_months) >= 1)) return 'Term must be at least 1 month';
   if (b.commission != null && b.commission !== '' && !(Number(b.commission) >= 0)) return 'Commission must be 0 or more';
@@ -816,7 +821,7 @@ app.post('/api/credits/:id/payments', auth, canWrite, (req, res) => {
   const credit = db.prepare('SELECT * FROM credits WHERE id = ? AND family_id = ?').get(req.params.id, req.user.family_id);
   if (!credit) return res.status(404).json({ error: 'Not found' });
   const b = req.body || {};
-  if (!(Number(b.amount) > 0)) return res.status(400).json({ error: 'Amount must be greater than 0' });
+  if (!okAmount(b.amount)) return res.status(400).json({ error: 'Amount must be greater than 0' });
   if (!isDate(b.date)) return res.status(400).json({ error: 'Date must be YYYY-MM-DD' });
   db.prepare('INSERT INTO credit_payments (credit_id, family_id, amount, date, paid_by) VALUES (?,?,?,?,?)')
     .run(credit.id, req.user.family_id, Number(b.amount), b.date, req.user.id);
@@ -930,7 +935,7 @@ app.post('/api/bills/:id/pay', auth, canWrite, (req, res) => {
   const bill = db.prepare('SELECT * FROM bills WHERE id = ? AND family_id = ?').get(req.params.id, req.user.family_id);
   if (!bill) return res.status(404).json({ error: 'Not found' });
   const amount = num(req.body?.amount) ?? bill.amount;
-  if (!(Number(amount) > 0)) return res.status(400).json({ error: 'Enter the amount paid' });
+  if (!okAmount(amount)) return res.status(400).json({ error: 'Enter the amount paid' });
   const today = new Date().toISOString().slice(0, 10);
   const tx = db.transaction(() => {
     db.prepare('INSERT INTO bill_payments (bill_id, family_id, amount, paid_at, paid_by) VALUES (?,?,?,?,?)')
@@ -1138,6 +1143,7 @@ app.post('/api/vehicles/:pid/records', auth, canWrite, (req, res) => {
   const b = req.body || {};
   if (!VEH_REC_TYPES.includes(b.type)) return res.status(400).json({ error: 'Invalid record type' });
   if (!isDate(b.date)) return res.status(400).json({ error: 'Date must be YYYY-MM-DD' });
+  if (b.amount != null && b.amount !== '' && !okAmount(b.amount)) return res.status(400).json({ error: 'Amount must be greater than 0' });
   let expenseId = null;
   const rid = db.transaction(() => {
     if (Number(b.amount) > 0) {
@@ -1174,6 +1180,7 @@ app.post('/api/properties/:pid/records', auth, canWrite, (req, res) => {
   const b = req.body || {};
   if (!PROP_REC_TYPES.includes(b.type)) return res.status(400).json({ error: 'Invalid record type' });
   if (!isDate(b.date)) return res.status(400).json({ error: 'Date must be YYYY-MM-DD' });
+  if (b.amount != null && b.amount !== '' && !okAmount(b.amount)) return res.status(400).json({ error: 'Amount must be greater than 0' });
   const isCost = PROP_COST_TYPES.includes(b.type) && Number(b.amount) > 0;
   const tenant = db.prepare("SELECT id FROM users WHERE role = 'tenant' AND tenant_property_id = ?").get(prop.id);
   let expenseId = null, attributedUser = null;
@@ -1298,7 +1305,7 @@ app.post('/api/properties/:id/charges', auth, canWrite, (req, res) => {
   const b = req.body || {};
   if (!['rent', 'invoice'].includes(b.type)) return res.status(400).json({ error: 'Type must be rent or invoice' });
   if (!b.title) return res.status(400).json({ error: 'Title is required' });
-  if (!(Number(b.amount) > 0)) return res.status(400).json({ error: 'Amount must be greater than 0' });
+  if (!okAmount(b.amount)) return res.status(400).json({ error: 'Amount must be greater than 0' });
   if (!isDate(b.due_date)) return res.status(400).json({ error: 'Due date must be YYYY-MM-DD' });
   const info = db.prepare('INSERT INTO tenant_charges (family_id, property_id, type, title, amount, due_date, note) VALUES (?,?,?,?,?,?,?)')
     .run(prop.family_id, prop.id, b.type, str(b.title), Number(b.amount), b.due_date, str(b.note));
@@ -2249,7 +2256,7 @@ app.get('/api/savings', auth, (req, res) => {
 app.post('/api/savings', auth, canWrite, (req, res) => {
   const b = req.body || {};
   if (!['deposit', 'withdrawal'].includes(b.kind)) return res.status(400).json({ error: 'Kind must be deposit or withdrawal' });
-  if (!(Number(b.amount) > 0)) return res.status(400).json({ error: 'Amount must be greater than 0' });
+  if (!okAmount(b.amount)) return res.status(400).json({ error: 'Amount must be greater than 0' });
   if (!isDate(b.date)) return res.status(400).json({ error: 'Date must be YYYY-MM-DD' });
   if (num(b.goal_id) != null && !db.prepare('SELECT id FROM savings_goals WHERE id = ? AND family_id = ?').get(num(b.goal_id), req.user.family_id)) {
     return res.status(400).json({ error: 'Goal not found' });
@@ -2290,7 +2297,13 @@ app.get('/api/export/expenses.csv', auth, (req, res) => {
     FROM expenses e LEFT JOIN users u ON u.id = e.user_id
     WHERE e.family_id = ? ORDER BY e.date
   `).all(req.user.family_id);
-  const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  // CSV injection defence: a cell starting with = + - @ (or a control char) is run as a formula by
+  // Excel/Sheets. A note like "=HYPERLINK(...)" would execute on open. Prefix those with a quote.
+  const esc = (v) => {
+    let s = String(v ?? '');
+    if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+    return `"${s.replace(/"/g, '""')}"`;
+  };
   const csv = ['date,category,amount,note,added_by', ...rows.map((r) => [r.date, r.category, r.amount, r.note, r.added_by].map(esc).join(','))].join('\n');
   res.setHeader('Content-Type', 'text/csv');
   res.setHeader('Content-Disposition', 'attachment; filename="expenses.csv"');
