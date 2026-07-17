@@ -268,6 +268,7 @@ const RO_RX = [
   [/^🎂 (.+)'s birthday$/, '🎂 Ziua de naștere: $1'],
   [/^Overdue: (.+) — unpaid by tenant$/, 'Restant: $1 — neplătit de chiriaș'],
   [/^(.+) — unpaid by tenant$/, '$1 — neplătit de chiriaș'],
+  [/^To fix: (.+)$/, 'De reparat: $1'],
 ];
 let LANG = 'en';
 function applyLang() { LANG = (ME && ME.lang) || 'en'; document.documentElement.lang = LANG; }

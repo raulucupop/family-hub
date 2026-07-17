@@ -1503,10 +1503,10 @@ function generateNotifications(fid) {
   const live = new Set(); // every key this pass still considers unsolved
   // keys are stable per item+threshold, so the text is refreshed on every pass and "X days left"
   // always matches the dashboard.
-  const add = (key, title, body, owner) => {
+  const add = (key, title, body, owner, push = true) => {
     live.add(key);
     if (ins.run(fid, key, title, body, owner).changes > 0) {
-      fresh.push({ title, body, owner });
+      if (push) fresh.push({ title, body, owner });
     } else if (upd.run(title, body, fid, key, title, body).changes > 0) {
       // the item is still unsolved and its message moved on (another day gone by): a read alert
       // would otherwise stay buried, so put it back in front of the family.
@@ -1531,6 +1531,22 @@ function generateNotifications(fid) {
         break; // only the tightest threshold crossed right now
       }
     }
+  }
+  // maintenance the tenant reported and nobody has fixed yet. Not a dated deadline, so it is not
+  // routed through collectReminders — on the dashboard "3d overdue" would misread; it is open, not late.
+  // push = false: reporting it already sent the owner a pop-up, and this would double up.
+  const todayISO = new Date().toISOString().slice(0, 10);
+  for (const m of db.prepare(`
+    SELECT m.id, m.title, m.created_at, p.name AS property_name, p.owner_id, u.name AS reporter
+    FROM maintenance_requests m
+    JOIN properties p ON p.id = m.property_id
+    LEFT JOIN users u ON u.id = m.user_id
+    WHERE m.family_id = ? AND m.status = 'open'
+  `).all(fid)) {
+    const days = Math.round((new Date(todayISO) - new Date(String(m.created_at).slice(0, 10))) / 86400000);
+    add(`maintenance:${m.id}:open`, `To fix: ${m.title}`,
+      `${m.property_name} — reported by ${m.reporter || 'the tenant'} ${days <= 0 ? 'today' : `${days} day${days === 1 ? '' : 's'} ago`}`,
+      m.owner_id, false);
   }
   // Anything not regenerated above is solved — renewed deadline, paid charge, deleted item, or an
   // older threshold superseded by a tighter one. Solved alerts are deleted rather than left stale.
