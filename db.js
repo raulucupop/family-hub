@@ -297,6 +297,22 @@ CREATE TABLE IF NOT EXISTS recurring_incomes (
   last_period TEXT                  -- YYYY-MM of the last auto-logged month
 );
 
+-- recurring expenses: the fixed costs that are neither a bill with a due date nor a credit
+-- (school fees, insurance instalments…). Logged automatically each month like recurring income.
+CREATE TABLE IF NOT EXISTS recurring_expenses (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  family_id INTEGER NOT NULL REFERENCES families(id) ON DELETE CASCADE,
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  category TEXT NOT NULL,
+  note TEXT,
+  amount REAL NOT NULL,
+  day INTEGER NOT NULL DEFAULT 1,   -- day of month (1-28)
+  property_id INTEGER REFERENCES properties(id) ON DELETE SET NULL,
+  vehicle_id INTEGER REFERENCES vehicles(id) ON DELETE SET NULL,
+  active INTEGER NOT NULL DEFAULT 1,
+  last_period TEXT                  -- YYYY-MM of the last auto-logged month
+);
+
 -- savings goals: deposits/withdrawals can be tagged with a goal to track progress
 CREATE TABLE IF NOT EXISTS savings_goals (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

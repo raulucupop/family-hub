@@ -107,6 +107,10 @@ const RO = {
   'Link to (optional)': 'Asociază cu (opțional)', 'Nothing': 'Nimic', '● All time': '● Tot timpul',
   'Expense added': 'Cheltuială adăugată', 'Delete this expense?': 'Ștergi această cheltuială?',
   'Expense updated': 'Cheltuială actualizată',
+  'Recurring expenses': 'Cheltuieli recurente',
+  "Fixed monthly costs that aren't bills — logged automatically every month on the chosen day.": 'Costuri lunare fixe care nu sunt facturi — înregistrate automat în fiecare lună în ziua aleasă.',
+  'Recurring expense added': 'Cheltuială recurentă adăugată',
+  'Delete this recurring expense? Already-logged months stay.': 'Ștergi această cheltuială recurentă? Lunile deja înregistrate rămân.',
   // password ('Password' itself is already in the auth block above)
   'Changing it signs you out on every other device.': 'Schimbarea ei te deconectează de pe toate celelalte dispozitive.',
   'Current password': 'Parola actuală', 'Change password': 'Schimbă parola',
@@ -848,7 +852,8 @@ function unpackExpenseBody(b) {
 }
 async function moneyExpenses(body, f = {}) {
   const flt = { month: thisMonth(), who: 'all', cat: 'all', q: '', ...f };
-  const [all, members, properties, vehicles] = await Promise.all([api('/expenses'), api('/family/members'), api('/properties'), api('/vehicles')]);
+  const [all, members, properties, vehicles, recurring] = await Promise.all([
+    api('/expenses'), api('/family/members'), api('/properties'), api('/vehicles'), api('/recurring-expenses')]);
   const mname = Object.fromEntries(members.map((m) => [m.id, m.name]));
   const q = flt.q.trim().toLowerCase();
   const rows = all.filter((e) =>
@@ -862,6 +867,24 @@ async function moneyExpenses(body, f = {}) {
     ${canWrite() ? `<div class="card"><h3>Add expense</h3><form id="expform" class="formgrid">
       ${expenseFormFields(members, properties, vehicles)}
       <button class="btn">Add expense</button></form></div>` : ''}
+    <div class="card" style="margin-top:16px"><h3>Recurring expenses</h3>
+      <p class="muted" style="margin-top:0">Fixed monthly costs that aren't bills — logged automatically every month on the chosen day.</p>
+      ${recurring.length ? `<table><tbody>${recurring.map((r) => `<tr style="${r.active ? '' : 'opacity:.55'}">
+        <td><b>${esc(r.note || tr(r.category))}</b> <span class="muted">· ${tr(r.category)} · ${esc(r.user_name || tr('whole family'))} · ${tr('day')} ${r.day}${r.property_name ? ` · ⌂ ${esc(r.property_name)}` : ''}${r.vehicle_name ? ` · ⛟ ${esc(r.vehicle_name)}` : ''}</span>${r.active ? '' : ' <span class="badge role">paused</span>'}</td>
+        <td class="right amount">${money(r.amount)}<span class="muted">/${tr('mo')}</span></td>
+        <td class="right">${canWrite() ? `<span class="rowacts"><button class="btn ghost small" data-rxtog="${r.id}">${r.active ? 'Pause' : 'Resume'}</button>
+          <button class="btn danger small" data-rxdel="${r.id}">✕</button></span>` : ''}</td></tr>`).join('')}</tbody></table>` : ''}
+      ${canWrite() ? `<form id="recxform" class="formgrid" style="margin-top:10px">
+        <div><label>Category</label><select name="category">${CATEGORIES.map((c) => `<option value="${c}">${c}</option>`).join('')}</select></div>
+        <div><label>Note</label><input name="note" placeholder="Grădiniță, asigurare…"></div>
+        <div><label>Amount (${cur()}/mo)</label><input name="amount" type="number" step="0.01" min="0.01" required></div>
+        <div><label>Day of month</label><input name="day" type="number" min="1" max="28" value="1" required></div>
+        <div><label>Person</label><select name="user_id">${members.map((m) => `<option value="${m.id}" ${m.id === ME.id ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}</select></div>
+        ${properties.length || vehicles.length ? `<div><label>Link to (optional)</label><select name="link"><option value="">Nothing</option>
+          ${properties.map((p) => `<option value="property:${p.id}">⌂ ${esc(p.name)}</option>`).join('')}
+          ${vehicles.map((v) => `<option value="vehicle:${v.id}">⛟ ${esc(v.name)}</option>`).join('')}</select></div>` : ''}
+        <button class="btn small">Add recurring</button></form>` : ''}
+    </div>
     <div class="card" style="margin-top:16px">
       <div class="row" style="justify-content:space-between;gap:10px"><h3 style="margin:0">Expenses</h3><span class="amount"><b>${money(total)}</b></span></div>
       <div class="row" style="gap:8px;margin:10px 0;flex-wrap:wrap">
@@ -892,6 +915,18 @@ async function moneyExpenses(body, f = {}) {
     try { await api('/expenses', { method: 'POST', body: unpackExpenseBody(Object.fromEntries(new FormData(e.target))) }); toast('Expense added'); reload(); }
     catch (err) { toast(err.message); }
   });
+  $('#recxform')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try { await api('/recurring-expenses', { method: 'POST', body: unpackExpenseBody(Object.fromEntries(new FormData(e.target))) }); toast('Recurring expense added'); reload(); }
+    catch (err) { toast(err.message); }
+  });
+  body.querySelectorAll('[data-rxtog]').forEach((b) => (b.onclick = async () => {
+    await api(`/recurring-expenses/${b.dataset.rxtog}/toggle`, { method: 'POST' }); reload();
+  }));
+  body.querySelectorAll('[data-rxdel]').forEach((b) => (b.onclick = async () => {
+    if (!confirm('Delete this recurring expense? Already-logged months stay.')) return;
+    await api('/recurring-expenses/' + b.dataset.rxdel, { method: 'DELETE' }); reload();
+  }));
   const byId = Object.fromEntries(rows.map((e) => [e.id, e]));
   body.querySelectorAll('[data-edit]').forEach((b) => (b.onclick = () => {
     const row = $('#exprow-' + b.dataset.edit);

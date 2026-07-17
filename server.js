@@ -455,6 +455,58 @@ app.delete('/api/expenses/:id', auth, canWrite, (req, res) => {
   })();
   res.json({ ok: true });
 });
+// ---------- recurring expenses ----------
+// the fixed monthly costs that are not a bill (no due date to chase) and not a credit.
+// Logged on their day each month, through the same path as a hand-entered expense so a linked
+// property/car still gets its cost-history row.
+function autoLogRecurringExpenses() {
+  const period = new Date().toISOString().slice(0, 7);
+  const todayDay = new Date().getUTCDate();
+  for (const r of db.prepare('SELECT * FROM recurring_expenses WHERE active = 1').all()) {
+    const day = Math.min(Math.max(r.day, 1), 28);
+    if (r.last_period === period || todayDay < day) continue;
+    const date = `${period}-${String(day).padStart(2, '0')}`;
+    const b = { category: r.category, amount: r.amount, note: r.note, date, property_id: r.property_id, vehicle_id: r.vehicle_id };
+    db.transaction(() => {
+      const info = db.prepare('INSERT INTO expenses (family_id, user_id, category, amount, note, date, property_id, vehicle_id) VALUES (?,?,?,?,?,?,?,?)')
+        .run(r.family_id, r.user_id, r.category, r.amount, r.note, date, r.property_id, r.vehicle_id);
+      mirrorExpense(r.family_id, info.lastInsertRowid, b, r.user_id);
+      db.prepare('UPDATE recurring_expenses SET last_period = ? WHERE id = ?').run(period, r.id);
+    })();
+  }
+}
+app.get('/api/recurring-expenses', auth, (req, res) => {
+  res.json(db.prepare(`
+    SELECT r.*, u.name AS user_name, p.name AS property_name, v.name AS vehicle_name FROM recurring_expenses r
+    LEFT JOIN users u ON u.id = r.user_id
+    LEFT JOIN properties p ON p.id = r.property_id
+    LEFT JOIN vehicles v ON v.id = r.vehicle_id
+    WHERE r.family_id = ? ORDER BY r.active DESC, r.id DESC
+  `).all(req.user.family_id));
+});
+app.post('/api/recurring-expenses', auth, canWrite, (req, res) => {
+  const b = req.body || {};
+  const day = Math.round(Number(b.day));
+  if (!(day >= 1 && day <= 28)) return res.status(400).json({ error: 'Day must be between 1 and 28' });
+  // reuse the one-off expense rules: same categories, same person and link checks
+  const err = validateExpense({ ...b, date: '2000-01-01' }, req.user.family_id);
+  if (err) return res.status(400).json({ error: err });
+  const uid = num(b.user_id) ?? req.user.id;
+  const info = db.prepare('INSERT INTO recurring_expenses (family_id, user_id, category, note, amount, day, property_id, vehicle_id) VALUES (?,?,?,?,?,?,?,?)')
+    .run(req.user.family_id, uid, str(b.category), str(b.note), Number(b.amount), day, num(b.property_id), num(b.vehicle_id));
+  autoLogRecurringExpenses(); // if this month's day already passed, log it right away
+  res.json(db.prepare('SELECT * FROM recurring_expenses WHERE id = ?').get(info.lastInsertRowid));
+});
+app.post('/api/recurring-expenses/:id/toggle', auth, canWrite, (req, res) => {
+  const info = db.prepare('UPDATE recurring_expenses SET active = 1 - active WHERE id = ? AND family_id = ?').run(req.params.id, req.user.family_id);
+  if (!info.changes) return res.status(404).json({ error: 'Not found' });
+  res.json({ ok: true });
+});
+app.delete('/api/recurring-expenses/:id', auth, canWrite, (req, res) => {
+  db.prepare('DELETE FROM recurring_expenses WHERE id = ? AND family_id = ?').run(req.params.id, req.user.family_id);
+  res.json({ ok: true }); // already-logged months stay, like recurring income
+});
+
 crud({
   route: 'incomes', table: 'incomes',
   fields: ['user_id', 'source', 'amount', 'date'],
@@ -632,9 +684,17 @@ function autoLogCreditExpenses() {
     }
     const total = Math.round((stats.monthly_payment + (Number(c.commission) || 0)) * 100) / 100;
     const dueDate = `${period}-${String(Math.min(dueDay, 28)).padStart(2, '0')}`;
-    db.prepare('INSERT INTO expenses (family_id, user_id, category, amount, note, date) VALUES (?,?,?,?,?,?)')
-      .run(c.family_id, c.user_id, 'Credit', total, `Credit: ${c.name} ${period}`, dueDate);
-    db.prepare('UPDATE credits SET auto_expense_period = ? WHERE id = ?').run(period, c.id);
+    // a credit tied to a property carries that link onto the expense, so the mortgage lands in
+    // the property's own cost history — without it "is this flat making money?" ignores the loan
+    // the mirror label is built as "<category>: <note>", so the note here carries no "Credit:"
+    // prefix of its own — the expense's own note keeps it
+    const b = { category: 'Credit', amount: total, note: `${c.name} ${period}`, date: dueDate, property_id: c.property_id, vehicle_id: null };
+    db.transaction(() => {
+      const info = db.prepare('INSERT INTO expenses (family_id, user_id, category, amount, note, date, property_id) VALUES (?,?,?,?,?,?,?)')
+        .run(c.family_id, c.user_id, 'Credit', total, `Credit: ${c.name} ${period}`, dueDate, c.property_id);
+      mirrorExpense(c.family_id, info.lastInsertRowid, b, c.user_id);
+      db.prepare('UPDATE credits SET auto_expense_period = ? WHERE id = ?').run(period, c.id);
+    })();
   }
 }
 function validateCredit(b, fid) {
@@ -2004,6 +2064,7 @@ async function emailReminderTick() {
   try { autoPayBills(); } catch (err) { console.error('auto-pay bills:', err.message); }
   try { autoLogCreditExpenses(); } catch (err) { console.error('auto credit expense:', err.message); }
   try { autoLogIncomes(); } catch (err) { console.error('auto incomes:', err.message); }
+  try { autoLogRecurringExpenses(); } catch (err) { console.error('auto recurring expenses:', err.message); }
   try { for (const p of db.prepare('SELECT * FROM properties').all()) ensureMeterRequests(p); } catch (err) { console.error('meter schedule:', err.message); }
   try { await runEmailReminders(); } catch (err) { console.error('email reminders:', err.message); }
   try { await runMonthlyReports(); } catch (err) { console.error('monthly report:', err.message); }
@@ -2060,7 +2121,7 @@ const CATEGORY_SET = new Set(['Groceries', 'Utilities', 'Transportation', 'Enter
 
 // ---------- dashboard stats ----------
 app.get('/api/stats', auth, (req, res) => {
-  autoPayBills(); autoLogCreditExpenses(); autoLogIncomes();
+  autoPayBills(); autoLogCreditExpenses(); autoLogIncomes(); autoLogRecurringExpenses();
   const fid = req.user.family_id;
   const month = req.query.month || new Date().toISOString().slice(0, 7);
   // ?months=1|3|6|12 sets the KPI/category window (default 1 = current month); trend spans the same window
