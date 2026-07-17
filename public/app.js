@@ -380,8 +380,8 @@ async function api(path, opts = {}) {
    phone. Collapse it there; a desktop has room for it to stay open. The "+" is its own element so
    the label beside it still matches the RO dictionary exactly. */
 const wideScreen = () => window.innerWidth > 860;
-function addBox(title, inner) {
-  return `<details class="card addbox" ${wideScreen() ? 'open' : ''}>
+function addBox(title, inner, forceOpen) {
+  return `<details class="card addbox" ${(wideScreen() || forceOpen) ? 'open' : ''}>
     <summary><span class="plus" aria-hidden="true">+</span> ${title}</summary>
     <div class="addbody">${inner}</div></details>`;
 }
@@ -441,6 +441,7 @@ function render() {
   applyTheme(); applyLang();
   if (ME.role === 'tenant') return renderTenantPortal();
   const page = (location.hash || '#dashboard').slice(1);
+  if (page !== 'money') EXP_FORM_OPEN = false; // leaving Money → next visit shows data first, not a form
   const fn = routes[page] || viewDashboard;
   app.innerHTML = shell(page);
   app.querySelectorAll('[data-logout]').forEach((b) => (b.onclick = async () => { await api('/auth/logout', { method: 'POST' }); ME = null; renderAuth(); }));
@@ -448,6 +449,11 @@ function render() {
   const closeSheet = () => (sheet.hidden = true);
   $('#moretab').onclick = () => (sheet.hidden = !sheet.hidden);
   sheet.querySelectorAll('[data-close], .sheetlink').forEach((x) => x.addEventListener('click', closeSheet));
+  // floating +: one tap to log an expense from anywhere, straight into a focused Amount
+  $('#fab')?.addEventListener('click', () => {
+    EXP_FORM_OPEN = true; FOCUS_AMOUNT = true; PENDING_MONEY_TAB = 'expenses';
+    if (page === 'money') viewMoney($('#page'), 'expenses'); else location.hash = '#money';
+  });
   fn($('#page'));
   pollNotifications();
 }
@@ -473,6 +479,7 @@ function shell(active) {
       <button class="navlink" data-logout>↩ Sign out</button>
     </nav>
     <main class="main" id="page"></main>
+    ${canWrite() && active !== 'money' ? `<button class="fab" id="fab" aria-label="Add expense" title="Add expense">+</button>` : ''}
     <nav class="tabbar">
       ${TABS.map(([k, ic, l]) => `<a class="tab ${k === active ? 'active' : ''}" href="#${k}">
         <span class="ic" aria-hidden="true">${ic}${k === 'alerts' ? badgeHtml() : ''}</span><span class="tl">${l}</span></a>`).join('')}
@@ -834,6 +841,10 @@ function goalsHtml(goals) {
     ${open.length > 4 ? `<p class="muted" style="margin:0"><a href="#money">+${open.length - 4} ${tr('more')} →</a></p>` : ''}</section>`;
 }
 let PENDING_MONEY_TAB = null, PENDING_EXPENSE_FILTER = null;
+// rapid expense entry: remember the last category for the session, keep the add form open after a
+// save (reset when you leave the page, so a fresh visit still shows your data first), and let the
+// floating + jump straight to a focused amount field.
+let LAST_EXP_CAT = null, EXP_FORM_OPEN = false, FOCUS_AMOUNT = false;
 function drawCharts(stats, scopeView = 'all', scopeMonths = 1) {
   const c0 = getComputedStyle(document.documentElement).getPropertyValue('--ink-soft').trim();
   if (window.Chart) { Chart.defaults.color = c0 || '#666'; Chart.defaults.borderColor = getComputedStyle(document.documentElement).getPropertyValue('--line').trim() || '#ddd'; }
@@ -949,7 +960,7 @@ function expenseFormFields(members, properties, vehicles, e = {}) {
   const link = e.property_id ? `property:${e.property_id}` : e.vehicle_id ? `vehicle:${e.vehicle_id}` : '';
   return `
     <div><label>Date</label><input name="date" type="date" value="${e.date || today()}" required></div>
-    <div><label>Category</label><select name="category">${CATEGORIES.map((c) => `<option value="${c}" ${e.category === c ? 'selected' : ''}>${c}</option>`).join('')}</select></div>
+    <div><label>Category</label><select name="category">${CATEGORIES.map((c) => `<option value="${c}" ${(e.category ?? LAST_EXP_CAT) === c ? 'selected' : ''}>${c}</option>`).join('')}</select></div>
     <div><label>Amount (${cur()})</label><input name="amount" type="number" step="0.01" min="0.01" value="${e.amount ?? ''}" required></div>
     <div><label>Person</label><select name="user_id">${members.map((m) => `<option value="${m.id}" ${String(e.user_id ?? ME.id) === String(m.id) ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}</select></div>
     ${properties.length || vehicles.length ? `<div><label>Link to (optional)</label><select name="link"><option value="">Nothing</option>
@@ -981,7 +992,7 @@ async function moneyExpenses(body, f = {}) {
   body.innerHTML = `
     ${canWrite() ? addBox('Add expense', `<form id="expform" class="formgrid">
       ${expenseFormFields(members, properties, vehicles)}
-      <button class="btn">Add expense</button></form>`) : ''}
+      <button class="btn">Add expense</button></form>`, EXP_FORM_OPEN) : ''}
     <details class="card addbox" style="margin-top:16px" ${wideScreen() ? 'open' : ''}><summary><span class="plus" aria-hidden="true">+</span> Recurring expenses</summary><div class="addbody">
       <p class="muted" style="margin-top:0">Fixed monthly costs that aren't bills — logged automatically every month on the chosen day.</p>
       ${recurring.length ? `<table><tbody>${recurring.map((r) => `<tr style="${r.active ? '' : 'opacity:.55'}">
@@ -1027,9 +1038,17 @@ async function moneyExpenses(body, f = {}) {
   qEl.oninput = () => { clearTimeout(qEl._h); qEl._h = setTimeout(() => reload({ q: qEl.value }), 250); };
   $('#expform')?.addEventListener('submit', async (e) => {
     e.preventDefault();
-    try { await api('/expenses', { method: 'POST', body: unpackExpenseBody(Object.fromEntries(new FormData(e.target))) }); toast('Expense added'); reload(); }
-    catch (err) { toast(err.message); }
+    const payload = unpackExpenseBody(Object.fromEntries(new FormData(e.target)));
+    try {
+      await api('/expenses', { method: 'POST', body: payload });
+      LAST_EXP_CAT = payload.category;   // next entry defaults to the same category
+      EXP_FORM_OPEN = true;              // stay open for the next one instead of collapsing
+      FOCUS_AMOUNT = true;               // ...with the cursor already in Amount
+      toast('Expense added'); reload();
+    } catch (err) { toast(err.message); }
   });
+  // one-shot: only jump into Amount right after an add or the floating +, never on a filter reload
+  if (FOCUS_AMOUNT) { FOCUS_AMOUNT = false; $('#expform')?.querySelector('[name=amount]')?.focus(); }
   $('#recxform')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     try { await api('/recurring-expenses', { method: 'POST', body: unpackExpenseBody(Object.fromEntries(new FormData(e.target))) }); toast('Recurring expense added'); reload(); }

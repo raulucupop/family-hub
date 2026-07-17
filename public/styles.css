@@ -223,6 +223,9 @@ details.addbox[open] > summary .plus { transform: rotate(45deg); } /* a + become
 /* an amount echoed back formatted, so 247500 and 24750 stop looking alike */
 .amounthint { display: block; font-family: var(--mono); font-size: 11.5px; color: var(--ink-soft); margin-top: 3px; }
 
+/* floating + : phone-only shortcut to log an expense from any page */
+.fab { display: none; }
+
 /* bottom tab bar + "More" sheet: phone only, hidden on desktop where the sidebar does the job */
 .tabbar, .sheet { display: none; }
 
@@ -271,6 +274,14 @@ details.addbox[open] > summary .plus { transform: rotate(45deg); } /* a + become
   .sheet .sheetlink .ic { font-size: 16px; }
 
   .main { padding: 16px 12px 90px; } /* clear of the fixed tab bar */
+
+  .fab {
+    display: flex; align-items: center; justify-content: center;
+    position: fixed; right: 16px; bottom: calc(74px + env(safe-area-inset-bottom, 0)); z-index: 44;
+    width: 54px; height: 54px; border-radius: 999px; border: 0;
+    background: var(--accent); color: #fff; font-size: 30px; line-height: 1; padding-bottom: 3px;
+    box-shadow: 0 4px 14px rgba(0,0,0,.28);
+  }
 
   /* "Coming up" stacks instead of scrolling sideways: 9 items were 2018px of horizontal content
      in a 375px viewport, so exactly one was visible. Show the first few, rest behind "+N more". */
