@@ -1518,7 +1518,8 @@ async function runEmailReminders() {
       if (it.days_left < 0) continue;
       let key = null;
       if (it.kind === 'bill') {
-        if (it.days_left <= 7) key = `adm:${fam.id}:bill:${it.ref_id}:${it.date}:7`;
+        // auto-paid subscriptions collect themselves — nothing for anyone to act on
+        if (!it.auto_pay && it.days_left <= 7) key = `adm:${fam.id}:bill:${it.ref_id}:${it.date}:7`;
       } else {
         const t = MAIL_THRESHOLDS.find((x) => it.days_left <= x);
         if (t != null) key = `adm:${fam.id}:${it.kind}:${it.ref_id}:${it.date}:${t}`;
