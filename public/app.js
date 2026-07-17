@@ -191,6 +191,7 @@ const RO = {
   // tenant portal
   'Tenant portal ·': 'Portal chiriaș ·', 'Signed in as': 'Autentificat ca', '· rent': '· chirie', 'invoice': 'factură',
   'to pay': 'de plată', 'confirmation pending': 'confirmare în așteptare', 'Pay': 'Plătește', 'Mark as paid': 'Marchează plătit',
+  'Pay with Revolut': 'Plătește cu Revolut', 'Pick a date': 'Alege data',
   'Nothing to pay yet': 'Nimic de plată încă', 'Rent and shared invoices from your landlord will appear here.': 'Chiria și facturile trimise de proprietar vor apărea aici.',
   'Pay with Revolut:': 'Plătește cu Revolut:',
   'After you mark something as paid, the owner confirms it — until then it shows as "confirmation pending".': 'După ce marchezi ceva ca plătit, proprietarul confirmă — până atunci apare ca „confirmare în așteptare”.',
@@ -483,6 +484,13 @@ function renderReset() {
 
 /* ---------- tenant portal ---------- */
 const CHARGE_STATUS = { unpaid: 'to pay', pending: 'confirmation pending', paid: 'paid' };
+// Revolut's badge next to the Pay action, so it is obvious where the link goes.
+// Drawn inline rather than hotlinking an asset — the page stays self-contained, and
+// the brand blue reads on both the light and the dark theme.
+const REVOLUT_MARK = `<svg class="rmark" viewBox="0 0 24 24" width="15" height="15" aria-hidden="true" focusable="false">
+    <rect width="24" height="24" rx="6" fill="#0666EB"></rect>
+    <text x="12" y="17.6" text-anchor="middle" font-size="15" font-weight="700" font-family="system-ui, sans-serif" fill="#fff">R</text>
+  </svg>`;
 async function renderTenantPortal() {
   let data;
   try { data = await api('/tenant/charges'); }
@@ -513,7 +521,7 @@ async function renderTenantPortal() {
           <td>${c.status === 'paid' ? `<span class="badge paid">${tr('paid')}${c.confirmed_at ? ' ' + fdate(c.confirmed_at) : ''}</span>`
             : c.status === 'pending' ? `<span class="badge role">confirmation pending</span>`
             : `<span class="badge unpaid">to pay</span>`}</td>
-          <td class="right">${c.status === 'unpaid' ? `<span class="row" style="gap:6px;justify-content:flex-end;flex-wrap:nowrap;white-space:nowrap">${payUrl ? `<a class="btn ghost small" href="${esc(payUrl(c.amount))}" target="_blank" rel="noopener">Pay</a>` : ''}<button class="btn small" data-pay="${c.id}">Mark as paid</button></span>` : ''}</td>
+          <td class="right">${c.status === 'unpaid' ? `<span class="row" style="gap:6px;justify-content:flex-end;flex-wrap:nowrap;white-space:nowrap">${payUrl ? `<a class="btn ghost small revolut" href="${esc(payUrl(c.amount))}" target="_blank" rel="noopener" title="Pay with Revolut">Pay ${REVOLUT_MARK}</a>` : ''}<button class="btn small" data-pay="${c.id}">Mark as paid</button></span>` : ''}</td>
         </tr>`;
       }).join('')}</tbody></table>`
     : `<div class="empty" style="margin-top:14px"><b>Nothing to pay yet</b>Rent and shared invoices from your landlord will appear here.</div>`}
@@ -1959,6 +1967,7 @@ async function setupPushCard() {
    into a numeric text field (numeric keypad on mobile, auto slashes). Values are converted
    back to ISO centrally in api(); displayed dates use fdate(). */
 function upgradeDateInput(inp) {
+  if (inp.classList.contains('dateinput') || inp.classList.contains('dpnative')) return; // already done / our own helper
   const iso = inp.value; // browser normalized a type=date value to yyyy-mm-dd
   inp.type = 'text';
   inp.setAttribute('inputmode', 'numeric');
@@ -1968,12 +1977,41 @@ function upgradeDateInput(inp) {
   inp.title = 'Format: dd/mm/yyyy';
   inp.classList.add('dateinput');
   inp.value = ISO_RE.test(iso) ? isoToDMY(iso) : '';
+  addDatePicker(inp);
 }
-function sweepDates(root) { root.querySelectorAll && root.querySelectorAll('input[type="date"]').forEach(upgradeDateInput); }
+/* Typing dd/mm/yyyy on a phone keypad is fiddly, so each date field also gets a 📅 button.
+   A real (invisible) type=date input sits on top of it: tapping that opens the device's own
+   calendar — no showPicker() support needed. It carries no name, so forms never submit it. */
+function addDatePicker(inp) {
+  if (inp.parentElement?.classList.contains('datefield')) return;
+  const wrap = document.createElement('span');
+  wrap.className = 'datefield';
+  inp.parentNode.insertBefore(wrap, inp);
+  wrap.appendChild(inp);
+  const btn = document.createElement('span');
+  btn.className = 'dpbtn';
+  btn.textContent = '📅';
+  const native = document.createElement('input');
+  native.className = 'dpnative';       // checked by upgradeDateInput/sweepDates so it stays a real date input
+  native.type = 'date';
+  native.tabIndex = -1;
+  native.setAttribute('aria-label', 'Pick a date');
+  native.title = 'Pick a date';
+  wrap.append(btn, native);
+  // seed the picker with whatever is typed, so it opens on that month
+  native.addEventListener('focus', () => { const m = DMY_RE.exec(inp.value); native.value = m ? `${m[3]}-${m[2]}-${m[1]}` : ''; });
+  native.addEventListener('change', () => {
+    if (!native.value) return;
+    inp.value = isoToDMY(native.value);
+    inp.dispatchEvent(new Event('input', { bubbles: true }));  // live previews (e.g. credit preview) react
+    inp.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+}
+function sweepDates(root) { root.querySelectorAll && root.querySelectorAll('input[type="date"]:not(.dpnative)').forEach(upgradeDateInput); }
 new MutationObserver((muts) => {
   for (const m of muts) for (const n of m.addedNodes) {
     if (n.nodeType !== 1) continue;
-    if (n.matches && n.matches('input[type="date"]')) upgradeDateInput(n);
+    if (n.matches && n.matches('input[type="date"]:not(.dpnative)')) upgradeDateInput(n);
     sweepDates(n);
     translateSubtree(n);
   }

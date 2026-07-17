@@ -126,6 +126,14 @@ td.right, th.right { text-align: right; }
 /* row action buttons (Mark paid / Edit / History / Delete): a flex row so the gaps are
    even instead of relying on collapsing whitespace between inline-blocks */
 .rowacts { display: inline-flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+/* "Pay" + the Revolut mark, kept on one line */
+.btn.revolut { display: inline-flex; align-items: center; gap: 5px; }
+.btn.revolut .rmark { flex-shrink: 0; border-radius: 4px; }
+
+/* date fields: 📅 opens the device's calendar (the invisible native date input on top of
+   the icon is what actually receives the tap). Phone only — on desktop typing is fine. */
+.datefield { position: relative; display: block; }
+.datefield .dpbtn, .datefield .dpnative { display: none; }
 .badge { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; }
 .badge.unpaid { background: var(--amber-soft); color: var(--amber); }
 .badge.paid { background: var(--accent-soft); color: var(--accent); }
@@ -214,6 +222,21 @@ canvas { max-width: 100%; }
 
   /* inputs: 16px stops iOS zooming in on focus; taller = easier to tap */
   input, select, textarea { font-size: 16px; padding: 10px 12px; }
+
+  /* date fields get a tappable calendar icon on the right */
+  .dateinput { padding-right: 46px; }
+  .datefield .dpbtn {
+    display: flex; align-items: center; justify-content: center;
+    position: absolute; right: 3px; top: 50%; transform: translateY(-50%);
+    width: 40px; height: 40px; font-size: 18px; line-height: 1;
+    border-radius: 8px; pointer-events: none; /* the invisible native input above takes the tap */
+  }
+  .datefield .dpnative {
+    display: block; position: absolute; right: 0; top: 0;
+    width: 46px; height: 100%; padding: 0; margin: 0;
+    border: 0; background: transparent; opacity: 0; cursor: pointer;
+  }
+  .datefield .dpnative:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; opacity: 1; }
   .btn { min-height: 42px; }
   .btn.small { min-height: 36px; padding: 7px 12px; }
 
