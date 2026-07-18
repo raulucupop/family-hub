@@ -2232,10 +2232,10 @@ async function viewSettings(el) {
       <p class="muted" style="margin:14px 0 6px">Language</p>
       <div class="row">${[['en', '🇬🇧 English'], ['ro', '🇷🇴 Română']].map(([lg, lb]) => `<button class="btn ${(ME.lang || 'en') === lg ? '' : 'ghost'} small" data-lang="${lg}">${lb}</button>`).join('')}</div>
     </div>
-    <div class="card" style="margin-top:16px"><h3>Notifications on this device</h3>
+    <details class="card foldcard" style="margin-top:16px"><summary>Notifications on this device</summary><div style="padding-top:12px">
       <p class="muted" style="margin-top:0">Get alerts (RCA, ITP, acte, birthdays…) as push notifications on this phone/computer even when the site is closed. Tip: on a phone, first use "Add to Home Screen" to install the app.</p>
       <div class="row"><button class="btn small" id="pushbtn">…</button><button class="btn ghost small" id="pushtest" hidden>Send a test</button></div>
-    </div>
+    </div></details>
     <div class="card" style="margin-top:16px"><h3>Your profile</h3>
       <div class="row" style="gap:16px;align-items:center">${avatarHtml(ME, 'avatar-lg')}
         <div class="row">
@@ -2248,13 +2248,13 @@ async function viewSettings(el) {
         <div><label>Phone number</label><input name="phone" type="tel" value="${esc(ME.phone || '')}" placeholder="07xx xxx xxx"></div>
         <button class="btn small">Save profile</button></form>` : ''}
     </div>
-    ${ME.email ? `<div class="card" style="margin-top:16px"><h3>Password</h3>
+    ${ME.email ? `<details class="card foldcard" style="margin-top:16px"><summary>Password</summary><div style="padding-top:12px">
       <p class="muted" style="margin-top:0">Changing it signs you out on every other device.</p>
       <form id="pwform" class="formgrid" style="max-width:560px">
         <div><label>Current password</label><input name="current" type="password" autocomplete="current-password" required></div>
         <div><label>New password (min. 8 characters)</label><input name="next" type="password" autocomplete="new-password" minlength="8" required></div>
         <button class="btn small">Change password</button></form>
-    </div>` : ''}
+    </div></details>` : ''}
     ${canEditKids && kids.length ? `<div class="card" style="margin-top:16px"><h3>Children's pictures</h3>
       <div class="row" style="gap:22px;flex-wrap:wrap">${kids.map((k) => `<div style="text-align:center">${avatarHtml(k, 'avatar-lg')}
         <div style="margin-top:6px"><b>${esc(k.name)}</b></div>
