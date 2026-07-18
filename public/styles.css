@@ -254,7 +254,9 @@ details.foldcard[open] > summary::after { transform: rotate(180deg); }
   .sidebar {
     position: sticky; top: 0; z-index: 40; height: auto;
     flex-direction: row; align-items: center; gap: 2px;
-    overflow: hidden; padding: 8px 12px;
+    overflow: hidden;
+    /* clear the notch / Dynamic Island at the top and the rounded corners on the sides */
+    padding: calc(8px + env(safe-area-inset-top, 0)) calc(12px + env(safe-area-inset-right, 0)) 8px calc(12px + env(safe-area-inset-left, 0));
   }
   .brand { margin: 0; font-size: 1.02rem; flex-shrink: 0; }
   .brand small { display: none; }
@@ -263,7 +265,10 @@ details.foldcard[open] > summary::after { transform: rotate(180deg); }
   .tabbar {
     display: flex; position: fixed; bottom: 0; left: 0; right: 0; z-index: 45;
     background: var(--card); border-top: 1px solid var(--line);
-    padding-bottom: env(safe-area-inset-bottom, 0); /* clears the iPhone home indicator */
+    /* the bottom padding lifts the labels above the home indicator and the rounded bottom
+       corners (which were clipping the "D" of Dashboard); the sides clear the corners in landscape */
+    padding-bottom: env(safe-area-inset-bottom, 0);
+    padding-left: env(safe-area-inset-left, 0); padding-right: env(safe-area-inset-right, 0);
   }
   .tabbar .tab {
     flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
@@ -290,11 +295,14 @@ details.foldcard[open] > summary::after { transform: rotate(180deg); }
   .sheet .sheetlink.active { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
   .sheet .sheetlink .ic { font-size: 16px; }
 
-  .main { padding: 16px 12px 90px; } /* clear of the fixed tab bar */
+  /* clear the fixed tab bar at the bottom, and the rounded corners on the sides in landscape */
+  .main {
+    padding: 16px calc(12px + env(safe-area-inset-right, 0)) calc(90px + env(safe-area-inset-bottom, 0)) calc(12px + env(safe-area-inset-left, 0));
+  }
 
   .fab {
     display: flex; align-items: center; justify-content: center;
-    position: fixed; right: 16px; bottom: calc(74px + env(safe-area-inset-bottom, 0)); z-index: 44;
+    position: fixed; right: calc(16px + env(safe-area-inset-right, 0)); bottom: calc(74px + env(safe-area-inset-bottom, 0)); z-index: 44;
     width: 54px; height: 54px; border-radius: 999px; border: 0;
     background: var(--accent); color: #fff; font-size: 30px; line-height: 1; padding-bottom: 3px;
     box-shadow: 0 4px 14px rgba(0,0,0,.28);
@@ -366,7 +374,7 @@ details.foldcard[open] > summary::after { transform: rotate(180deg); }
   details.entity .body { padding: 12px 14px; }
   .chartbox { height: 200px; }
   .deadgrid { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); }
-  .toast { width: calc(100% - 32px); text-align: center; bottom: 86px; } /* above the tab bar */
+  .toast { width: calc(100% - 32px); text-align: center; bottom: calc(86px + env(safe-area-inset-bottom, 0)); justify-content: center; } /* above the tab bar */
 }
 @media (max-width: 480px) {
   .formgrid { grid-template-columns: 1fr; }
