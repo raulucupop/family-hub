@@ -162,6 +162,7 @@ const RO = {
     'Adaugă un credit mai sus — rata lunară e calculată din dobândă, iar plățile anticipate arată câtă dobândă economisești.',
   'Monthly total': 'Total lunar', 'principal': 'principal', 'interest': 'dobândă', 'com.': 'com.',
   '1 month in advance (principal + 1%)': 'O lună în avans (principal + 1%)', 'Balance today': 'Sold azi', 'Payoff': 'Achitare', 'mo left': 'luni rămase',
+  'cleared!': 'achitat integral!', 'on schedule': 'conform planului', 'in advance': 'în avans',
   'Money saved (interest)': 'Bani economisiți (dobândă)', 'Total interest projected': 'Dobândă totală estimată', 'vs': 'vs', 'without': 'fără',
   'saved': 'economisit',
   'Extra payments on top of the monthly one. The payment stays the same, the credit ends earlier — the interest you skip is your money saved.':
@@ -1325,10 +1326,31 @@ function creditCard(c, members, properties, refresh) {
   const wrap = document.createElement('details');
   wrap.className = 'entity';
   const saved = c.interest_saved > 0.005;
-  wrap.innerHTML = `<summary><span><b>${esc(c.name)}</b> <span class="muted">${[c.lender, c.user_name || 'Whole family', c.property_name, `${money(c.monthly_total)}/mo`].filter(Boolean).map(esc).join(' · ')}</span>
+  // progress by TIME, over the original term: months already behind you (on schedule) + months the
+  // anticipated (in-advance) payments have cut off the end. What is left is months_left. The
+  // in-advance part gets its own colour so you can see how much sooner you'll finish.
+  const term = Math.max(1, Math.round(Number(c.term_months) || 0));
+  const [sy, sm] = String(c.start_date || '').split('-').map(Number);
+  const now = new Date();
+  let elapsed = (sy && sm) ? (now.getUTCFullYear() - sy) * 12 + (now.getUTCMonth() + 1 - sm) : 0;
+  elapsed = Math.max(0, Math.min(term, elapsed));
+  const left = Math.max(0, Math.min(term - elapsed, Math.round(Number(c.months_left) || 0)));
+  const savedMo = Math.max(0, term - elapsed - left); // months the prepayments cut off the tail
+  const monthsDone = elapsed + savedMo;               // months you no longer owe
+  const pctOf = (n) => Math.min(100, Math.max(0, (n / term) * 100));
+  const donePct = pctOf(monthsDone), schedPct = pctOf(elapsed), advPct = pctOf(savedMo);
+  const done = left <= 0;
+  wrap.innerHTML = `<summary><span><b>${esc(c.name)}</b> <span class="muted">${[c.lender, c.user_name || 'Whole family', c.property_name, `${money(c.monthly_total)}/mo`, `${monthsDone}/${term} ${tr('mo')}`].filter(Boolean).map(esc).join(' · ')}</span>
       ${saved ? `<span class="badge paid">${tr('saved')} ${money(c.interest_saved)}</span>` : ''}</span>
     ${canWrite() ? `<span class="row"><button class="btn ghost small" data-edit>Edit</button><button class="btn danger small" data-del>Delete</button></span>` : ''}</summary>
     <div class="body">
+      <div style="margin-bottom:14px">
+        <div class="row" style="justify-content:space-between;gap:8px">
+          <span>${tr('Progress')}${done ? ` <span class="badge paid">${tr('cleared!')}</span>` : ''}</span>
+          <span class="amount muted">${monthsDone} / ${term} ${tr('months')} (${Math.round(donePct)}%)</span></div>
+        <div class="bar split"><i style="width:${schedPct}%"></i><i class="advance" style="width:${advPct}%"></i></div>
+        ${savedMo > 0 ? `<div class="barkey"><span><i class="k-sched"></i>${tr('on schedule')} ${elapsed} ${tr('mo')}</span><span><i class="k-adv"></i>${tr('in advance')} ${savedMo} ${tr('mo')}</span></div>` : ''}
+      </div>
       <div class="deadgrid">
         <div class="dead"><span class="muted">Holder</span><div class="d">${esc(c.user_name || 'Whole family')}</div></div>
         <div class="dead"><span class="muted">Property</span><div class="d">${esc(c.property_name || '—')}</div></div>
