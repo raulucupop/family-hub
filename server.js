@@ -2180,6 +2180,9 @@ async function emailReminderTick() {
   try { sweepOrphanUploads(); } catch (err) { console.error('orphan sweep:', err.message); }
   // spent reset links have no further use — stop the table growing a row per request
   try { db.prepare("DELETE FROM password_resets WHERE used = 1 OR expires_at < datetime('now')").run(); } catch (err) { console.error('reset cleanup:', err.message); }
+  // idempotent and cheap: linking a credit to a property later still backfills within a day,
+  // without waiting for the next deploy restart
+  try { backfillCreditPropertyLinks(); } catch (err) { console.error('credit backfill:', err.message); }
 }
 setTimeout(emailReminderTick, 30 * 1000);
 setInterval(emailReminderTick, 6 * 3600 * 1000);
