@@ -163,6 +163,7 @@ const RO = {
   'Monthly total': 'Total lunar', 'principal': 'principal', 'interest': 'dobândă', 'com.': 'com.',
   '1 month in advance (principal + 1%)': 'O lună în avans (principal + 1%)', 'Balance today': 'Sold azi', 'Payoff': 'Achitare', 'mo left': 'luni rămase',
   'cleared!': 'achitat integral!', 'on schedule': 'conform planului', 'in advance': 'în avans',
+  'What if you paid extra every month?': 'Dar dacă ai plăti în plus în fiecare lună?',
   'Money saved (interest)': 'Bani economisiți (dobândă)', 'Total interest projected': 'Dobândă totală estimată', 'vs': 'vs', 'without': 'fără',
   'saved': 'economisit',
   'Extra payments on top of the monthly one. The payment stays the same, the credit ends earlier — the interest you skip is your money saved.':
@@ -1366,6 +1367,14 @@ function creditCard(c, members, properties, refresh) {
       <h3 style="margin-top:16px">Anticipated payments</h3>
       <p class="muted">Extra payments on top of the monthly one. The payment stays the same, the credit ends earlier — the interest you skip is your money saved.
       <br>${tr('Paying 1 month in advance now costs ≈')} <b class="amount">${money(c.advance_month_cost)}</b> (${tr('next principal')} ${money(c.next_principal)} + 1%).</p>
+      ${left > 0 ? `<div class="whatif">
+        <label>${tr('What if you paid extra every month?')}</label>
+        <div class="row" style="flex-wrap:wrap;gap:6px;margin-top:4px">
+          <input data-whatif type="number" min="0" step="10" placeholder="500" inputmode="decimal" style="max-width:130px">
+          ${[100, 250, 500, 1000].map((v) => `<button type="button" class="btn ghost small" data-wq="${v}">+${v}</button>`).join('')}
+        </div>
+        <p data-whatifout class="muted" style="margin:8px 0 0"></p>
+      </div>` : ''}
       ${canWrite() ? `<form data-payform class="formgrid">
         <div><label>Date</label><input name="date" type="date" value="${today()}" required></div>
         <div><label>Amount (${cur()})</label><input name="amount" type="number" step="0.01" min="0.01" required></div>
@@ -1385,6 +1394,39 @@ function creditCard(c, members, properties, refresh) {
       undoableDelete({ hide, restore, commit: () => api(`/credits/${c.id}/payments/${b.dataset.paydel}`, { method: 'DELETE' }).then(() => refresh()) });
     }));
   };
+  // what-if: same amortization the server uses, run from today's balance with the payment
+  // bumped by the extra — the delta to the current plan is months cut and dobândă skipped
+  const wfInput = wrap.querySelector('[data-whatif]');
+  if (wfInput) {
+    const r = Number(c.interest_rate) / 100 / 12;
+    const simulate = (pay) => {
+      let bal = Number(c.balance), interest = 0, months = 0;
+      while (bal > 0.005 && months < 2400) {
+        const i = bal * r; interest += i;
+        if (pay <= i) return null; // this payment never pays it off
+        bal = bal + i - pay; months++;
+      }
+      return { months, interest };
+    };
+    const out = wrap.querySelector('[data-whatifout]');
+    const show = () => {
+      const extra = Number(wfInput.value);
+      if (!(extra > 0)) { out.textContent = ''; return; }
+      const base = simulate(Number(c.monthly_payment));
+      const boosted = simulate(Number(c.monthly_payment) + extra);
+      if (!base || !boosted) { out.textContent = ''; return; }
+      const cut = Math.max(0, base.months - boosted.months);
+      const saved = Math.max(0, base.interest - boosted.interest);
+      const d = new Date(); d.setUTCMonth(d.getUTCMonth() + boosted.months);
+      const when = `${String(d.getUTCMonth() + 1).padStart(2, '0')}/${d.getUTCFullYear()}`;
+      // whole sentences per language — the dictionary is exact-match, gluing words does not survive RO
+      out.innerHTML = LANG === 'ro'
+        ? `Cu <b>+${money(extra)}</b> pe lună ai termina cu <b>${cut} ${cut === 1 ? 'lună' : 'luni'}</b> mai devreme (${when}) și ai economisi <b class="amount" style="color:#2f6b5a">${money(saved)}</b> dobândă.`
+        : `With <b>+${money(extra)}</b> a month you would finish <b>${cut} month${cut === 1 ? '' : 's'}</b> earlier (${when}) and save <b class="amount" style="color:#2f6b5a">${money(saved)}</b> in dobândă.`;
+    };
+    wfInput.addEventListener('input', show);
+    wrap.querySelectorAll('[data-wq]').forEach((b) => (b.onclick = () => { wfInput.value = b.dataset.wq; show(); }));
+  }
   wrap.addEventListener('toggle', () => { if (wrap.open && !wrap._loaded) { wrap._loaded = true; loadPays(); } });
   wrap.querySelector('[data-payform]')?.addEventListener('submit', async (e) => {
     e.preventDefault();

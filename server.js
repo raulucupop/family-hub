@@ -58,11 +58,15 @@ function setAuthCookie(res, token) {
 // The IP allowance is deliberately much looser: a whole household shares one home IP, and one
 // person fumbling their password must never lock everyone else out.
 // In-memory on purpose — a single small instance, and a restart clearing it is not worth a table.
-const LOGIN_LIMITS = { em: 8, ip: 30 }; // failures allowed inside the window, by key type
+// fe/fi are the forgot-password limits: unlike login these count every request, not just
+// failures — the endpoint's only work is sending an email, and 3 reset mails per address per
+// window is plenty for a human while stopping anyone from flooding an inbox.
+const LOGIN_LIMITS = { em: 8, ip: 30, fe: 3, fi: 10 }; // allowance inside the window, by key type
 const LOGIN_WINDOW = 10 * 60 * 1000;    // ...before the lock kicks in
 const LOGIN_LOCK = 10 * 60 * 1000;      // how long the lock lasts
 const loginFails = new Map(); // key -> { n, first, until }
 const loginKeys = (req, email) => [`ip:${req.ip}`, `em:${email}`];
+const forgotKeys = (req, email) => [`fi:${req.ip}`, `fe:${email}`]; // separate keys: reset requests never lock the login
 function loginLockedFor(keys) {
   const now = Date.now();
   let until = 0;
@@ -211,6 +215,12 @@ app.get('/api/auth/bootstrap', (req, res) => {
 // ---------- password reset ----------
 app.post('/api/auth/forgot', async (req, res) => {
   const email = String(req.body?.email || '').trim().toLowerCase();
+  // throttled BEFORE any lookup or send: without this, anyone who knows an address can flood
+  // that inbox with reset mails (and grow password_resets a row at a time)
+  const keys = forgotKeys(req, email);
+  const lockedFor = loginLockedFor(keys);
+  if (lockedFor) return res.status(429).json({ error: `Too many reset requests — try again in ${lockedFor} minute${lockedFor === 1 ? '' : 's'}` });
+  loginFailed(keys); // every request counts against the allowance, success or not
   const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
   if (user && user.password_hash) {
     if (!process.env.MAIL_FROM) return res.status(500).json({ error: 'Email is not configured on this server — ask the admin to reset your password' });
@@ -507,6 +517,29 @@ app.get('/api/search', auth, (req, res) => {
   add('list', 'lists', db.prepare(`
     SELECT id, title, list, note FROM list_items WHERE family_id = ? AND (lower(title) LIKE ? OR lower(COALESCE(note,'')) LIKE ?) LIMIT 10
   `).all(fid, like, like), (r) => ({ id: r.id, title: r.title, sub: r.list }));
+
+  // Deadlines are date FIELDS, not records — "rovinieta" used to find nothing because there is
+  // no row named rovinieta. Keyword-match the field instead and answer with the stored date.
+  // Titles are exactly the collectReminders labels, so the client's RO dictionary translates them.
+  const qq = q.normalize('NFD').replace(/[̀-ͯ]/g, ''); // 'rovinietă' matches 'rovinieta'
+  const DL = [
+    ['vehicles', 'rca_expiry', 'RCA insurance', ['rca', 'asigurare', 'insurance']],
+    ['vehicles', 'casco_expiry', 'Casco insurance', ['casco', 'asigurare', 'insurance']],
+    ['vehicles', 'vignette_expiry', 'Rovinieta (vignette)', ['rovinieta', 'vinieta', 'vignette']],
+    ['vehicles', 'itp_expiry', 'ITP inspection', ['itp', 'inspectie', 'inspection']],
+    ['vehicles', 'road_tax_due', 'Vehicle tax', ['taxa', 'tax', 'impozit']],
+    ['properties', 'insurance_expiry', 'Property insurance (PAD)', ['pad', 'asigurare', 'insurance']],
+    ['properties', 'insurance2_expiry', 'Additional home insurance', ['asigurare', 'insurance']],
+    ['properties', 'property_tax_due', 'Property tax', ['impozit', 'taxa', 'tax']],
+  ];
+  if (qq.length >= 3) {
+    for (const [table, col, label, words] of DL) {
+      if (!words.some((w) => w.includes(qq) || qq.includes(w))) continue;
+      for (const r of db.prepare(`SELECT id, name, ${col} AS d FROM ${table} WHERE family_id = ? AND ${col} IS NOT NULL LIMIT 10`).all(fid)) {
+        results.push({ kind: 'deadline', tab: table, id: r.id, title: label, sub: r.name, date: r.d });
+      }
+    }
+  }
 
   res.json({ results });
 });
@@ -2145,6 +2178,8 @@ async function emailReminderTick() {
   try { await runMonthlyReports(); } catch (err) { console.error('monthly report:', err.message); }
   try { await runWeeklyBackup(); } catch (err) { console.error('weekly backup:', err.message); }
   try { sweepOrphanUploads(); } catch (err) { console.error('orphan sweep:', err.message); }
+  // spent reset links have no further use — stop the table growing a row per request
+  try { db.prepare("DELETE FROM password_resets WHERE used = 1 OR expires_at < datetime('now')").run(); } catch (err) { console.error('reset cleanup:', err.message); }
 }
 setTimeout(emailReminderTick, 30 * 1000);
 setInterval(emailReminderTick, 6 * 3600 * 1000);
@@ -2316,5 +2351,30 @@ app.get(/^\/(?!api\/).*/, (req, res) => res.sendFile(path.join(__dirname, 'publi
 app.use((err, req, res, next) => {
   res.status(400).json({ error: err.message || 'Something went wrong' });
 });
+
+// One-time repair, safe to keep: mortgage payments auto-logged BEFORE credits carried their
+// property link were plain expenses (property_id NULL), so those months are missing from the
+// property's cost history and its P&L overstates the profit. Attach them retroactively.
+// Idempotent — once an expense has its property_id, it never matches again.
+function backfillCreditPropertyLinks() {
+  let fixed = 0;
+  for (const c of db.prepare('SELECT * FROM credits WHERE property_id IS NOT NULL').all()) {
+    const candidates = db.prepare(
+      "SELECT * FROM expenses WHERE family_id = ? AND category = 'Credit' AND property_id IS NULL"
+    ).all(c.family_id).filter((e) => String(e.note || '').startsWith(`Credit: ${c.name} `));
+    for (const e of candidates) {
+      db.transaction(() => {
+        db.prepare('UPDATE expenses SET property_id = ? WHERE id = ?').run(c.property_id, e.id);
+        if (!db.prepare('SELECT 1 FROM property_records WHERE expense_id = ?').get(e.id)) {
+          db.prepare('INSERT INTO property_records (property_id, family_id, type, date, amount, note, user_id, expense_id) VALUES (?,?,?,?,?,?,?,?)')
+            .run(c.property_id, c.family_id, 'other', e.date, e.amount, e.note, e.user_id, e.id);
+        }
+      })();
+      fixed++;
+    }
+  }
+  if (fixed) console.log(`backfilled ${fixed} credit payment(s) into property cost history`);
+}
+try { backfillCreditPropertyLinks(); } catch (err) { console.error('credit backfill:', err.message); }
 
 app.listen(PORT, () => console.log(`Family Hub running on http://localhost:${PORT}`));
