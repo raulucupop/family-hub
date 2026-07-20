@@ -1,4 +1,6 @@
 /* Family Hub SPA */
+// registered here rather than inline in index.html: the CSP forbids inline scripts
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js');
 const $ = (sel, el = document) => el.querySelector(sel);
 const app = $('#app');
 let ME = null, FAMILY = null;
@@ -955,7 +957,7 @@ async function renderCalendar(el, embedded) {
     <button class="btn ghost small" id="caltoday">Today</button></div>`;
   const subscribeInner = info.url
     ? `<p class="muted">Add this address in Google Calendar (Other calendars → From URL) or Apple Calendar (Add Subscription Calendar) — deadlines then show up in your normal calendar and update automatically.</p>
-       <div class="row"><input readonly value="${esc(info.url)}" onclick="this.select()" style="flex:1;min-width:220px;font-size:13px">
+       <div class="row"><input readonly value="${esc(info.url)}" class="selectall" style="flex:1;min-width:220px;font-size:13px">
        <button class="btn ghost small" data-copy="${esc(info.url)}">Copy link</button>
        ${canWrite() ? `<button class="btn ghost small" id="calrotate">New link</button>` : ''}</div>`
     : canWrite() ? `<p class="muted">Generate a private link and subscribe from Google/Apple Calendar.</p><button class="btn small" id="calgen">Generate subscribe link</button>`
@@ -2230,7 +2232,7 @@ async function viewFamily(el) {
       <button class="btn ghost small" data-copy="${esc(FAMILY.invite_code)}">Copy code</button>
       <button class="btn ghost small" id="rotate">Generate new code</button></p>
       <p style="margin:6px 0"><label>Or send this link — it opens Register with the code filled in:</label>
-      <span class="row"><input readonly value="${esc(inviteLink())}" onclick="this.select()" style="flex:1;min-width:200px;font-size:13px">
+      <span class="row"><input readonly value="${esc(inviteLink())}" class="selectall" style="flex:1;min-width:200px;font-size:13px">
       <button class="btn ghost small" data-copy="${esc(inviteLink())}">Copy link</button></span></p>
       <p class="muted">New members join as adults. Change their role below after they join.</p>
       <form id="inviteform" class="row" style="margin-top:12px;align-items:flex-end">
@@ -2465,6 +2467,12 @@ document.addEventListener('input', (e) => {
   if (!t.classList || !t.classList.contains('dateinput')) return;
   const d = t.value.replace(/\D/g, '').slice(0, 8);
   t.value = d.length > 4 ? `${d.slice(0, 2)}/${d.slice(2, 4)}/${d.slice(4)}` : d.length > 2 ? `${d.slice(0, 2)}/${d.slice(2)}` : d;
+});
+
+/* read-only share links (invite, calendar) select themselves on tap for easy copying —
+   a delegated listener because inline onclick attributes are blocked by the CSP */
+document.addEventListener('click', (e) => {
+  if (e.target.classList && e.target.classList.contains('selectall')) e.target.select();
 });
 
 /* money fields: a number input can't carry thousands separators, so echo the grouped value under

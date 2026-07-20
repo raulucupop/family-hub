@@ -32,6 +32,35 @@ if (process.env.NODE_ENV === 'production' && process.env.INSECURE_COOKIES !== '1
   });
 }
 
+// ---------- security headers (securityheaders.com findings) ----------
+app.disable('x-powered-by'); // no reason to advertise Express + its version
+// The CSP is strict for scripts: only our own files and the Chart.js CDN — no inline scripts,
+// which is why sw registration lives in app.js and no template uses inline event handlers.
+// Styles allow 'unsafe-inline' because the UI sets style attributes throughout; that is the
+// low-risk half of inline (no code runs from a style).
+const CSP = [
+  "default-src 'self'",
+  "script-src 'self' https://cdn.jsdelivr.net",
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  'font-src https://fonts.gstatic.com',
+  "img-src 'self' data:",
+  "connect-src 'self'",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'self'",
+].join('; ');
+app.use((req, res, next) => {
+  res.setHeader('Content-Security-Policy', CSP);
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');            // legacy twin of frame-ancestors
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  // HSTS only over TLS — a browser ignores it on plain http anyway
+  if (req.secure) res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  next();
+});
+
 app.use(express.json());
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public')));
