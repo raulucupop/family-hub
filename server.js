@@ -56,6 +56,16 @@ app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  // Cross-origin isolation trio:
+  // - COOP severs window.opener ties with cross-origin pages (e.g. the Revolut tab a tenant opens)
+  // - CORP stops other origins embedding our responses (avatars, scans) as their subresources;
+  //   Google/Apple Calendar fetch the .ics server-side, which browser-enforced CORP does not touch
+  // - COEP 'credentialless' rather than 'require-corp': the CDN/font requests are then made
+  //   cookie-less and allowed, so Chart.js and Google Fonts keep loading; require-corp would
+  //   depend on every third party sending CORP headers
+  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+  res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
+  res.setHeader('Cross-Origin-Embedder-Policy', 'credentialless');
   // HSTS only over TLS — a browser ignores it on plain http anyway
   if (req.secure) res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   next();
