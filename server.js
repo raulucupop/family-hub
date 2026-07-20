@@ -298,8 +298,10 @@ app.post('/api/auth/reset', (req, res) => {
 // change your own password while signed in. Requires the current one, so a borrowed session
 // cannot lock the real owner out of their account.
 app.post('/api/auth/change-password', auth, async (req, res) => {
-  const { current, next } = req.body || {};
+  const { current, next, confirm } = req.body || {};
   if (String(next || '').length < 8) return res.status(400).json({ error: 'The new password must be at least 8 characters' });
+  // the client always sends confirm now, so this is a real check, not just belt-and-braces
+  if (confirm !== undefined && String(confirm) !== String(next)) return res.status(400).json({ error: 'The new passwords do not match' });
   const row = db.prepare('SELECT password_hash FROM users WHERE id = ?').get(req.user.id);
   if (!row?.password_hash) return res.status(400).json({ error: 'This account has no password to change' });
   if (!(await bcrypt.compare(String(current || ''), row.password_hash))) {
@@ -1351,16 +1353,40 @@ function propOwnerEmails(prop) {
   }
   return db.prepare("SELECT email FROM users WHERE family_id = ? AND role IN ('admin','adult') AND email IS NOT NULL").all(prop.family_id).map((u) => u.email);
 }
-function notifyMail(to, subject, text) {
+function familyCurrency(fid) {
+  return db.prepare('SELECT currency FROM families WHERE id = ?').get(fid)?.currency || 'RON';
+}
+// the app's public address for links inside emails and push notifications. APP_URL overrides
+// for local/dev use; production has one known domain, so that is the sane default.
+function siteBase() {
+  return (process.env.APP_URL || 'https://lafamiliapop.ro').replace(/\/+$/, '');
+}
+// user-entered text (property names, invoice titles) goes into email HTML too — escape it,
+// same reasoning as the client-side XSS hardening, just for the mail-reading surface instead
+const htmlEsc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+// a small, inline-styled HTML shell — no external CSS/images, so it survives every mail client
+function htmlEmail(bodyHtml) {
+  return `<!doctype html><html><body style="margin:0;padding:24px 12px;background:#eff2f1;font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;color:#1c2b33;">
+    <div style="max-width:480px;margin:0 auto;background:#ffffff;border-radius:12px;padding:24px;">
+      <div style="font-weight:700;font-size:19px;margin-bottom:16px;">Family<span style="color:#2f6b5a">Hub</span></div>
+      ${bodyHtml}
+    </div></body></html>`;
+}
+function htmlButton(href, label, bg) {
+  return `<a href="${href}" style="display:inline-block;background:${bg || '#2f6b5a'};color:#ffffff !important;text-decoration:none;font-weight:600;padding:10px 18px;border-radius:8px;font-size:14px;margin:4px 8px 4px 0;">${label}</a>`;
+}
+// the Revolut wordmark, email-safe (svg/icon fonts are unreliable in mail clients — a styled span survives)
+const REVOLUT_BADGE = '<span style="display:inline-block;width:15px;height:15px;background:#0666EB;color:#fff;border-radius:4px;text-align:center;line-height:15px;font-size:11px;font-weight:700;margin-left:7px;vertical-align:-2px;">R</span>';
+function notifyMail(to, subject, text, html) {
   if (!process.env.MAIL_FROM || !to.length) return;
-  sendMail(to, subject, text).catch((err) => console.error('notify mail:', err.message));
+  sendMail(to, subject, text, undefined, html).catch((err) => console.error('notify mail:', err.message));
 }
 // the tenant did something the owner wants to know about now: email + a push pop-up.
 // Deliberately no row in `notifications` — that table is reconciled against live deadlines every
 // pass, so a one-off event row would be swept straight back out again.
-function notifyOwners(prop, subject, mailText, pushBody) {
-  notifyMail(propOwnerEmails(prop), subject, mailText);
-  sendPushToFamily(prop.family_id, { title: subject, body: pushBody || '' }, prop.owner_id).catch(() => {});
+function notifyOwners(prop, subject, mailText, pushBody, opts = {}) {
+  notifyMail(propOwnerEmails(prop), subject, mailText, opts.html);
+  sendPushToFamily(prop.family_id, { title: subject, body: pushBody || '', url: opts.url || '/#properties' }, prop.owner_id).catch(() => {});
 }
 
 // owner side: charges shared with the tenant
@@ -1381,8 +1407,29 @@ app.post('/api/properties/:id/charges', auth, canWrite, (req, res) => {
   if (!isDate(b.due_date)) return res.status(400).json({ error: 'Due date must be YYYY-MM-DD' });
   const info = db.prepare('INSERT INTO tenant_charges (family_id, property_id, type, title, amount, due_date, note) VALUES (?,?,?,?,?,?,?)')
     .run(prop.family_id, prop.id, b.type, str(b.title), Number(b.amount), b.due_date, str(b.note));
-  notifyMail(tenantEmails(prop.id), `New ${b.type === 'rent' ? 'rent charge' : 'invoice'} for ${prop.name}`,
-    `Hello,\n\nA new payment was added for ${prop.name}:\n\n- ${str(b.title)}: ${Number(b.amount).toFixed(2)}, due ${b.due_date}\n${prop.payment_link ? `\nPay directly: ${prop.payment_link}/${Number(b.amount).toFixed(2)}\n` : ''}\nOpen your tenant portal to see the details${b.type === 'invoice' ? ' and the invoice' : ''}, and press "Mark as paid" once you've paid it.\n`);
+  {
+    const cur = familyCurrency(prop.family_id);
+    const amountStr = `${Number(b.amount).toFixed(2)} ${cur}`;
+    const dueStr = mailDate(b.due_date);
+    const invoiceNote = b.type === 'invoice' ? ' and the invoice' : '';
+    const site = siteBase();
+    // flat link only — Revolut prefills nothing; the tenant types the amount there themselves
+    const revolutLine = prop.payment_link ? `Pay via Revolut: ${prop.payment_link}\n` : '';
+    notifyMail(tenantEmails(prop.id), `New ${b.type === 'rent' ? 'rent charge' : 'invoice'} for ${prop.name}`,
+      `Hello,\n\nA new payment was added for ${prop.name}:\n\n- ${str(b.title)}: ${amountStr}, due ${dueStr}\n\n${revolutLine}Check your invoice: ${site}/\n\nOpen your tenant portal to see the details${invoiceNote}, and press "Mark as paid" once you've paid it.\n`,
+      htmlEmail(`
+        <p>Hello,</p>
+        <p>A new payment was added for <b>${htmlEsc(prop.name)}</b>:</p>
+        <div style="margin:14px 0;padding:12px 14px;background:#eff2f1;border-radius:8px;">
+          <b>${htmlEsc(str(b.title))}</b><br><span style="font-family:monospace;font-size:15px;">${amountStr}</span> · due ${dueStr}
+        </div>
+        <p>
+          ${prop.payment_link ? htmlButton(htmlEsc(prop.payment_link), `Pay via Revolut${REVOLUT_BADGE}`, '#0666EB') : ''}
+          ${htmlButton(`${site}/`, 'Check your invoice')}
+        </p>
+        <p style="color:#45565f;font-size:13px;">Open your tenant portal to see the details${invoiceNote}, and press "Mark as paid" once you've paid it.</p>
+      `));
+  }
   res.json(db.prepare('SELECT * FROM tenant_charges WHERE id = ?').get(info.lastInsertRowid));
 });
 // invoice file on a tenant charge (owner uploads, tenant can view)
@@ -1454,8 +1501,12 @@ function ensureMeterRequests(prop) {
     created.push(u);
   }
   if (created.length) {
+    const plural = created.length > 1 ? 's' : '';
     notifyMail(tenantEmails(prop.id), `Meter reading needed for ${prop.name}`,
-      `Hello,\n\nPlease send this month's meter reading${created.length > 1 ? 's' : ''} for ${prop.name}: ${created.join(', ')}.\n\nOpen your tenant portal and type the value or upload a photo of the meter.\n`);
+      `Hello,\n\nPlease send this month's meter reading${plural} for ${prop.name}: ${created.join(', ')}.\n\nOpen your tenant portal and type the value or upload a photo of the meter:\n${siteBase()}/\n`,
+      htmlEmail(`<p>Hello,</p><p>Please send this month's meter reading${plural} for <b>${htmlEsc(prop.name)}</b>: ${htmlEsc(created.join(', '))}.</p>
+        <p>${htmlButton(`${siteBase()}/`, 'Open your tenant portal')}</p>
+        <p style="color:#45565f;font-size:13px;">Type the value or upload a photo of the meter there.</p>`));
   }
 }
 // owner: request a reading now, list and manage requests
@@ -1466,7 +1517,10 @@ app.post('/api/properties/:id/meter-request', auth, canWrite, (req, res) => {
   if (!METER_UTILITIES.includes(u)) return res.status(400).json({ error: 'Utility must be electricity, gas or water' });
   const info = db.prepare('INSERT INTO meter_requests (family_id, property_id, utility) VALUES (?,?,?)').run(prop.family_id, prop.id, u);
   notifyMail(tenantEmails(prop.id), `Meter reading needed for ${prop.name}`,
-    `Hello,\n\nPlease send the current ${u} meter reading for ${prop.name}.\n\nOpen your tenant portal and type the value or upload a photo of the meter.\n`);
+    `Hello,\n\nPlease send the current ${u} meter reading for ${prop.name}.\n\nOpen your tenant portal and type the value or upload a photo of the meter:\n${siteBase()}/\n`,
+    htmlEmail(`<p>Hello,</p><p>Please send the current <b>${htmlEsc(u)}</b> meter reading for <b>${htmlEsc(prop.name)}</b>.</p>
+      <p>${htmlButton(`${siteBase()}/`, 'Open your tenant portal')}</p>
+      <p style="color:#45565f;font-size:13px;">Type the value or upload a photo of the meter there.</p>`));
   res.json(db.prepare('SELECT * FROM meter_requests WHERE id = ?').get(info.lastInsertRowid));
 });
 app.get('/api/properties/:id/meter-requests', auth, (req, res) => {
@@ -1506,7 +1560,11 @@ app.post('/api/properties/:id/maintenance/:rid/resolve', auth, canWrite, (req, r
     .run(done ? 'done' : 'open', done ? new Date().toISOString().slice(0, 10) : null, row.id);
   // tell the tenant their report was dealt with
   if (done) notifyMail(tenantEmails(prop.id), `Maintenance sorted — ${prop.name}`,
-    `Hello,\n\nYour maintenance report for ${prop.name} was marked as done:\n\n- ${row.title}\n\nIf it is not actually fixed, open your tenant portal and report it again.\n`);
+    `Hello,\n\nYour maintenance report for ${prop.name} was marked as done:\n\n- ${row.title}\n\nIf it is not actually fixed, open your tenant portal and report it again:\n${siteBase()}/\n`,
+    htmlEmail(`<p>Hello,</p><p>Your maintenance report for <b>${htmlEsc(prop.name)}</b> was marked as done:</p>
+      <div style="margin:14px 0;padding:12px 14px;background:#eff2f1;border-radius:8px;"><b>${htmlEsc(row.title)}</b></div>
+      <p>${htmlButton(`${siteBase()}/`, 'Open your tenant portal')}</p>
+      <p style="color:#45565f;font-size:13px;">If it is not actually fixed, report it again there.</p>`));
   res.json({ ok: true });
 });
 app.delete('/api/properties/:id/maintenance/:rid', auth, canWrite, (req, res) => {
@@ -1529,8 +1587,11 @@ function tenantProp(req) { return db.prepare('SELECT * FROM properties WHERE id 
 function meterDone(req, res, row, prop, readingText) {
   db.prepare("UPDATE meter_requests SET status = 'done', provided_at = ? WHERE id = ?").run(new Date().toISOString().slice(0, 10), row.id);
   notifyOwners(prop, `Meter reading received — ${prop.name} (${row.utility})`,
-    `Hello,\n\n${req.user.name} sent the ${row.utility} reading for ${prop.name}:\n\n${readingText}\n\nOpen Family Hub → Properties → ${prop.name} to see it.\n`,
-    `${req.user.name} sent the ${row.utility} reading — ${readingText}`);
+    `Hello,\n\n${req.user.name} sent the ${row.utility} reading for ${prop.name}:\n\n${readingText}\n\nOpen Family Hub to see it:\n${siteBase()}/#properties\n`,
+    `${req.user.name} sent the ${row.utility} reading — ${readingText}`,
+    { html: htmlEmail(`<p>Hello,</p><p><b>${htmlEsc(req.user.name)}</b> sent the <b>${htmlEsc(row.utility)}</b> reading for <b>${htmlEsc(prop.name)}</b>:</p>
+      <div style="margin:14px 0;padding:12px 14px;background:#eff2f1;border-radius:8px;">${htmlEsc(readingText)}</div>
+      <p>${htmlButton(`${siteBase()}/#properties`, 'Open Properties')}</p>`) });
   res.json({ ok: true });
 }
 app.get('/api/tenant/charges', auth, (req, res) => {
@@ -1557,9 +1618,18 @@ app.post('/api/tenant/charges/:cid/pay', auth, (req, res) => {
   if (!ch) return res.status(404).json({ error: 'Charge not found or already marked' });
   db.prepare("UPDATE tenant_charges SET status = 'pending', marked_paid_at = ? WHERE id = ?").run(new Date().toISOString().slice(0, 10), ch.id);
   const prop = tenantProp(req);
-  if (prop) notifyOwners(prop, `Payment marked as paid — ${prop.name}`,
-    `Hello,\n\n${req.user.name} marked this as paid for ${prop.name}:\n\n- ${ch.title}: ${Number(ch.amount).toFixed(2)}, due ${ch.due_date}\n\nOpen Family Hub → Properties → ${prop.name} to confirm (or reject) it.\n`,
-    `${req.user.name} paid ${ch.title} — ${Number(ch.amount).toFixed(2)}. Confirm it in Family Hub.`);
+  if (prop) {
+    const cur = familyCurrency(prop.family_id);
+    const amountStr = `${Number(ch.amount).toFixed(2)} ${cur}`;
+    notifyOwners(prop, `Payment marked as paid — ${prop.name}`,
+      `Hello,\n\n${req.user.name} marked this as paid for ${prop.name}:\n\n- ${ch.title}: ${amountStr}, due ${mailDate(ch.due_date)}\n\nOpen Family Hub to confirm (or reject) it:\n${siteBase()}/#properties\n`,
+      `${req.user.name} paid ${ch.title} — ${amountStr}. Confirm it in Family Hub.`,
+      { html: htmlEmail(`<p>Hello,</p><p><b>${htmlEsc(req.user.name)}</b> marked this as paid for <b>${htmlEsc(prop.name)}</b>:</p>
+        <div style="margin:14px 0;padding:12px 14px;background:#eff2f1;border-radius:8px;">
+          <b>${htmlEsc(ch.title)}</b><br><span style="font-family:monospace;font-size:15px;">${amountStr}</span> · due ${mailDate(ch.due_date)}
+        </div>
+        <p>${htmlButton(`${siteBase()}/#properties`, 'Confirm the payment')}</p>`) });
+  }
   res.json({ ok: true });
 });
 // tenant answers a meter request with a typed value and/or a photo
@@ -1581,9 +1651,18 @@ app.post('/api/tenant/maintenance', auth, (req, res) => {
   if (!title) return res.status(400).json({ error: 'Describe what needs fixing' });
   const info = db.prepare('INSERT INTO maintenance_requests (family_id, property_id, user_id, title, note) VALUES (?,?,?,?,?)')
     .run(prop.family_id, prop.id, req.user.id, title, str(req.body?.note));
-  notifyOwners(prop, `Maintenance requested — ${prop.name}`,
-    `Hello,\n\n${req.user.name} reported a problem at ${prop.name}:\n\n- ${title}${req.body?.note ? `\n\n${str(req.body.note)}` : ''}\n\nOpen Family Hub → Properties → ${prop.name} to see it (and the photo, if one was attached).\n`,
-    `${req.user.name}: ${title}`);
+  {
+    const note = req.body?.note ? str(req.body.note) : '';
+    notifyOwners(prop, `Maintenance requested — ${prop.name}`,
+      `Hello,\n\n${req.user.name} reported a problem at ${prop.name}:\n\n- ${title}${note ? `\n\n${note}` : ''}\n\nOpen Family Hub to see it (and the photo, if one was attached):\n${siteBase()}/#properties\n`,
+      `${req.user.name}: ${title}`,
+      { html: htmlEmail(`<p>Hello,</p><p><b>${htmlEsc(req.user.name)}</b> reported a problem at <b>${htmlEsc(prop.name)}</b>:</p>
+        <div style="margin:14px 0;padding:12px 14px;background:#eff2f1;border-radius:8px;">
+          <b>${htmlEsc(title)}</b>${note ? `<br>${htmlEsc(note)}` : ''}
+        </div>
+        <p>${htmlButton(`${siteBase()}/#properties`, 'Open Properties')}</p>
+        <p style="color:#45565f;font-size:13px;">See the photo there, if one was attached.</p>`) });
+  }
   res.json(db.prepare('SELECT * FROM maintenance_requests WHERE id = ?').get(info.lastInsertRowid));
 });
 app.post('/api/tenant/maintenance/:rid/photo', auth, upload.single('file'), (req, res) => {
@@ -1814,6 +1893,15 @@ const THRESHOLDS = [0, 1, 7, 14, 30];
 // and money a tenant owes past its due date.
 // regular bills stay visible in the dashboard ribbon but never notify.
 const ALERT_KINDS = new Set(['rca', 'casco', 'vignette', 'itp', 'road_tax', 'property_insurance', 'document', 'birthday', 'tenant_unpaid']);
+// where tapping an alert (push notification or the in-app list) should land, derived from the
+// kind encoded at the front of its key — so "opening the notification" goes to the relevant page
+// instead of the bare dashboard.
+const ALERT_PAGE = {
+  rca: '/#vehicles', casco: '/#vehicles', vignette: '/#vehicles', itp: '/#vehicles', road_tax: '/#vehicles',
+  property_insurance: '/#properties', tenant_unpaid: '/#properties', maintenance: '/#properties',
+  document: '/#acte', birthday: '/#family',
+};
+function alertUrl(key) { return ALERT_PAGE[String(key).split(':')[0]] || '/#alerts'; }
 function generateNotifications(fid) {
   const ins = db.prepare('INSERT OR IGNORE INTO notifications (family_id, key, title, body, owner_id) VALUES (?,?,?,?,?)');
   const upd = db.prepare('UPDATE notifications SET title = ?, body = ? WHERE family_id = ? AND key = ? AND (title != ? OR body != ?)');
@@ -1825,7 +1913,7 @@ function generateNotifications(fid) {
   const add = (key, title, body, owner, push = true) => {
     live.add(key);
     if (ins.run(fid, key, title, body, owner).changes > 0) {
-      if (push) fresh.push({ title, body, owner });
+      if (push) fresh.push({ title, body, owner, key });
     } else if (upd.run(title, body, fid, key, title, body).changes > 0) {
       // the item is still unsolved and its message moved on (another day gone by): a read alert
       // would otherwise stay buried, so put it back in front of the family.
@@ -1873,21 +1961,23 @@ function generateNotifications(fid) {
   db.prepare(`DELETE FROM notifications WHERE family_id = ?${keep.length ? ` AND key NOT IN (${keep.map(() => '?').join(',')})` : ''}`)
     .run(fid, ...keep);
   // only genuinely new alerts push to devices — a resurfaced one would push every single day
-  for (const n of fresh) sendPushToFamily(fid, { title: n.title, body: n.body }, n.owner).catch(() => {});
+  for (const n of fresh) sendPushToFamily(fid, { title: n.title, body: n.body, url: alertUrl(n.key) }, n.owner).catch(() => {});
 }
 app.get('/api/notifications', auth, (req, res) => {
   generateNotifications(req.user.family_id);
   // admins see every alert; other members only ones they're responsible for (plus family-wide)
   const isAdmin = req.user.role === 'admin';
   const rows = db.prepare(`
-    SELECT n.id, n.title, n.body, n.created_at,
+    SELECT n.id, n.key, n.title, n.body, n.created_at,
            CASE WHEN r.user_id IS NULL THEN 0 ELSE 1 END AS read
     FROM notifications n
     LEFT JOIN notification_reads r ON r.notification_id = n.id AND r.user_id = ?
     WHERE n.family_id = ? ${isAdmin ? '' : 'AND (n.owner_id IS NULL OR n.owner_id = ?)'}
     ORDER BY n.id DESC LIMIT 100
   `).all(...(isAdmin ? [req.user.id, req.user.family_id] : [req.user.id, req.user.family_id, req.user.id]));
-  res.json({ items: rows, unread: rows.filter((x) => !x.read).length });
+  // url derived from the key, not the key itself — clients get a destination, not internal shape
+  const items = rows.map(({ key, ...r }) => ({ ...r, url: alertUrl(key) }));
+  res.json({ items, unread: items.filter((x) => !x.read).length });
 });
 app.post('/api/notifications/read', auth, (req, res) => {
   const ids = Array.isArray(req.body?.ids) ? req.body.ids : null;
@@ -1983,8 +2073,8 @@ function getMailTransport() {
   }
   return mailTransport;
 }
-async function sendMail(to, subject, text, attachments) {
-  const info = await getMailTransport().sendMail({ from: process.env.MAIL_FROM, to: to.join(', '), subject, text, attachments });
+async function sendMail(to, subject, text, attachments, html) {
+  const info = await getMailTransport().sendMail({ from: process.env.MAIL_FROM, to: to.join(', '), subject, text, attachments, html });
   if (process.env.MAIL_DEBUG === '1') console.log('MAIL_DEBUG:', String(info.message).slice(0, 3000));
 }
 // claim keys atomically so parallel workers can't double-send; released again if sending fails

@@ -31,8 +31,17 @@ self.addEventListener('push', (e) => {
 
 self.addEventListener('notificationclick', (e) => {
   e.notification.close();
-  e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
-    for (const c of list) { if ('focus' in c) return c.focus(); }
-    return self.clients.openWindow(e.notification.data?.url || '/');
-  }));
+  // previously this only focused whatever tab happened to be open — landing on the dashboard no
+  // matter what the notification was about. Now it navigates that tab to the right page first.
+  const target = new URL(e.notification.data?.url || '/', self.location.origin).href;
+  e.waitUntil((async () => {
+    const list = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    for (const c of list) {
+      if (!('focus' in c)) continue;
+      let client = c;
+      if ('navigate' in c) { try { client = (await c.navigate(target)) || c; } catch { /* cross-origin or blocked — focus what we have */ } }
+      return client.focus();
+    }
+    return self.clients.openWindow(target);
+  })());
 });

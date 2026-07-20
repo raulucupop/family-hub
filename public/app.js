@@ -140,6 +140,8 @@ const RO = {
   'Your current password is not right': 'Parola actuală nu este corectă',
   'The new password must be at least 8 characters': 'Parola nouă trebuie să aibă cel puțin 8 caractere',
   'Password changed — sign in again': 'Parola a fost schimbată — autentifică-te din nou',
+  'Confirm new password': 'Confirmă parola nouă',
+  'The new passwords do not match': 'Parolele noi nu coincid',
   // income
   'Recurring income (salaries)': 'Venituri recurente (salarii)',
   'Logged automatically every month on the chosen day — no manual entry needed.': 'Înregistrate automat în fiecare lună în ziua aleasă — fără introducere manuală.',
@@ -364,6 +366,41 @@ function toast(msg, action) {
     t._h = setTimeout(() => (t.hidden = true), 2600);
   }
 }
+// Generic modal: content is a full markup string appended inside #app (not document.body) so it
+// still goes through the RO-translation MutationObserver and the date-input upgrade pass.
+function openModal(innerHtml) {
+  closeModal();
+  const wrap = document.createElement('div');
+  wrap.className = 'modalwrap'; wrap.id = 'genmodal';
+  wrap.innerHTML = `<div class="modalbg"></div><div class="modalcard">
+    <button class="modalclose" aria-label="Close">✕</button>${innerHtml}</div>`;
+  wrap.querySelector('.modalbg').onclick = closeModal;
+  wrap.querySelector('.modalclose').onclick = closeModal;
+  app.appendChild(wrap);
+  return wrap;
+}
+function closeModal() { $('#genmodal')?.remove(); }
+// Shared Current/New/Confirm password form, used by both the admin Settings page and the tenant portal.
+function passwordChangeModal() {
+  const wrap = openModal(`
+    <h3>Change password</h3>
+    <p class="muted" style="margin-top:0">Changing it signs you out on every other device.</p>
+    <form id="modalpwform" class="formgrid" style="grid-template-columns:1fr">
+      <div><label>Current password</label><input name="current" type="password" autocomplete="current-password" required></div>
+      <div><label>New password (min. 8 characters)</label><input name="next" type="password" autocomplete="new-password" minlength="8" required></div>
+      <div><label>Confirm new password</label><input name="confirm" type="password" autocomplete="new-password" minlength="8" required></div>
+      <button class="btn small">Change password</button></form>`);
+  wrap.querySelector('#modalpwform').onsubmit = async (e) => {
+    e.preventDefault();
+    const body = Object.fromEntries(new FormData(e.target));
+    if (body.next !== body.confirm) return toast('The new passwords do not match');
+    try {
+      await api('/auth/change-password', { method: 'POST', body });
+      closeModal();
+      toast('Password changed — your other devices are signed out');
+    } catch (err) { toast(err.message); }
+  };
+}
 // Undo-on-delete: hide the item now, delete on the server only after the Undo window closes.
 // Clicking Undo cancels it — nothing was ever deleted, so no re-creation and no lost links.
 // A second delete (or leaving the page) commits any still-pending one first.
@@ -458,7 +495,11 @@ async function pollNotifications() {
     const fresh = NOTIF.items.filter((n) => !n.read && n.id > lastShown);
     if (fresh.length) {
       localStorage.setItem('fh_last_notif', String(Math.max(...fresh.map((n) => n.id))));
-      if (browserNotifOn()) for (const n of fresh.slice(0, 3)) new Notification(n.title, { body: n.body || '' });
+      if (browserNotifOn()) for (const n of fresh.slice(0, 3)) {
+        const note = new Notification(n.title, { body: n.body || '' });
+        // clicking it used to just focus the tab wherever it was — now it jumps to the page the alert is about
+        note.onclick = () => { window.focus(); if (n.url) location.hash = n.url.replace(/^\/?#?/, ''); note.close(); };
+      }
     }
   } catch { /* signed out or offline; badge just stays */ }
 }
@@ -636,9 +677,7 @@ async function renderTenantPortal() {
     return;
   }
   const t = today();
-  const payUrl = data.property.payment_link
-    ? (amt) => `${data.property.payment_link.replace(/\/+$/, '')}/${Number(amt).toFixed(2)}`
-    : null;
+  const payLink = data.property.payment_link ? data.property.payment_link.replace(/\/+$/, '') : null;
   const unpaidTotal = data.charges.filter((c) => c.status === 'unpaid').reduce((s, c) => s + c.amount, 0);
   app.innerHTML = `<div class="authwrap"><div class="card" style="max-width:720px;width:100%">
     <div class="row" style="justify-content:space-between;align-items:flex-start">
@@ -656,14 +695,10 @@ async function renderTenantPortal() {
           <td>${c.status === 'paid' ? `<span class="badge paid">${tr('paid')}${c.confirmed_at ? ' ' + fdate(c.confirmed_at) : ''}</span>`
             : c.status === 'pending' ? `<span class="badge role">confirmation pending</span>`
             : `<span class="badge unpaid">to pay</span>`}</td>
-          <td class="right">${c.status === 'unpaid' ? `<span class="row" style="gap:6px;justify-content:flex-end;flex-wrap:nowrap;white-space:nowrap">${payUrl ? `<a class="btn ghost small revolut" href="${esc(payUrl(c.amount))}" target="_blank" rel="noopener" title="Pay with Revolut">Pay ${REVOLUT_MARK}</a>` : ''}<button class="btn small" data-pay="${c.id}">Mark as paid</button></span>` : ''}</td>
+          <td class="right">${c.status === 'unpaid' ? `<span class="row" style="gap:6px;justify-content:flex-end;flex-wrap:nowrap;white-space:nowrap">${payLink ? `<a class="btn ghost small revolut" href="${esc(payLink)}" target="_blank" rel="noopener" title="Pay with Revolut">Pay ${REVOLUT_MARK}</a>` : ''}<button class="btn small" data-pay="${c.id}">Mark as paid</button></span>` : ''}</td>
         </tr>`;
       }).join('')}</tbody></table>`
     : `<div class="empty" style="margin-top:14px"><b>Nothing to pay yet</b>Rent and shared invoices from your landlord will appear here.</div>`}
-    ${payUrl ? `<div class="row" style="flex-wrap:wrap;margin-top:10px;border:1px solid var(--line);border-radius:10px;padding:10px">
-      <b>Pay with Revolut:</b>
-      <a class="btn small" href="${esc(data.property.payment_link)}" target="_blank" rel="noopener">Pay</a>
-    </div>` : ''}
     <p class="muted">After you mark something as paid, the owner confirms it — until then it shows as "confirmation pending".</p>
     ${(data.meters || []).length ? `<h3 style="margin-top:16px">Meter readings</h3>
       ${data.meters.filter((m) => m.status === 'pending').map((m) => `
@@ -702,12 +737,11 @@ async function renderTenantPortal() {
       <button class="btn small">Save profile</button></form>
     <p class="muted" style="margin:14px 0 6px">Language</p>
     <div class="row">${[['en', '🇬🇧 English'], ['ro', '🇷🇴 Română']].map(([lg, lb]) => `<button class="btn ${(ME.lang || 'en') === lg ? '' : 'ghost'} small" data-tlang="${lg}">${lb}</button>`).join('')}</div>
+    <p class="muted" style="margin:14px 0 6px">Appearance</p>
+    <div class="row">${['light', 'dark'].map((tm) => `<button class="btn ${(ME.theme || 'light') === tm ? '' : 'ghost'} small" data-ttheme="${tm}">${tm === 'light' ? '☀ Light' : '🌙 Dark'}</button>`).join('')}</div>
     <h3 style="margin-top:20px">Password</h3>
     <p class="muted">Changing it signs you out on every other device.</p>
-    <form id="tpwform" class="formgrid" style="max-width:560px">
-      <div><label>Current password</label><input name="current" type="password" autocomplete="current-password" required></div>
-      <div><label>New password (min. 8 characters)</label><input name="next" type="password" autocomplete="new-password" minlength="8" required></div>
-      <button class="btn small">Change password</button></form>
+    <button class="btn small" id="tpwbtn">Change password</button>
   </div></div>`;
   $('#tlogout').onclick = async () => { await api('/auth/logout', { method: 'POST' }); ME = null; renderAuth(); };
   app.querySelectorAll('[data-pay]').forEach((b) => (b.onclick = async () => {
@@ -758,14 +792,11 @@ async function renderTenantPortal() {
     try { await api('/settings', { method: 'POST', body: { lang: b.dataset.tlang } }); refreshMe(); }
     catch (err) { toast(err.message); }
   }));
-  $('#tpwform').onsubmit = async (e) => {
-    e.preventDefault();
-    try {
-      await api('/auth/change-password', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) });
-      e.target.reset();
-      toast('Password changed — your other devices are signed out');
-    } catch (err) { toast(err.message); }
-  };
+  app.querySelectorAll('[data-ttheme]').forEach((b) => (b.onclick = async () => {
+    try { const u = await api('/settings', { method: 'POST', body: { theme: b.dataset.ttheme } }); ME = { ...ME, ...u }; applyTheme(); renderTenantPortal(); }
+    catch (err) { toast(err.message); }
+  }));
+  $('#tpwbtn').onclick = () => passwordChangeModal();
 }
 
 /* ---------- dashboard ---------- */
@@ -2314,13 +2345,10 @@ async function viewSettings(el) {
         <div><label>Phone number</label><input name="phone" type="tel" value="${esc(ME.phone || '')}" placeholder="07xx xxx xxx"></div>
         <button class="btn small">Save profile</button></form>` : ''}
     </div>
-    ${ME.email ? `<details class="card foldcard" style="margin-top:16px"><summary>Password</summary><div style="padding-top:12px">
+    ${ME.email ? `<div class="card" style="margin-top:16px"><h3>Password</h3>
       <p class="muted" style="margin-top:0">Changing it signs you out on every other device.</p>
-      <form id="pwform" class="formgrid" style="max-width:560px">
-        <div><label>Current password</label><input name="current" type="password" autocomplete="current-password" required></div>
-        <div><label>New password (min. 8 characters)</label><input name="next" type="password" autocomplete="new-password" minlength="8" required></div>
-        <button class="btn small">Change password</button></form>
-    </div></details>` : ''}
+      <button class="btn small" id="pwbtn">Change password</button>
+    </div>` : ''}
     ${canEditKids && kids.length ? `<div class="card" style="margin-top:16px"><h3>Children's pictures</h3>
       <div class="row" style="gap:22px;flex-wrap:wrap">${kids.map((k) => `<div style="text-align:center">${avatarHtml(k, 'avatar-lg')}
         <div style="margin-top:6px"><b>${esc(k.name)}</b></div>
@@ -2336,15 +2364,7 @@ async function viewSettings(el) {
     catch (err) { toast(err.message); }
   }));
   setupPushCard();
-  $('#pwform')?.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const f = e.target;
-    try {
-      await api('/auth/change-password', { method: 'POST', body: Object.fromEntries(new FormData(f)) });
-      f.reset();
-      toast('Password changed — your other devices are signed out');
-    } catch (err) { toast(err.message); }
-  });
+  $('#pwbtn')?.addEventListener('click', () => passwordChangeModal());
   $('#nameform')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     try { const u = await api('/settings', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) }); ME = { ...ME, ...u }; toast('Saved'); render(); }
