@@ -73,7 +73,7 @@ const RO = {
   'Document': 'Document', 'Belongs to': 'Aparține de', 'Family (general)': 'Familie (general)', 'Expiry date': 'Data expirării', 'Expires': 'Expiră',
   // settings
   'Appearance': 'Aspect', 'Choose how Family Hub looks on this account.': 'Alege cum arată Family Hub pentru acest cont.',
-  '☀ Light': '☀ Luminos', '🌙 Dark': '🌙 Întunecat', 'Language': 'Limbă', 'Your profile': 'Profilul tău',
+  '☀ Light': '☀ Luminos', '🌙 Dark': '🌙 Întunecat', '◑ System': '◑ Sistem', 'Language': 'Limbă', 'Your profile': 'Profilul tău',
   'Upload picture': 'Încarcă poză', 'Remove': 'Elimină', 'Display name': 'Nume afișat', 'Save name': 'Salvează numele',
   'Save profile': 'Salvează profilul', 'Birthday': 'Zi de naștere', 'Phone number': 'Număr de telefon',
   "Children's pictures": 'Pozele copiilor', 'Upload': 'Încarcă',
@@ -320,8 +320,15 @@ const RO_RX = [
   [/^(.+) — unpaid by tenant$/, '$1 — neplătit de chiriaș'],
   [/^To fix: (.+)$/, 'De reparat: $1'],
 ];
-let LANG = 'en';
-function applyLang() { LANG = (ME && ME.lang) || 'en'; document.documentElement.lang = LANG; }
+// before sign-in there is no account language yet: remember the last choice on this device,
+// else follow the device language — a Romanian phone gets a Romanian sign-in screen
+const deviceLang = () => localStorage.getItem('fh_lang') || ((navigator.language || '').toLowerCase().startsWith('ro') ? 'ro' : 'en');
+let LANG = deviceLang();
+function applyLang() {
+  LANG = (ME && ME.lang) || deviceLang();
+  if (ME && ME.lang) localStorage.setItem('fh_lang', ME.lang); // the sign-in screen matches next time
+  document.documentElement.lang = LANG;
+}
 // tr(): translate a string when building templates in JS (for text assembled with interpolation)
 const tr = (s) => (LANG === 'ro' && RO[s]) || s;
 // confirm/prompt shadow the natives so static messages get translated too
@@ -376,6 +383,26 @@ function toast(msg, action) {
   } else {
     t.textContent = tr(msg); t.hidden = false;
     t._h = setTimeout(() => (t.hidden = true), 2600);
+  }
+}
+// KPI numbers roll up from zero on load — decorative, so reduced-motion skips straight to the value.
+// Elements opt in with data-cu="<number>"; their text is already the formatted final value.
+function countUpAll(root) {
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  for (const el of root.querySelectorAll('[data-cu]')) {
+    const target = Number(el.dataset.cu);
+    if (!Number.isFinite(target) || target === 0) continue;
+    el.textContent = money(0); // otherwise the final value flashes for one frame before the roll-up
+    const t0 = performance.now(), D = 650;
+    const tick = (now) => {
+      const p = Math.min(1, (now - t0) / D);
+      const ease = 1 - Math.pow(1 - p, 3);
+      el.textContent = money(target * ease);
+      if (p < 1) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+    // rAF stalls in background tabs — make sure the real number is there regardless
+    setTimeout(() => { el.textContent = money(target); }, D + 150);
   }
 }
 // what counts as focusable for autofocus and the focus trap
@@ -523,7 +550,11 @@ function daysLabel(d) {
 
 /* ---------- router ---------- */
 const routes = { dashboard: viewDashboard, money: viewMoney, bills: viewBills, search: viewSearch, vehicles: viewVehicles, properties: viewProperties, tenants: viewTenants, acte: viewActe, lists: viewLists, import: viewImport, alerts: viewAlerts, family: viewFamily, settings: viewSettings };
-window.addEventListener('hashchange', render);
+// page changes cross-fade where the browser supports it; plain render elsewhere
+window.addEventListener('hashchange', () => {
+  if (document.startViewTransition && !matchMedia('(prefers-reduced-motion: reduce)').matches) document.startViewTransition(render);
+  else render();
+});
 
 /* ---------- site notifications: polling, badge, browser notifications ---------- */
 let NOTIF = { unread: 0, items: [] };
@@ -553,7 +584,14 @@ async function pollNotifications() {
 }
 setInterval(pollNotifications, 60000);
 
-function applyTheme() { document.documentElement.dataset.theme = (ME && ME.theme) || 'light'; }
+// 'system' follows the device (and flips live when the device does); signed-out pages follow it too
+const THEME_LABELS = { light: '☀ Light', dark: '🌙 Dark', system: '◑ System' };
+const systemDark = matchMedia('(prefers-color-scheme: dark)');
+function applyTheme() {
+  const pref = ME ? ME.theme || 'light' : 'system';
+  document.documentElement.dataset.theme = pref === 'system' ? (systemDark.matches ? 'dark' : 'light') : pref;
+}
+systemDark.addEventListener('change', applyTheme);
 // a stable hue per name, so different people get distinct avatar colours (the CSS turns the
 // hue into a light/dark-aware tint). Same name always lands on the same colour.
 function avatarHue(name) {
@@ -683,7 +721,15 @@ async function renderAuth(mode = 'login') {
       ${mode === 'login' ? `<p class="muted" style="text-align:center;margin:12px 0 0"><a href="" data-forgot>Forgot password?</a></p>` : ''}
       ${mode === 'forgot' ? `<p class="muted" style="text-align:center;margin:12px 0 0"><a href="" data-back>Back to sign in</a></p>` : ''}
     </form>
+    <div class="row" style="justify-content:center;margin-top:16px">
+      ${[['en', '🇬🇧 English'], ['ro', '🇷🇴 Română']].map(([lg, lb]) => `<button type="button" class="btn ${LANG === lg ? '' : 'ghost'} small" data-authlang="${lg}">${lb}</button>`).join('')}
+    </div>
   </div></div>`;
+  // sign-in screen language: a device-level choice — it becomes the account language after login
+  app.querySelectorAll('[data-authlang]').forEach((b) => (b.onclick = () => {
+    localStorage.setItem('fh_lang', b.dataset.authlang);
+    applyLang(); renderAuth(mode);
+  }));
   app.querySelectorAll('.tabs button').forEach((b) => (b.onclick = () => renderAuth(b.dataset.m)));
   app.querySelector('[data-forgot]')?.addEventListener('click', (e) => { e.preventDefault(); renderAuth('forgot'); });
   app.querySelector('[data-back]')?.addEventListener('click', (e) => { e.preventDefault(); renderAuth('login'); });
@@ -792,7 +838,7 @@ function tenantDashboardView(el, data) {
   el.innerHTML = `<div class="pagehead"><div><h1>Dashboard</h1>
       <p>${esc(data.property.name)}${data.property.address ? ' — ' + esc(data.property.address) : ''}</p></div></div>
     <section class="kpi">
-      <a class="card clickcard" href="#invoices"><div class="label">${tr('Amount due')}</div><div class="value ${unpaidTotal > 0 ? 'neg' : ''}">${money(unpaidTotal)}</div>
+      <a class="card clickcard" href="#invoices"><div class="label">${tr('Amount due')}</div><div class="value ${unpaidTotal > 0 ? 'neg' : ''}" data-cu="${unpaidTotal}">${money(unpaidTotal)}</div>
         <div class="muted" style="font-size:12px">${unpaid.length} ${tr('unpaid')}${overdue ? ` · ${overdue} ${tr('overdue')}` : ''}</div></a>
       <a class="card clickcard" href="#maintenance"><div class="label">${tr('Open maintenance')}</div><div class="value">${openMaint}</div></a>
       <div class="card"><div class="label">${tr('Meter readings due')}</div><div class="value">${pendingMeters.length}</div></div>
@@ -807,6 +853,7 @@ function tenantDashboardView(el, data) {
         </div>`).join('')}
       ${doneMeters.map((m) => `<p class="muted" style="margin:4px 0">✓ <span style="text-transform:capitalize">${esc(tr(m.utility))}</span>: ${m.reading ? esc(m.reading) : tr('photo sent')} · ${fdate(m.provided_at)}</p>`).join('')}
     </section>` : ''}`;
+  countUpAll(el);
   app.querySelectorAll('[data-msend]').forEach((b) => (b.onclick = async () => {
     const val = app.querySelector(`[data-mval="${b.dataset.msend}"]`).value;
     try { await api(`/tenant/meter/${b.dataset.msend}`, { method: 'POST', body: { reading: val } }); toast('Reading sent — thank you!'); renderTenantPortal(); }
@@ -893,7 +940,7 @@ function tenantAccountView(el, data) {
         <button class="btn small">Save profile</button></form></div>
     <div class="card" style="margin-top:16px"><h3 style="margin-top:0">Appearance</h3>
       <p class="muted" style="margin-top:0">Choose how Family Hub looks on this account.</p>
-      <div class="row">${['light', 'dark'].map((tm) => `<button class="btn ${(ME.theme || 'light') === tm ? '' : 'ghost'} small" data-ttheme="${tm}">${tm === 'light' ? '☀ Light' : '🌙 Dark'}</button>`).join('')}</div>
+      <div class="row">${['light', 'dark', 'system'].map((tm) => `<button class="btn ${(ME.theme || 'light') === tm ? '' : 'ghost'} small" data-ttheme="${tm}">${THEME_LABELS[tm]}</button>`).join('')}</div>
       <p class="muted" style="margin:14px 0 6px">Language</p>
       <div class="row">${[['en', '🇬🇧 English'], ['ro', '🇷🇴 Română']].map(([lg, lb]) => `<button class="btn ${(ME.lang || 'en') === lg ? '' : 'ghost'} small" data-tlang="${lg}">${lb}</button>`).join('')}</div></div>
     <div class="card" style="margin-top:16px"><h3 style="margin-top:0">Password</h3>
@@ -983,9 +1030,9 @@ async function viewDashboard(el) {
       : `<div class="card empty"><b>Nothing due soon</b>${DASH_VIEW === 'all' ? 'Add bills, vehicle or property deadlines and they will line up here.' : 'Nothing assigned to this person is coming up.'}</div>`}
     </section>
     <section class="kpi" style="margin-top:18px">
-      <a class="card clickcard" href="#money" data-tab="income"><div class="label">${tr('Income')} · ${esc(tr(periodLabel))}</div><div class="value">${money(stats.income)}</div>${deltaHtml(stats.income, stats.prev?.income, 'up-good')}</a>
-      <a class="card clickcard" href="#money" data-tab="expenses"><div class="label">${tr('Spent')} · ${esc(tr(periodLabel))}</div><div class="value">${money(stats.spent)}</div>${deltaHtml(stats.spent, stats.prev?.spent, 'up-bad')}</a>
-      <div class="card"><div class="label">Left over</div><div class="value ${net < 0 ? 'neg' : ''}">${money(net)}</div>${deltaHtml(net, (stats.prev?.income ?? 0) - (stats.prev?.spent ?? 0), 'up-good')}</div>
+      <a class="card clickcard" href="#money" data-tab="income"><div class="label">${tr('Income')} · ${esc(tr(periodLabel))}</div><div class="value" data-cu="${stats.income}">${money(stats.income)}</div>${deltaHtml(stats.income, stats.prev?.income, 'up-good')}</a>
+      <a class="card clickcard" href="#money" data-tab="expenses"><div class="label">${tr('Spent')} · ${esc(tr(periodLabel))}</div><div class="value" data-cu="${stats.spent}">${money(stats.spent)}</div>${deltaHtml(stats.spent, stats.prev?.spent, 'up-bad')}</a>
+      <div class="card"><div class="label">Left over</div><div class="value ${net < 0 ? 'neg' : ''}" data-cu="${net}">${money(net)}</div>${deltaHtml(net, (stats.prev?.income ?? 0) - (stats.prev?.spent ?? 0), 'up-good')}</div>
     </section>
     ${rentHtml(rent)}
     <section class="grid2" style="margin-top:18px">
@@ -1004,6 +1051,7 @@ async function viewDashboard(el) {
     ${goalsHtml(savings.goals)}
     <section class="card" id="dashcal" style="margin-top:18px"><div class="skel" style="height:260px"></div></section>`;
   $('#dash').querySelectorAll('[data-tab]').forEach((a) => a.addEventListener('click', () => { PENDING_MONEY_TAB = a.dataset.tab; }));
+  countUpAll($('#dash'));
   drawCharts(stats, DASH_VIEW, DASH_MONTHS);
   renderCalendar($('#dashcal'), true);
 }
@@ -2510,7 +2558,7 @@ async function viewSettings(el) {
   el.innerHTML = `<div class="pagehead"><div><h1>Settings</h1><p>Your profile, theme and family pictures.</p></div></div>
     <div class="card"><h3>Appearance</h3>
       <p class="muted" style="margin-top:0">Choose how Family Hub looks on this account.</p>
-      <div class="row">${['light', 'dark'].map((tm) => `<button class="btn ${ME.theme === tm ? '' : 'ghost'} small" data-theme="${tm}">${tm === 'light' ? '☀ Light' : '🌙 Dark'}</button>`).join('')}</div>
+      <div class="row">${['light', 'dark', 'system'].map((tm) => `<button class="btn ${(ME.theme || 'light') === tm ? '' : 'ghost'} small" data-theme="${tm}">${THEME_LABELS[tm]}</button>`).join('')}</div>
       <p class="muted" style="margin:14px 0 6px">Language</p>
       <div class="row">${[['en', '🇬🇧 English'], ['ro', '🇷🇴 Română']].map(([lg, lb]) => `<button class="btn ${(ME.lang || 'en') === lg ? '' : 'ghost'} small" data-lang="${lg}">${lb}</button>`).join('')}</div>
     </div>
@@ -2691,6 +2739,11 @@ function labelIconButtons(root) {
     if (lbl) b.setAttribute('aria-label', tr(lbl));
   }
 }
+// any data-table header with text becomes click-to-sort (arrow + pointer come from CSS)
+function markSortableHeaders(root) {
+  if (!root.querySelectorAll) return;
+  for (const th of root.querySelectorAll('th')) if (th.textContent.trim()) th.dataset.sortable = '';
+}
 new MutationObserver((muts) => {
   for (const m of muts) for (const n of m.addedNodes) {
     if (n.nodeType !== 1) continue;
@@ -2698,8 +2751,46 @@ new MutationObserver((muts) => {
     sweepDates(n);
     translateSubtree(n);
     labelIconButtons(n);
+    markSortableHeaders(n);
   }
 }).observe(app, { childList: true, subtree: true });
+// click a column header to sort its table: dates (dd/mm/yyyy), RO-formatted amounts
+// (1.234,56) and plain text all order correctly; clicking again flips the direction.
+// A hidden row (inline edit form) always travels with the data row above it.
+app.addEventListener('click', (e) => {
+  const th = e.target.closest('th[data-sortable]');
+  if (!th) return;
+  const table = th.closest('table'); const tbody = table?.tBodies[0];
+  if (!tbody) return;
+  const idx = [...th.parentNode.children].indexOf(th);
+  const dir = th.dataset.sort === 'asc' ? 'desc' : 'asc';
+  table.querySelectorAll('th').forEach((h) => { delete h.dataset.sort; h.removeAttribute('aria-sort'); });
+  th.dataset.sort = dir;
+  th.setAttribute('aria-sort', dir === 'asc' ? 'ascending' : 'descending');
+  const groups = [];
+  for (const tr of [...tbody.rows]) {
+    if (groups.length && (tr.hidden || tr.querySelector('form'))) groups[groups.length - 1].push(tr);
+    else groups.push([tr]);
+  }
+  const key = (g) => {
+    const t = g[0].cells[idx]?.textContent.trim() || '';
+    const dm = t.match(/^(\d{2})\/(\d{2})\/(\d{4})/);
+    if (dm) return Number(`${dm[3]}${dm[2]}${dm[1]}`);
+    if (/\d/.test(t)) {
+      const num = parseFloat(t.replace(/[^\d,.-]/g, '').replace(/\./g, '').replace(',', '.'));
+      if (!Number.isNaN(num)) return num;
+    }
+    return t.toLowerCase();
+  };
+  const sign = dir === 'asc' ? 1 : -1;
+  groups
+    .map((g) => [key(g), g])
+    .sort(([a], [b]) => {
+      if (typeof a === 'number' && typeof b === 'number') return (a - b) * sign;
+      return String(a).localeCompare(String(b)) * sign; // mixed columns fall back to text order
+    })
+    .forEach(([, g]) => g.forEach((tr) => tbody.appendChild(tr)));
+});
 // Esc closes the mobile "More" sheet when it's open (installed once, reads the live element)
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
@@ -2746,5 +2837,39 @@ document.addEventListener('submit', (e) => {
   if (btn) btn.disabled = true;
   setTimeout(() => { submitting.delete(f); if (btn) btn.disabled = false; }, 4000);
 }, true);
+
+/* pull-to-refresh, installed app only: standalone mode has no browser reload button, so stale
+   data would have no escape hatch. Pull down from the very top past the threshold and release. */
+(() => {
+  const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+  if (!standalone || !('ontouchstart' in window)) return;
+  const THRESHOLD = 70;
+  const ind = document.createElement('div');
+  ind.className = 'ptr';
+  ind.innerHTML = '<span class="ptr-spin" aria-hidden="true"></span>';
+  document.body.appendChild(ind);
+  let startY = null;
+  document.addEventListener('touchstart', (e) => {
+    // only arm when the page is at the very top and no overlay is open
+    startY = document.scrollingElement.scrollTop <= 0 && !$('#genmodal') ? e.touches[0].clientY : null;
+  }, { passive: true });
+  document.addEventListener('touchmove', (e) => {
+    if (startY == null) return;
+    const d = e.touches[0].clientY - startY;
+    if (d <= 0) { ind.style.transform = ''; ind.classList.remove('armed'); return; }
+    const pull = Math.min(d / 2, THRESHOLD + 20); // resistance: indicator moves half the finger
+    ind.style.transform = `translateX(-50%) translateY(${pull}px) rotate(${pull * 3}deg)`;
+    ind.classList.toggle('armed', pull >= THRESHOLD);
+  }, { passive: true });
+  document.addEventListener('touchend', () => {
+    if (startY != null && ind.classList.contains('armed')) {
+      ind.classList.add('go');
+      location.reload();
+    } else {
+      ind.style.transform = ''; ind.classList.remove('armed');
+    }
+    startY = null;
+  }, { passive: true });
+})();
 
 boot();

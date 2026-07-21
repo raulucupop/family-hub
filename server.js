@@ -1065,7 +1065,7 @@ app.get('/api/bills/:id/attachment', auth, (req, res) => {
 // theme + display name for the signed-in member
 app.post('/api/settings', auth, (req, res) => {
   const { theme, name, lang, birthday, phone, notif_muted, quiet_start, quiet_end } = req.body || {};
-  if (theme && !['light', 'dark'].includes(theme)) return res.status(400).json({ error: 'Unknown theme' });
+  if (theme && !['light', 'dark', 'system'].includes(theme)) return res.status(400).json({ error: 'Unknown theme' });
   if (lang && !['en', 'ro'].includes(lang)) return res.status(400).json({ error: 'Unknown language' });
   if (birthday != null && birthday !== '' && !isDate(birthday)) return res.status(400).json({ error: 'Birthday must be a valid date' });
   if (theme) db.prepare('UPDATE users SET theme = ? WHERE id = ?').run(theme, req.user.id);
