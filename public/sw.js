@@ -1,8 +1,19 @@
 /* Family Hub service worker: offline app shell + push notifications */
-const CACHE = 'fh-v1';
+const CACHE = 'fh-v2';
+// the shell is precached at install so the first offline visit already works,
+// and offline.html is the safety net when a page isn't in the cache at all
+const SHELL = ['/', '/app.js', '/styles.css', '/manifest.json', '/icon.svg', '/icon-192.png', '/offline.html'];
 
-self.addEventListener('install', () => self.skipWaiting());
-self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));
+self.addEventListener('install', (e) => {
+  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+});
+self.addEventListener('activate', (e) => {
+  // drop caches from older versions so stale shells don't linger forever
+  e.waitUntil((async () => {
+    for (const k of await caches.keys()) if (k !== CACHE) await caches.delete(k);
+    await self.clients.claim();
+  })());
+});
 
 // network-first for the app shell so deploys show up immediately; cached copy as offline fallback.
 // API calls are never cached — live data only.
@@ -14,7 +25,13 @@ self.addEventListener('fetch', (e) => {
       const copy = r.clone();
       caches.open(CACHE).then((c) => c.put(e.request, copy));
       return r;
-    }).catch(() => caches.match(e.request))
+    }).catch(async () => {
+      const hit = await caches.match(e.request);
+      if (hit) return hit;
+      // a navigation with no cached copy still deserves a real page, not a browser error
+      if (e.request.mode === 'navigate') return caches.match('/offline.html');
+      return Response.error();
+    })
   );
 });
 

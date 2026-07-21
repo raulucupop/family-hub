@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1c2b33">
+<title>Family Hub — offline</title>
+<style>
+  /* self-contained on purpose: this page must render with zero network */
+  :root { --ink: #1c2b33; --soft: #45565f; --paper: #eff2f1; --card: #fff; --accent: #2f6b5a; }
+  @media (prefers-color-scheme: dark) {
+    :root { --ink: #e8edeb; --soft: #9db0a9; --paper: #131a1d; --card: #1b2427; --accent: #57b394; }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px;
+    background: var(--paper); color: var(--ink);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; line-height: 1.5;
+  }
+  .card { background: var(--card); border-radius: 14px; padding: 32px 28px; max-width: 420px; width: 100%; text-align: center; box-shadow: 0 6px 24px rgba(0,0,0,.10); }
+  .mark { font-weight: 700; font-size: 1.5rem; letter-spacing: -.02em; margin-bottom: 18px; }
+  .mark span { color: var(--accent); }
+  .house { width: 64px; height: 64px; margin: 0 auto 16px; display: block; }
+  h1 { font-size: 1.15rem; margin: 0 0 6px; }
+  p { margin: 0 0 4px; color: var(--soft); font-size: 14px; }
+  p.ro { margin-bottom: 20px; }
+  button {
+    margin-top: 8px; background: var(--accent); color: #fff; border: 0; border-radius: 8px;
+    padding: 10px 22px; font-weight: 600; font-size: 14px; cursor: pointer; font-family: inherit;
+  }
+</style>
+</head>
+<body>
+<div class="card">
+  <svg class="house" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <rect width="512" height="512" rx="104" fill="#2f6b5a"/>
+    <path d="M256 118 L438 282 h-56 v122 a16 16 0 0 1 -16 16 H302 v-96 h-92 v96 H146 a16 16 0 0 1 -16 -16 V282 H74 Z" fill="#ffffff"/>
+  </svg>
+  <div class="mark">Family<span>Hub</span></div>
+  <h1>You're offline · Ești offline</h1>
+  <p>Your data is safe on the server — reconnect and pick up where you left off.</p>
+  <p class="ro">Datele tale sunt în siguranță pe server — reconectează-te și continuă de unde ai rămas.</p>
+  <button onclick="location.reload()">Retry · Reîncearcă</button>
+</div>
+</body>
+</html>

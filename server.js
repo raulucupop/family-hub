@@ -133,7 +133,7 @@ function auth(req, res, next) {
   if (!token) return res.status(401).json({ error: 'Not signed in' });
   try {
     const payload = jwt.verify(token, JWT_SECRET);
-    const user = db.prepare('SELECT id, family_id, name, email, role, tenant_property_id, avatar, theme, lang, birthday, phone, token_version FROM users WHERE id = ?').get(payload.uid);
+    const user = db.prepare('SELECT id, family_id, name, email, role, tenant_property_id, avatar, theme, lang, birthday, phone, notif_muted, quiet_start, quiet_end, token_version FROM users WHERE id = ?').get(payload.uid);
     if (!user) return res.status(401).json({ error: 'Account no longer exists' });
     // the password changed since this token was handed out — that session is over
     if ((payload.tv ?? 0) !== user.token_version) return res.status(401).json({ error: 'Password changed — sign in again' });
@@ -1064,7 +1064,7 @@ app.get('/api/bills/:id/attachment', auth, (req, res) => {
 // ---------- user settings & profile pictures ----------
 // theme + display name for the signed-in member
 app.post('/api/settings', auth, (req, res) => {
-  const { theme, name, lang, birthday, phone } = req.body || {};
+  const { theme, name, lang, birthday, phone, notif_muted, quiet_start, quiet_end } = req.body || {};
   if (theme && !['light', 'dark'].includes(theme)) return res.status(400).json({ error: 'Unknown theme' });
   if (lang && !['en', 'ro'].includes(lang)) return res.status(400).json({ error: 'Unknown language' });
   if (birthday != null && birthday !== '' && !isDate(birthday)) return res.status(400).json({ error: 'Birthday must be a valid date' });
@@ -1073,7 +1073,19 @@ app.post('/api/settings', auth, (req, res) => {
   if (name && String(name).trim() && req.user.role !== 'child') db.prepare('UPDATE users SET name = ? WHERE id = ?').run(String(name).trim(), req.user.id);
   if (birthday !== undefined) db.prepare('UPDATE users SET birthday = ? WHERE id = ?').run(birthday || null, req.user.id);
   if (phone !== undefined) db.prepare('UPDATE users SET phone = ? WHERE id = ?').run(str(phone), req.user.id);
-  res.json(db.prepare('SELECT id, family_id, name, email, role, avatar, theme, lang, birthday, phone FROM users WHERE id = ?').get(req.user.id));
+  // alert preferences: an array of muted group names, and quiet hours (0-23) for push
+  if (notif_muted !== undefined) {
+    const muted = Array.isArray(notif_muted) ? notif_muted.filter((g) => g in ALERT_GROUPS) : [];
+    db.prepare('UPDATE users SET notif_muted = ? WHERE id = ?').run(muted.join(','), req.user.id);
+  }
+  if (quiet_start !== undefined || quiet_end !== undefined) {
+    const hour = (v) => (v === null || v === '' ? null : Number.isInteger(Number(v)) && Number(v) >= 0 && Number(v) <= 23 ? Number(v) : undefined);
+    const qs = hour(quiet_start), qe = hour(quiet_end);
+    if (qs === undefined || qe === undefined) return res.status(400).json({ error: 'Quiet hours must be 0-23' });
+    // both or neither: a window needs two edges
+    db.prepare('UPDATE users SET quiet_start = ?, quiet_end = ? WHERE id = ?').run(qs === null || qe === null ? null : qs, qs === null || qe === null ? null : qe, req.user.id);
+  }
+  res.json(db.prepare('SELECT id, family_id, name, email, role, avatar, theme, lang, birthday, phone, notif_muted, quiet_start, quiet_end FROM users WHERE id = ?').get(req.user.id));
 });
 // who may set a given member's picture: yourself (adult/admin/tenant), or a child if you can write
 function canEditAvatar(reqUser, target) {
@@ -1386,7 +1398,8 @@ function notifyMail(to, subject, text, html) {
 // pass, so a one-off event row would be swept straight back out again.
 function notifyOwners(prop, subject, mailText, pushBody, opts = {}) {
   notifyMail(propOwnerEmails(prop), subject, mailText, opts.html);
-  sendPushToFamily(prop.family_id, { title: subject, body: pushBody || '', url: opts.url || '/#properties' }, prop.owner_id).catch(() => {});
+  // everything notifyOwners announces (marked paid, meter reading, maintenance) is tenant-group news
+  sendPushToFamily(prop.family_id, { title: subject, body: pushBody || '', url: opts.url || '/#properties', kind: 'tenant_unpaid' }, prop.owner_id).catch(() => {});
 }
 
 // owner side: charges shared with the tenant
@@ -1849,8 +1862,11 @@ function getWebPush() {
 // push a payload to every subscribed device of the family (owner-scoped alerts go to admins + the owner)
 async function sendPushToFamily(fid, payload, ownerId = null) {
   let wp; try { wp = getWebPush(); } catch { return; }
-  let subs = db.prepare('SELECT s.*, u.role FROM push_subscriptions s JOIN users u ON u.id = s.user_id WHERE s.family_id = ?').all(fid);
+  let subs = db.prepare('SELECT s.*, u.role, u.notif_muted, u.quiet_start, u.quiet_end FROM push_subscriptions s JOIN users u ON u.id = s.user_id WHERE s.family_id = ?').all(fid);
   if (ownerId != null) subs = subs.filter((s) => s.role === 'admin' || s.user_id === ownerId);
+  // per-member preferences: muted alert groups drop the push, quiet hours hold everything back
+  const group = GROUP_OF_KIND[payload.kind];
+  subs = subs.filter((s) => !(group && mutedSet(s).has(group)) && !inQuietHours(s.quiet_start, s.quiet_end));
   for (const s of subs) {
     try { await wp.sendNotification({ endpoint: s.endpoint, keys: JSON.parse(s.keys_json) }, JSON.stringify(payload)); }
     catch (err) { if (err.statusCode === 404 || err.statusCode === 410) db.prepare('DELETE FROM push_subscriptions WHERE id = ?').run(s.id); }
@@ -1893,6 +1909,26 @@ const THRESHOLDS = [0, 1, 7, 14, 30];
 // and money a tenant owes past its due date.
 // regular bills stay visible in the dashboard ribbon but never notify.
 const ALERT_KINDS = new Set(['rca', 'casco', 'vignette', 'itp', 'road_tax', 'property_insurance', 'document', 'birthday', 'tenant_unpaid']);
+// user-facing preference groups: each member can mute whole groups (users.notif_muted, CSV).
+// The group names are the API surface the Settings page speaks.
+const ALERT_GROUPS = {
+  vehicles: ['rca', 'casco', 'vignette', 'itp', 'road_tax'],
+  property: ['property_insurance'],
+  tenant: ['tenant_unpaid', 'maintenance'],
+  documents: ['document'],
+  birthdays: ['birthday'],
+};
+const GROUP_OF_KIND = Object.fromEntries(Object.entries(ALERT_GROUPS).flatMap(([g, kinds]) => kinds.map((k) => [k, g])));
+const mutedSet = (user) => new Set(String(user.notif_muted || '').split(',').filter(Boolean));
+// quiet hours are stored as plain hours in Romanian wall-clock time (the household's day),
+// regardless of where the server happens to run
+function bucharestHour() {
+  return Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Bucharest', hour: 'numeric', hourCycle: 'h23' }).format(new Date()));
+}
+function inQuietHours(qs, qe, h = bucharestHour()) {
+  if (qs == null || qe == null || qs === qe) return false;
+  return qs < qe ? h >= qs && h < qe : h >= qs || h < qe; // second form wraps midnight (22 → 8)
+}
 // where tapping an alert (push notification or the in-app list) should land, derived from the
 // kind encoded at the front of its key — so "opening the notification" goes to the relevant page
 // instead of the bare dashboard.
@@ -1961,7 +1997,7 @@ function generateNotifications(fid) {
   db.prepare(`DELETE FROM notifications WHERE family_id = ?${keep.length ? ` AND key NOT IN (${keep.map(() => '?').join(',')})` : ''}`)
     .run(fid, ...keep);
   // only genuinely new alerts push to devices — a resurfaced one would push every single day
-  for (const n of fresh) sendPushToFamily(fid, { title: n.title, body: n.body, url: alertUrl(n.key) }, n.owner).catch(() => {});
+  for (const n of fresh) sendPushToFamily(fid, { title: n.title, body: n.body, url: alertUrl(n.key), kind: String(n.key).split(':')[0] }, n.owner).catch(() => {});
 }
 app.get('/api/notifications', auth, (req, res) => {
   generateNotifications(req.user.family_id);
@@ -1975,8 +2011,12 @@ app.get('/api/notifications', auth, (req, res) => {
     WHERE n.family_id = ? ${isAdmin ? '' : 'AND (n.owner_id IS NULL OR n.owner_id = ?)'}
     ORDER BY n.id DESC LIMIT 100
   `).all(...(isAdmin ? [req.user.id, req.user.family_id] : [req.user.id, req.user.family_id, req.user.id]));
-  // url derived from the key, not the key itself — clients get a destination, not internal shape
-  const items = rows.map(({ key, ...r }) => ({ ...r, url: alertUrl(key) }));
+  // url derived from the key, not the key itself — clients get a destination, not internal shape.
+  // Muted groups disappear from this member's list and badge; other members still see them.
+  const muted = mutedSet(req.user);
+  const items = rows
+    .filter((r) => !muted.has(GROUP_OF_KIND[String(r.key).split(':')[0]]))
+    .map(({ key, ...r }) => ({ ...r, url: alertUrl(key) }));
   res.json({ items, unread: items.filter((x) => !x.read).length });
 });
 app.post('/api/notifications/read', auth, (req, res) => {

@@ -302,6 +302,12 @@ const RO = {
   'Get alerts (RCA, ITP, acte, birthdays…) as push notifications on this phone/computer even when the site is closed. Tip: on a phone, first use "Add to Home Screen" to install the app.':
     'Primește alerte (RCA, ITP, acte, zile de naștere…) ca notificări push pe acest telefon/calculator chiar și când site-ul e închis. Sfat: pe telefon, folosește mai întâi „Adaugă pe ecranul principal” pentru a instala aplicația.',
   'Enable on this device': 'Activează pe acest dispozitiv', 'Disable on this device': 'Dezactivează pe acest dispozitiv', 'Send a test': 'Trimite un test',
+  'Which alerts do you want?': 'Ce alerte vrei să primești?',
+  'Vehicles (RCA, ITP, rovinietă…)': 'Vehicule (RCA, ITP, rovinietă…)', 'Property insurance': 'Asigurarea locuinței',
+  'Documents (acte)': 'Documente (acte)', 'Birthdays': 'Zile de naștere',
+  'Quiet hours (push notifications wait until morning)': 'Ore de liniște (notificările push așteaptă până dimineața)',
+  'Off': 'Oprit', 'Save alert settings': 'Salvează setările de alerte',
+  'Alert choices are yours alone — every family member picks their own.': 'Alegerile de alerte sunt doar ale tale — fiecare membru și le alege pe ale lui.',
   'Push notifications off on this device': 'Notificările push sunt oprite pe acest dispozitiv',
   'Push notifications on — alerts will reach this device': 'Notificări push pornite — alertele vor ajunge pe acest dispozitiv',
   'Test sent — check your notifications': 'Test trimis — verifică notificările', 'Picture updated': 'Poză actualizată',
@@ -533,7 +539,11 @@ async function pollNotifications() {
     const fresh = NOTIF.items.filter((n) => !n.read && n.id > lastShown);
     if (fresh.length) {
       localStorage.setItem('fh_last_notif', String(Math.max(...fresh.map((n) => n.id))));
-      if (browserNotifOn()) for (const n of fresh.slice(0, 3)) {
+      // quiet hours also silence the pop-ups this open tab creates itself (device-local time —
+      // the alert stays in the list, it just doesn't chime at night)
+      const qs = ME?.quiet_start, qe = ME?.quiet_end, h = new Date().getHours();
+      const quiet = qs != null && qe != null && qs !== qe && (qs < qe ? h >= qs && h < qe : h >= qs || h < qe);
+      if (browserNotifOn() && !quiet) for (const n of fresh.slice(0, 3)) {
         const note = new Notification(n.title, { body: n.body || '' });
         // clicking it used to just focus the tab wherever it was — now it jumps to the page the alert is about
         note.onclick = () => { window.focus(); if (n.url) location.hash = n.url.replace(/^\/?#?/, ''); note.close(); };
@@ -2507,6 +2517,19 @@ async function viewSettings(el) {
     <details class="card foldcard" style="margin-top:16px"><summary>Notifications on this device</summary><div style="padding-top:12px">
       <p class="muted" style="margin-top:0">Get alerts (RCA, ITP, acte, birthdays…) as push notifications on this phone/computer even when the site is closed. Tip: on a phone, first use "Add to Home Screen" to install the app.</p>
       <div class="row"><button class="btn small" id="pushbtn">…</button><button class="btn ghost small" id="pushtest" hidden>Send a test</button></div>
+      <p class="muted" style="margin:16px 0 6px">Which alerts do you want?</p>
+      <div class="row" style="flex-wrap:wrap;gap:6px 16px">
+        ${[['vehicles', 'Vehicles (RCA, ITP, rovinietă…)'], ['property', 'Property insurance'], ['tenant', 'Tenant & rent'], ['documents', 'Documents (acte)'], ['birthdays', 'Birthdays']]
+          .map(([g, lb]) => `<label style="display:inline-flex;align-items:center;gap:7px;margin:0;font-size:13.5px;font-weight:500;color:var(--ink)"><input type="checkbox" data-ngroup="${g}" ${String(ME.notif_muted || '').split(',').includes(g) ? '' : 'checked'} style="width:auto"> ${lb}</label>`).join('')}
+      </div>
+      <p class="muted" style="margin:14px 0 6px">Quiet hours (push notifications wait until morning)</p>
+      <div class="row">
+        <select id="qstart" style="width:110px"><option value="">Off</option>${Array.from({ length: 24 }, (_, h) => `<option value="${h}" ${ME.quiet_start === h ? 'selected' : ''}>${String(h).padStart(2, '0')}:00</option>`).join('')}</select>
+        <span class="muted">–</span>
+        <select id="qend" style="width:110px"><option value="">Off</option>${Array.from({ length: 24 }, (_, h) => `<option value="${h}" ${ME.quiet_end === h ? 'selected' : ''}>${String(h).padStart(2, '0')}:00</option>`).join('')}</select>
+        <button class="btn small" id="notifsave">Save alert settings</button>
+      </div>
+      <p class="muted" style="margin:8px 0 0">Alert choices are yours alone — every family member picks their own.</p>
     </div></details>
     <div class="card" style="margin-top:16px"><h3>Your profile</h3>
       <div class="row" style="gap:16px;align-items:center">${avatarHtml(ME, 'avatar-lg')}
@@ -2539,6 +2562,14 @@ async function viewSettings(el) {
     catch (err) { toast(err.message); }
   }));
   setupPushCard();
+  $('#notifsave')?.addEventListener('click', async () => {
+    // muted = groups left unchecked; quiet hours only count when both edges are set
+    const muted = [...el.querySelectorAll('[data-ngroup]')].filter((c) => !c.checked).map((c) => c.dataset.ngroup);
+    const qs = $('#qstart').value, qe = $('#qend').value;
+    const body = { notif_muted: muted, quiet_start: qs === '' || qe === '' ? null : Number(qs), quiet_end: qs === '' || qe === '' ? null : Number(qe) };
+    try { const u = await api('/settings', { method: 'POST', body }); ME = { ...ME, ...u }; toast('Saved'); pollNotifications(); }
+    catch (err) { toast(err.message); }
+  });
   $('#pwbtn')?.addEventListener('click', () => passwordChangeModal());
   $('#nameform')?.addEventListener('submit', async (e) => {
     e.preventDefault();

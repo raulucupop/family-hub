@@ -454,6 +454,11 @@ if (!expCols.includes('vehicle_id')) db.exec('ALTER TABLE expenses ADD COLUMN ve
 if (!userCols.includes('lang')) db.exec("ALTER TABLE users ADD COLUMN lang TEXT NOT NULL DEFAULT 'en'");
 if (!userCols.includes('birthday')) db.exec('ALTER TABLE users ADD COLUMN birthday TEXT');
 if (!userCols.includes('phone')) db.exec('ALTER TABLE users ADD COLUMN phone TEXT');
+// notification preferences: muted alert groups (CSV; empty = everything on) and quiet hours
+// (0-23, both null = off) during which push notifications are held back
+if (!userCols.includes('notif_muted')) db.exec("ALTER TABLE users ADD COLUMN notif_muted TEXT NOT NULL DEFAULT ''");
+if (!userCols.includes('quiet_start')) db.exec('ALTER TABLE users ADD COLUMN quiet_start INTEGER');
+if (!userCols.includes('quiet_end')) db.exec('ALTER TABLE users ADD COLUMN quiet_end INTEGER');
 
 const propCols = db.prepare('PRAGMA table_info(properties)').all().map((c) => c.name);
 if (!propCols.includes('owner_id')) db.exec('ALTER TABLE properties ADD COLUMN owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL');
