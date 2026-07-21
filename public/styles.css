@@ -505,6 +505,39 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { box-shadow: 
   color: var(--accent); opacity: .45; margin-bottom: 10px;
 }
 
+/* ---------- toast variants: a coloured accent + icon for success / error / info ---------- */
+.toast .toastic {
+  display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
+  width: 20px; height: 20px; border-radius: 999px; font-size: 12px; font-weight: 700;
+  background: rgba(255, 255, 255, .18); color: #fff;
+}
+.toast.success { border-left: 3px solid #7fd0b6; }
+.toast.error { border-left: 3px solid #e88b7f; }
+.toast.info { border-left: 3px solid #8fbde0; }
+.toast.success .toastic { background: #3e7c4f; }
+.toast.error .toastic { background: #b23a2e; }
+/* the whole toast pops a touch when it carries a type — a small "it happened" beat */
+.toast.success:not([hidden]), .toast.error:not([hidden]), .toast.info:not([hidden]) { animation: fh-toast-pop .3s var(--ease); }
+@keyframes fh-toast-pop {
+  0% { opacity: 0; transform: translateX(-50%) translateY(14px) scale(.96); }
+  60% { transform: translateX(-50%) translateY(-2px) scale(1.02); }
+  100% { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
+}
+/* action button mid-"✓ Sent" confirmation */
+.btn.sent { background: var(--ok) !important; color: #fff !important; border-color: var(--ok) !important; }
+
+/* ---------- attention pulse: overdue items gently breathe so they're impossible to miss ---------- */
+.badge.late { animation: fh-attn 2.4s ease-in-out infinite; }
+@keyframes fh-attn {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(178, 58, 46, 0); }
+  50% { box-shadow: 0 0 0 4px rgba(178, 58, 46, .18); }
+}
+:root[data-theme="dark"] .badge.late { animation-name: fh-attn-d; }
+@keyframes fh-attn-d {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(224, 106, 92, 0); }
+  50% { box-shadow: 0 0 0 4px rgba(224, 106, 92, .22); }
+}
+
 /* ---------- pull-to-refresh (installed app only; element added by JS) ---------- */
 .ptr {
   position: fixed; top: -46px; left: 50%; transform: translateX(-50%); z-index: 70;

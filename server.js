@@ -1393,6 +1393,16 @@ function notifyMail(to, subject, text, html) {
   if (!process.env.MAIL_FROM || !to.length) return;
   sendMail(to, subject, text, undefined, html).catch((err) => console.error('notify mail:', err.message));
 }
+// manual "Send reminder" nudges: an in-process cooldown per target so the button can't be spammed
+// (same style as the sign-in throttle). Returns minutes left, or 0 if it's clear to send.
+const REMIND_COOLDOWN = 15 * 60 * 1000;
+const reminderSentAt = new Map();
+function remindWait(key) {
+  const last = reminderSentAt.get(key);
+  if (last && Date.now() - last < REMIND_COOLDOWN) return Math.ceil((REMIND_COOLDOWN - (Date.now() - last)) / 60000);
+  return 0;
+}
+function remindMark(key) { reminderSentAt.set(key, Date.now()); }
 // the tenant did something the owner wants to know about now: email + a push pop-up.
 // Deliberately no row in `notifications` — that table is reconciled against live deadlines every
 // pass, so a one-off event row would be swept straight back out again.
@@ -1444,6 +1454,43 @@ app.post('/api/properties/:id/charges', auth, canWrite, (req, res) => {
       `));
   }
   res.json(db.prepare('SELECT * FROM tenant_charges WHERE id = ?').get(info.lastInsertRowid));
+});
+// owner nudges the tenant about anything still needing them: unpaid charges (payable email with
+// the Revolut + invoice buttons) and/or pending meter readings
+app.post('/api/properties/:id/tenant/remind', auth, canWrite, (req, res) => {
+  const prop = familyProperty(req);
+  if (!prop) return res.status(404).json({ error: 'Not found' });
+  ensureRentCharge(prop);
+  const to = tenantEmails(prop.id);
+  if (!to.length) return res.status(400).json({ error: 'No tenant with an email has joined yet' });
+  const unpaid = db.prepare("SELECT * FROM tenant_charges WHERE property_id = ? AND status = 'unpaid' ORDER BY due_date").all(prop.id);
+  const meters = db.prepare("SELECT * FROM meter_requests WHERE property_id = ? AND status = 'pending'").all(prop.id);
+  if (!unpaid.length && !meters.length) return res.status(400).json({ error: "Nothing needs the tenant's attention right now" });
+  const wait = remindWait(`rt:${prop.id}`);
+  if (wait) return res.status(429).json({ error: `Reminder already sent — try again in ${wait} minute${wait === 1 ? '' : 's'}` });
+  const cur = familyCurrency(prop.family_id);
+  const total = unpaid.reduce((s, c) => s + c.amount, 0);
+  const groups = byLanguage(db.prepare("SELECT email, lang FROM users WHERE role = 'tenant' AND tenant_property_id = ? AND email IS NOT NULL").all(prop.id));
+  for (const [lang, addrs] of Object.entries(groups)) {
+    const ro = lang === 'ro';
+    if (unpaid.length) {
+      const m = tenantChargesMail(lang, prop, unpaid, total, cur, { manual: true });
+      // fold a pending-meter line into the same email so the tenant gets one nudge, not two
+      const meterNote = meters.length ? (ro ? `De trimis și citirile de contor: ${meters.map((x) => x.utility).join(', ')}.` : `Also please send your meter readings: ${meters.map((x) => x.utility).join(', ')}.`) : '';
+      notifyMail(addrs, m.subject, meterNote ? `${m.text}\n${meterNote}\n` : m.text,
+        meterNote ? m.html.replace('</div></body>', `<p style="color:#45565f;font-size:13px;">${htmlEsc(meterNote)}</p></div></body>`) : m.html);
+    } else {
+      const utils = meters.map((x) => x.utility).join(', ');
+      notifyMail(addrs,
+        ro ? `Citiri de contor pentru ${prop.name}` : `Meter readings for ${prop.name}`,
+        ro ? `Bună,\n\nUn memento: te rugăm să trimiți citirile de contor pentru ${prop.name} (${utils}).\n\n${siteBase()}/\n`
+          : `Hello,\n\nA reminder: please send the meter readings for ${prop.name} (${utils}).\n\n${siteBase()}/\n`,
+        htmlEmail(`<p>${ro ? 'Bună,' : 'Hello,'}</p><p>${ro ? 'Un memento: te rugăm să trimiți citirile de contor pentru' : 'A reminder: please send the meter readings for'} <b>${htmlEsc(prop.name)}</b> (${htmlEsc(utils)}).</p>
+          <p>${htmlButton(`${siteBase()}/`, ro ? 'Deschide portalul' : 'Open your tenant portal')}</p>`));
+    }
+  }
+  remindMark(`rt:${prop.id}`);
+  res.json({ ok: true });
 });
 // invoice file on a tenant charge (owner uploads, tenant can view)
 app.post('/api/properties/:id/charges/:cid/attachment', auth, canWrite, upload.single('file'), (req, res) => {
@@ -1693,6 +1740,36 @@ app.get('/api/tenant/maintenance/:rid/photo', auth, (req, res) => {
   const row = db.prepare('SELECT * FROM maintenance_requests WHERE id = ? AND property_id = ?').get(req.params.rid, req.user.tenant_property_id);
   if (!row || !row.photo) return res.status(404).json({ error: 'No photo' });
   res.sendFile(path.join(UPLOAD_DIR, row.photo));
+});
+// tenant nudges the owner about anything waiting on THEM: payments marked paid but not yet
+// confirmed, and maintenance still open. Owner-facing, so English + a push (respects the owner's
+// alert prefs via notifyOwners).
+app.post('/api/tenant/remind', auth, (req, res) => {
+  if (req.user.role !== 'tenant') return res.status(403).json({ error: 'Tenant accounts only' });
+  const prop = tenantProp(req);
+  if (!prop) return res.status(404).json({ error: 'Your rental is no longer registered — contact the owner' });
+  const pending = db.prepare("SELECT * FROM tenant_charges WHERE property_id = ? AND status = 'pending' ORDER BY due_date").all(prop.id);
+  const open = db.prepare("SELECT * FROM maintenance_requests WHERE property_id = ? AND status = 'open' ORDER BY id DESC").all(prop.id);
+  if (!pending.length && !open.length) return res.status(400).json({ error: 'Nothing is waiting on the owner right now' });
+  const wait = remindWait(`to:${prop.id}`);
+  if (wait) return res.status(429).json({ error: `Reminder already sent — try again in ${wait} minute${wait === 1 ? '' : 's'}` });
+  const cur = familyCurrency(prop.family_id);
+  const parts = [], htmlParts = [];
+  if (pending.length) {
+    parts.push(`Payments marked as paid, waiting for you to confirm:\n${pending.map((c) => `- ${c.title}: ${Number(c.amount).toFixed(2)} ${cur}, due ${mailDate(c.due_date)}`).join('\n')}`);
+    htmlParts.push(`<p><b>Payments marked as paid, waiting for you to confirm:</b></p>${pending.map((c) => `<div style="margin:6px 0;padding:10px 14px;background:#eff2f1;border-radius:8px;"><b>${htmlEsc(c.title)}</b><br><span style="font-family:monospace">${Number(c.amount).toFixed(2)} ${cur}</span> · due ${mailDate(c.due_date)}</div>`).join('')}`);
+  }
+  if (open.length) {
+    parts.push(`Maintenance still open:\n${open.map((m) => `- ${m.title}`).join('\n')}`);
+    htmlParts.push(`<p><b>Maintenance still open:</b></p>${open.map((m) => `<div style="margin:6px 0;padding:10px 14px;background:#eff2f1;border-radius:8px;"><b>${htmlEsc(m.title)}</b>${m.note ? `<br>${htmlEsc(m.note)}` : ''}</div>`).join('')}`);
+  }
+  const subject = `Reminder from ${req.user.name} — ${prop.name}`;
+  notifyOwners(prop, subject,
+    `Hello,\n\n${req.user.name} is waiting on you for ${prop.name}:\n\n${parts.join('\n\n')}\n\nOpen Family Hub:\n${siteBase()}/#tenants\n`,
+    `${req.user.name}: ${pending.length ? `${pending.length} payment${pending.length === 1 ? '' : 's'} to confirm` : ''}${pending.length && open.length ? ', ' : ''}${open.length ? `${open.length} open request${open.length === 1 ? '' : 's'}` : ''}`,
+    { url: '/#tenants', html: htmlEmail(`<p>Hello,</p><p><b>${htmlEsc(req.user.name)}</b> is waiting on you for <b>${htmlEsc(prop.name)}</b>:</p>${htmlParts.join('')}<p>${htmlButton(`${siteBase()}/#tenants`, 'Open Family Hub')}</p>`) });
+  remindMark(`to:${prop.id}`);
+  res.json({ ok: true });
 });
 app.post('/api/tenant/meter/:rid/photo', auth, upload.single('file'), (req, res) => {
   if (req.user.role !== 'tenant') return res.status(403).json({ error: 'Tenant accounts only' });
@@ -2078,20 +2155,40 @@ function familyDigestMail(lang, famName, items, cur) {
     text: `Hello,\n\nThese items in ${famName}'s Family Hub need attention soon:\n\n${lines}\n\nOpen Family Hub for details and to mark them done.\n`,
   };
 }
-function tenantDigestMail(lang, propName, charges, total, cur) {
-  const lines = charges.map((c) => `- ${c.title}: ${Number(c.amount).toFixed(2)} ${cur}, `
-    + `${lang === 'ro' ? 'scadent' : 'due'} ${mailDate(c.due_date)}`).join('\n');
-  if (lang === 'ro') {
-    return {
-      subject: `Plăți pentru ${propName} — scadente în curând`,
-      text: `Bună,\n\nUn memento prietenos despre plățile care urmează pentru ${propName}:\n\n${lines}\n\n`
-        + `Total de plată: ${total.toFixed(2)} ${cur}\n\nDupă ce plătești, deschide portalul de chiriaș și apasă „Marchează plătit”, ca proprietarul să poată confirma.\n`,
-    };
-  }
+// the tenant's unpaid charges as a payable email — same Pay-via-Revolut + Check-invoice buttons the
+// new-charge email carries, so a reminder is as actionable as the original. Used by the daily digest
+// AND the owner's manual "Send reminder" (opts.manual just changes the intro line).
+function tenantChargesMail(lang, prop, charges, total, cur, opts = {}) {
+  const ro = lang === 'ro';
+  const site = siteBase();
+  const dueW = ro ? 'scadent' : 'due';
+  const lines = charges.map((c) => `- ${c.title}: ${Number(c.amount).toFixed(2)} ${cur}, ${dueW} ${mailDate(c.due_date)}`).join('\n');
+  const rows = charges.map((c) => `<div style="margin:8px 0;padding:10px 14px;background:#eff2f1;border-radius:8px;">
+      <b>${htmlEsc(c.title)}</b><br><span style="font-family:monospace;font-size:15px;">${Number(c.amount).toFixed(2)} ${cur}</span> · ${dueW} ${mailDate(c.due_date)}
+    </div>`).join('');
+  const t = {
+    subject: ro ? `Plăți pentru ${prop.name} — scadente în curând` : `Payments for ${prop.name} — due soon`,
+    greet: ro ? 'Bună,' : 'Hello,',
+    intro: opts.manual
+      ? (ro ? `Un memento despre plățile care așteaptă pentru <b>${htmlEsc(prop.name)}</b>:` : `A reminder about the payments waiting on <b>${htmlEsc(prop.name)}</b>:`)
+      : (ro ? `Un memento prietenos despre plățile care urmează pentru <b>${htmlEsc(prop.name)}</b>:` : `A friendly reminder about your upcoming payments for <b>${htmlEsc(prop.name)}</b>:`),
+    introText: opts.manual
+      ? (ro ? `Un memento despre plățile care așteaptă pentru ${prop.name}:` : `A reminder about the payments waiting on ${prop.name}:`)
+      : (ro ? `Un memento prietenos despre plățile care urmează pentru ${prop.name}:` : `A friendly reminder about your upcoming payments for ${prop.name}:`),
+    totalW: ro ? 'Total de plată' : 'Total to pay',
+    payW: ro ? 'Plătește cu Revolut' : 'Pay via Revolut',
+    invW: ro ? 'Vezi factura' : 'Check your invoice',
+    foot: ro ? 'După ce plătești, deschide portalul de chiriaș și apasă „Marchează plătit”, ca proprietarul să poată confirma.'
+      : 'After you pay, open your tenant portal and press "Mark as paid" so the owner can confirm it.',
+  };
   return {
-    subject: `Payments for ${propName} — due soon`,
-    text: `Hello,\n\nA friendly reminder about your upcoming payments for ${propName}:\n\n${lines}\n\n`
-      + `Total to pay: ${total.toFixed(2)} ${cur}\n\nAfter you pay, open your tenant portal and press "Mark as paid" so the owner can confirm it.\n`,
+    subject: t.subject,
+    text: `${t.greet}\n\n${t.introText}\n\n${lines}\n\n${t.totalW}: ${total.toFixed(2)} ${cur}\n\n`
+      + `${prop.payment_link ? `${t.payW}: ${prop.payment_link}\n` : ''}${t.invW}: ${site}/\n\n${t.foot}\n`,
+    html: htmlEmail(`<p>${t.greet}</p><p>${t.intro}</p>${rows}
+      <p style="font-weight:600;margin:12px 0 6px">${t.totalW}: <span style="font-family:monospace">${total.toFixed(2)} ${cur}</span></p>
+      <p>${prop.payment_link ? htmlButton(htmlEsc(prop.payment_link), `${t.payW}${REVOLUT_BADGE}`, '#0666EB') : ''}${htmlButton(`${site}/`, t.invW)}</p>
+      <p style="color:#45565f;font-size:13px;">${t.foot}</p>`),
   };
 }
 
@@ -2176,8 +2273,8 @@ async function runEmailReminders() {
       const total = unpaid.reduce((s, c) => s + c.amount, 0);
       let anySent = false;
       for (const [lang, addrs] of Object.entries(groups)) {
-        const { subject, text } = tenantDigestMail(lang, prop.name, unpaid, total, cur);
-        try { await sendMail(addrs, subject, text); sent++; anySent = true; }
+        const { subject, text, html } = tenantChargesMail(lang, prop, unpaid, total, cur);
+        try { await sendMail(addrs, subject, text, undefined, html); sent++; anySent = true; }
         catch (err) { errors++; console.error('email reminders (tenant):', err.message); }
       }
       if (!anySent) releaseKeys(claimed);

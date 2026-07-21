@@ -221,6 +221,12 @@ const RO = {
   'No rented properties yet': 'Nicio proprietate închiriată încă',
   'Set a rent amount or generate a tenant code on a property, and it shows up here.': 'Setează o chirie sau generează un cod de chiriaș pe o proprietate și va apărea aici.',
   'code ready — no tenant yet': 'cod gata — încă niciun chiriaș', 'no tenant yet': 'încă niciun chiriaș',
+  'Send reminder': 'Trimite memento', 'Remind the owner': 'Amintește proprietarului',
+  'Waiting on the tenant:': 'Așteaptă chiriașul:',
+  'unpaid charge': 'plată neachitată', 'unpaid charges': 'plăți neachitate', 'meter reading': 'citire contor', 'meter readings': 'citiri contoare',
+  'Waiting for the owner to confirm your payment.': 'Se așteaptă confirmarea plății de către proprietar.',
+  'Still waiting to be fixed? Give the owner a nudge.': 'Încă nu s-a rezolvat? Amintește-i proprietarului.',
+  'Reminder sent to the tenant': 'Memento trimis chiriașului', 'Reminder sent to the owner': 'Memento trimis proprietarului',
   'Rent (extra)': 'Chirie (suplimentar)', 'Title': 'Titlu', 'Invoice file (PDF/photo)': 'Fișier factură (PDF/poză)', 'Share with tenant': 'Trimite chiriașului',
   'What': 'Ce', 'pending — tenant marked paid': 'în așteptare — chiriașul a marcat plătit', 'Confirm paid': 'Confirmă plata', 'Reject': 'Respinge',
   'Nothing shared with the tenant yet.': 'Nimic trimis chiriașului încă.', 'Meter readings': 'Citiri contoare',
@@ -368,22 +374,37 @@ const today = () => new Date().toISOString().slice(0, 10);
 const thisMonth = () => today().slice(0, 7);
 const canWrite = () => ME && ME.role !== 'child';
 
-function toast(msg, action) {
+// toast(msg) — neutral; toast(msg, 'success'|'error'|'info') — typed with an icon + accent;
+// toast(msg, {label, onAction, duration, type}) — with an inline action button (Undo).
+const TOAST_ICON = { success: '✓', error: '✕', info: 'ℹ' };
+function toast(msg, opts) {
   const t = $('#toast');
   clearTimeout(t._h);
-  if (action) {
-    // toast with an inline button (used for Undo)
-    t.textContent = '';
-    const span = document.createElement('span'); span.textContent = tr(msg);
-    const btn = document.createElement('button'); btn.className = 'toastbtn'; btn.textContent = tr(action.label || 'Undo');
-    btn.onclick = () => { t.hidden = true; clearTimeout(t._h); action.onAction(); };
-    t.append(span, btn);
-    t.hidden = false;
-    t._h = setTimeout(() => (t.hidden = true), action.duration || 5000);
-  } else {
-    t.textContent = tr(msg); t.hidden = false;
-    t._h = setTimeout(() => (t.hidden = true), 2600);
+  const o = typeof opts === 'string' ? { type: opts } : (opts || {});
+  t.className = 'toast' + (o.type ? ` ${o.type}` : '');
+  t.textContent = '';
+  if (o.type && TOAST_ICON[o.type]) {
+    const ic = document.createElement('span'); ic.className = 'toastic'; ic.setAttribute('aria-hidden', 'true'); ic.textContent = TOAST_ICON[o.type];
+    t.append(ic);
   }
+  const span = document.createElement('span'); span.textContent = tr(msg); t.append(span);
+  if (o.onAction || o.label) {
+    const btn = document.createElement('button'); btn.className = 'toastbtn'; btn.textContent = tr(o.label || 'Undo');
+    btn.onclick = () => { t.hidden = true; clearTimeout(t._h); o.onAction && o.onAction(); };
+    t.append(btn);
+    t.hidden = false;
+    t._h = setTimeout(() => (t.hidden = true), o.duration || 5000);
+  } else {
+    t.hidden = false;
+    t._h = setTimeout(() => (t.hidden = true), o.type ? 3200 : 2600);
+  }
+}
+// tap-feedback for an action button: briefly show "✓ Sent", then restore, so the click clearly landed
+function flashSent(btn, label = 'Sent') {
+  if (!btn) return;
+  const original = btn.innerHTML;
+  btn.disabled = true; btn.classList.add('sent'); btn.textContent = `✓ ${tr(label)}`;
+  setTimeout(() => { btn.disabled = false; btn.classList.remove('sent'); btn.innerHTML = original; }, 2200);
 }
 // KPI numbers roll up from zero on load — decorative, so reduced-motion skips straight to the value.
 // Elements opt in with data-cu="<number>"; their text is already the formatted final value.
@@ -641,17 +662,22 @@ function render() {
   pollNotifications();
 }
 // error boundary around a page render: one failed fetch shouldn't leave a blank/broken page.
-// Shows the reason and a Retry instead, and surfaces a toast.
+// Shows the reason and a Retry instead, and surfaces a toast. The view runs SYNCHRONOUSLY (not on
+// a microtask): its opening innerHTML must land inside the document during a view-transition
+// callback, and before the next render can replace #page — deferring it raced both.
+function pageError(fn, el, err) {
+  console.error(err);
+  el.innerHTML = `<div class="card" style="text-align:center;padding:34px 16px">
+    <b style="display:block;font-family:var(--display);font-size:1.05rem">${tr("Couldn't load this")}</b>
+    <p class="muted" style="margin:8px 0 14px">${esc(err.message || '')}</p>
+    <button class="btn small" id="pageretry">${tr('Retry')}</button></div>`;
+  el.querySelector('#pageretry').onclick = () => runView(fn, el);
+  toast(err.message || 'Request failed', 'error');
+}
 function runView(fn, el) {
-  Promise.resolve().then(() => fn(el)).catch((err) => {
-    console.error(err);
-    el.innerHTML = `<div class="card" style="text-align:center;padding:34px 16px">
-      <b style="display:block;font-family:var(--display);font-size:1.05rem">${tr("Couldn't load this")}</b>
-      <p class="muted" style="margin:8px 0 14px">${esc(err.message || '')}</p>
-      <button class="btn small" id="pageretry">${tr('Retry')}</button></div>`;
-    el.querySelector('#pageretry').onclick = () => runView(fn, el);
-    toast(err.message || 'Request failed');
-  });
+  let ret;
+  try { ret = fn(el); } catch (err) { pageError(fn, el, err); return; } // synchronous throw
+  if (ret && typeof ret.catch === 'function') ret.catch((err) => pageError(fn, el, err)); // async rejection
 }
 const NAV = [
   ['dashboard', '⌂', 'Dashboard'], ['money', '₤', 'Budget & expenses'], ['bills', '☰', 'Bills'],
@@ -886,12 +912,24 @@ function tenantInvoicesView(el, data) {
         </tr>`;
       }).join('')}</tbody></table>`
     : `<div class="empty"><b>Nothing to pay yet</b>Rent and shared invoices from your landlord will appear here.</div>`}
-    <p class="muted" style="margin-bottom:0">After you mark something as paid, the owner confirms it — until then it shows as "confirmation pending".</p>
+    <p class="muted">After you mark something as paid, the owner confirms it — until then it shows as "confirmation pending".</p>
+    ${data.charges.some((c) => c.status === 'pending') ? `<div class="row" style="align-items:center;margin-bottom:0">
+      <button class="btn ghost small" data-remindowner>${tr('Remind the owner')}</button>
+      <span class="muted">${tr('Waiting for the owner to confirm your payment.')}</span></div>` : ''}
     </div>`;
   app.querySelectorAll('[data-pay]').forEach((b) => (b.onclick = async () => {
-    try { await api(`/tenant/charges/${b.dataset.pay}/pay`, { method: 'POST' }); toast('Marked as paid — waiting for owner confirmation'); renderTenantPortal(); }
-    catch (err) { toast(err.message); }
+    try { await api(`/tenant/charges/${b.dataset.pay}/pay`, { method: 'POST' }); toast('Marked as paid — waiting for owner confirmation', 'success'); renderTenantPortal(); }
+    catch (err) { toast(err.message, 'error'); }
   }));
+  wireRemindOwner(el);
+}
+// tenant's "Remind the owner" button (shared by Invoices + Maintenance) → one nudge covering
+// everything on the owner's plate
+function wireRemindOwner(el) {
+  el.querySelector('[data-remindowner]')?.addEventListener('click', async (e) => {
+    try { await api('/tenant/remind', { method: 'POST' }); flashSent(e.target); toast('Reminder sent to the owner', 'success'); }
+    catch (err) { toast(err.message, 'error'); }
+  });
 }
 function tenantMaintenanceView(el, data) {
   el.innerHTML = `<div class="pagehead"><div><h1>${tr('Maintenance')}</h1><p>${esc(data.property.name)}</p></div></div>
@@ -910,7 +948,11 @@ function tenantMaintenanceView(el, data) {
         <td>${m.photo ? `<a href="/api/tenant/maintenance/${m.id}/photo" target="_blank">photo</a>` : '<span class="muted">—</span>'}</td>
         <td>${m.status === 'done' ? `<span class="badge paid">${tr('Fixed')}${m.resolved_at ? ' ' + fdate(m.resolved_at) : ''}</span>` : `<span class="badge unpaid">${tr('Open')}</span>`}</td>
       </tr>`).join('')}</tbody></table>` : `<p class="muted" style="margin-bottom:0">No maintenance requests yet.</p>`}
+    ${(data.maintenance || []).some((m) => m.status !== 'done') ? `<div class="row" style="align-items:center;margin-top:12px">
+      <button class="btn ghost small" data-remindowner>${tr('Remind the owner')}</button>
+      <span class="muted">${tr('Still waiting to be fixed? Give the owner a nudge.')}</span></div>` : ''}
     </div>`;
+  wireRemindOwner(el);
   $('#mreqform').onsubmit = async (e) => {
     e.preventDefault();
     const fd0 = new FormData(e.target);
@@ -921,8 +963,8 @@ function tenantMaintenanceView(el, data) {
         const fd = new FormData(); fd.append('file', file);
         await api(`/tenant/maintenance/${r.id}/photo`, { method: 'POST', body: fd });
       }
-      toast('Request sent — the owner has been notified'); renderTenantPortal();
-    } catch (err) { toast(err.message); }
+      toast('Request sent — the owner has been notified', 'success'); renderTenantPortal();
+    } catch (err) { toast(err.message, 'error'); }
   };
 }
 function tenantAccountView(el, data) {
@@ -1952,6 +1994,16 @@ async function renderTenantBox(box, p) {
       <span class="muted">Your tenant registers with it on the sign-in screen → <b>Register</b> tab. They only see the charges below — nothing else.</span></p>` : ''}
     ${tinfo.tenants.length ? `<p>${tr(tinfo.tenants.length > 1 ? 'Tenants' : 'Tenant')}: ${tinfo.tenants.map((x) => `<b>${esc(x.name)}</b> <span class="muted">(${esc(x.email)})</span>${canWrite() ? ` <button class="btn danger small" data-tdel="${x.id}">Remove</button>` : ''}`).join(' · ')}</p>`
       : `<p class="muted">No tenant has joined yet.</p>`}
+    ${(() => {
+      // a nudge is only offered when the tenant actually has something to do
+      const owedN = charges.filter((c) => c.status === 'unpaid').length;
+      const meterN = meters.filter((m) => m.status === 'pending').length;
+      if (!canWrite() || !tinfo.tenants.length || (!owedN && !meterN)) return '';
+      const bits = [owedN ? `${owedN} ${tr(owedN === 1 ? 'unpaid charge' : 'unpaid charges')}` : '', meterN ? `${meterN} ${tr(meterN === 1 ? 'meter reading' : 'meter readings')}` : ''].filter(Boolean);
+      return `<p class="row" style="flex-wrap:wrap;align-items:center">
+        <button class="btn small" data-tremind>${tr('Send reminder')}</button>
+        <span class="muted">${tr('Waiting on the tenant:')} ${bits.join(' · ')}</span></p>`;
+    })()}
     ${canWrite() ? `<form data-chform class="formgrid">
       <div><label>Type</label><select name="type"><option value="invoice">Invoice</option><option value="rent">Rent (extra)</option></select></div>
       <div><label>Title</label><input name="title" placeholder="Electricity — June" required></div>
@@ -1999,6 +2051,12 @@ async function renderTenantBox(box, p) {
           <button class="btn danger small" data-mdel="${m.id}">✕</button>` : ''}</span></td></tr>`).join('')}
     </tbody></table>` : `<p class="muted">Nothing reported by the tenant.</p>`}`;
   const reload = () => renderTenantBox(box, p);
+  box.querySelector('[data-tremind]')?.addEventListener('click', async (e) => {
+    try {
+      await api(`/properties/${p.id}/tenant/remind`, { method: 'POST' });
+      flashSent(e.target); toast('Reminder sent to the tenant', 'success');
+    } catch (err) { toast(err.message, 'error'); }
+  });
   box.querySelectorAll('[data-mdone]').forEach((b) => (b.onclick = async () => {
     try { await api(`/properties/${p.id}/maintenance/${b.dataset.mdone}/resolve`, { method: 'POST' }); reload(); }
     catch (err) { toast(err.message); }
@@ -2034,15 +2092,15 @@ async function renderTenantBox(box, p) {
     catch (err) { toast(err.message); }
   }));
   box.querySelectorAll('[data-meterreq]').forEach((b) => (b.onclick = async () => {
-    try { await api(`/properties/${p.id}/meter-request`, { method: 'POST', body: { utility: b.dataset.meterreq } }); toast('Reading requested — tenant notified'); reload(); }
-    catch (err) { toast(err.message); }
+    try { await api(`/properties/${p.id}/meter-request`, { method: 'POST', body: { utility: b.dataset.meterreq } }); toast('Reading requested — tenant notified', 'success'); reload(); }
+    catch (err) { toast(err.message, 'error'); }
   }));
   box.querySelectorAll('[data-meterdel]').forEach((b) => (b.onclick = async () => {
     await api(`/properties/${p.id}/meter-requests/${b.dataset.meterdel}`, { method: 'DELETE' }); reload();
   }));
   box.querySelectorAll('[data-chconfirm]').forEach((b) => (b.onclick = async () => {
-    try { await api(`/properties/${p.id}/charges/${b.dataset.chconfirm}/confirm`, { method: 'POST' }); toast('Payment confirmed'); reload(); }
-    catch (err) { toast(err.message); }
+    try { await api(`/properties/${p.id}/charges/${b.dataset.chconfirm}/confirm`, { method: 'POST' }); toast('Payment confirmed', 'success'); reload(); }
+    catch (err) { toast(err.message, 'error'); }
   }));
   box.querySelectorAll('[data-chreject]').forEach((b) => (b.onclick = async () => {
     await api(`/properties/${p.id}/charges/${b.dataset.chreject}/reject`, { method: 'POST' }); toast('Marked back as unpaid'); reload();
