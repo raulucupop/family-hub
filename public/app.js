@@ -680,7 +680,7 @@ function runView(fn, el) {
   if (ret && typeof ret.catch === 'function') ret.catch((err) => pageError(fn, el, err)); // async rejection
 }
 const NAV = [
-  ['dashboard', '⌂', 'Dashboard'], ['money', '₤', 'Budget & expenses'], ['bills', '☰', 'Bills'],
+  ['dashboard', '⌂', 'Dashboard'], ['money', '€', 'Budget & expenses'], ['bills', '☰', 'Bills'],
   ['search', '⌕', 'Search'],
   ['vehicles', '⛟', 'Vehicles'], ['properties', '⌂', 'Properties'], ['tenants', '⚷', 'Tenants'], ['acte', '❏', 'Acte'], ['lists', '☑', 'Lists'],
   ['import', '⇪', 'Bank import'], ['alerts', '◉', 'Alerts'], ['family', '☺', 'Family'], ['settings', '⚙', 'Settings'],
@@ -688,7 +688,7 @@ const NAV = [
 // the four that earn a permanent spot on a phone; everything else lives behind "More".
 // Alerts is here on purpose: its badge used to sit ~680px off-screen in the old scrolling strip,
 // which made the whole alerts feature invisible on a phone.
-const TABS = [['dashboard', '⌂', 'Dashboard'], ['money', '₤', 'Money'], ['bills', '☰', 'Bills'], ['alerts', '◉', 'Alerts']];
+const TABS = [['dashboard', '⌂', 'Dashboard'], ['money', '€', 'Money'], ['bills', '☰', 'Bills'], ['alerts', '◉', 'Alerts']];
 const badgeHtml = () => `<span class="notifbadge" ${NOTIF.unread ? '' : 'hidden'}>${NOTIF.unread}</span>`;
 function shell(active) {
   const inTabs = (k) => TABS.some(([t]) => t === k);

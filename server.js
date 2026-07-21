@@ -269,7 +269,12 @@ app.post('/api/auth/forgot', async (req, res) => {
     const base = `${req.protocol}://${req.get('host')}`;
     try {
       await sendMail([user.email], 'Family Hub — password reset',
-        `Hello ${user.name},\n\nSomeone (hopefully you) asked to reset your Family Hub password.\nOpen this link to choose a new one — it works for 1 hour:\n\n${base}/#reset=${token}\n\nIf this wasn't you, just ignore this email and nothing changes.\n`);
+        `Hello ${user.name},\n\nSomeone (hopefully you) asked to reset your Family Hub password.\nOpen this link to choose a new one — it works for 1 hour:\n\n${base}/#reset=${token}\n\nIf this wasn't you, just ignore this email and nothing changes.\n`,
+        undefined,
+        htmlEmail(`<p>Hello ${htmlEsc(user.name)},</p>
+          <p>Someone (hopefully you) asked to reset your Family Hub password. Choose a new one — the link works for 1 hour:</p>
+          <p>${htmlButton(`${base}/#reset=${token}`, 'Choose a new password')}</p>
+          <p style="color:#45565f;font-size:13px;">If this wasn't you, just ignore this email and nothing changes.</p>`));
     } catch (err) {
       console.error('password reset email:', err.message);
       return res.status(500).json({ error: 'Could not send the email — try again in a few minutes' });
@@ -370,7 +375,12 @@ app.post('/api/family/invite/email', auth, adminOnly, async (req, res) => {
   const base = `${req.protocol}://${req.get('host')}`;
   try {
     await sendMail([email], `${req.user.name} invited you to ${family.name} on Family Hub`,
-      `Hello,\n\n${req.user.name} invited you to join "${family.name}" on Family Hub — a shared place for the household's budget, bills, cars and property deadlines.\n\nJust open this link and pick a password:\n${base}/#register=${family.invite_code}\n\nOr go to ${base}, choose "Register" and enter the code manually: ${family.invite_code}\n\nSee you there!\n`);
+      `Hello,\n\n${req.user.name} invited you to join "${family.name}" on Family Hub — a shared place for the household's budget, bills, cars and property deadlines.\n\nJust open this link and pick a password:\n${base}/#register=${family.invite_code}\n\nOr go to ${base}, choose "Register" and enter the code manually: ${family.invite_code}\n\nSee you there!\n`,
+      undefined,
+      htmlEmail(`<p>Hello,</p>
+        <p><b>${htmlEsc(req.user.name)}</b> invited you to join <b>${htmlEsc(family.name)}</b> on Family Hub — a shared place for the household's budget, bills, cars and property deadlines.</p>
+        <p>${htmlButton(`${base}/#register=${family.invite_code}`, 'Join the family')}</p>
+        <p style="color:#45565f;font-size:13px;">Or go to ${htmlEsc(base)}, choose "Register" and enter the code manually: <b class="amount" style="font-family:monospace;letter-spacing:.08em">${htmlEsc(family.invite_code)}</b></p>`));
     res.json({ ok: true });
   } catch (err) {
     console.error('invite email:', err.message);
@@ -2141,18 +2151,25 @@ function byLanguage(rows) {
   return groups;
 }
 function familyDigestMail(lang, famName, items, cur) {
+  const ro = lang === 'ro';
   const lines = items.map((i) => `- ${mailLabel(lang, i.label)}${i.entity ? ` (${i.entity})` : ''}: `
-    + `${lang === 'ro' ? 'scadent' : 'due'} ${mailDate(i.date)}, ${mailDays(lang, i.days_left)}`
+    + `${ro ? 'scadent' : 'due'} ${mailDate(i.date)}, ${mailDays(lang, i.days_left)}`
     + `${i.amount ? ` — ${Number(i.amount).toFixed(2)} ${cur}` : ''}`).join('\n');
-  if (lang === 'ro') {
-    return {
-      subject: `Family Hub — ${items.length} ${items.length === 1 ? 'termen se apropie' : 'termene se apropie'}`,
-      text: `Bună,\n\nAceste lucruri din Family Hub-ul familiei ${famName} au nevoie de atenție în curând:\n\n${lines}\n\nDeschide Family Hub pentru detalii și ca să le marchezi rezolvate.\n`,
-    };
-  }
+  const rows = items.map((i) => `<div style="margin:6px 0;padding:10px 14px;background:#eff2f1;border-radius:8px;">
+      <b>${htmlEsc(mailLabel(lang, i.label))}</b>${i.entity ? ` <span style="color:#45565f">${htmlEsc(i.entity)}</span>` : ''}<br>
+      <span style="font-size:13px;color:#45565f;">${ro ? 'scadent' : 'due'} ${mailDate(i.date)} · ${mailDays(lang, i.days_left)}${i.amount ? ` · <span style="font-family:monospace">${Number(i.amount).toFixed(2)} ${cur}</span>` : ''}</span>
+    </div>`).join('');
+  const subject = ro ? `Family Hub — ${items.length} ${items.length === 1 ? 'termen se apropie' : 'termene se apropie'}`
+    : `Family Hub — ${items.length} deadline${items.length === 1 ? '' : 's'} coming up`;
+  const intro = ro ? `Aceste lucruri din Family Hub-ul familiei ${famName} au nevoie de atenție în curând:`
+    : `These items in ${famName}'s Family Hub need attention soon:`;
+  const foot = ro ? 'Deschide Family Hub pentru detalii și ca să le marchezi rezolvate.' : 'Open Family Hub for details and to mark them done.';
   return {
-    subject: `Family Hub — ${items.length} deadline${items.length === 1 ? '' : 's'} coming up`,
-    text: `Hello,\n\nThese items in ${famName}'s Family Hub need attention soon:\n\n${lines}\n\nOpen Family Hub for details and to mark them done.\n`,
+    subject,
+    text: `${ro ? 'Bună,' : 'Hello,'}\n\n${intro}\n\n${lines}\n\n${foot}\n`,
+    html: htmlEmail(`<p>${ro ? 'Bună,' : 'Hello,'}</p><p>${htmlEsc(intro)}</p>${rows}
+      <p>${htmlButton(`${siteBase()}/#alerts`, ro ? 'Deschide Family Hub' : 'Open Family Hub')}</p>
+      <p style="color:#45565f;font-size:13px;">${htmlEsc(foot)}</p>`),
   };
 }
 // the tenant's unpaid charges as a payable email — same Pay-via-Revolut + Check-invoice buttons the
@@ -2252,8 +2269,8 @@ async function runEmailReminders() {
         const groups = byLanguage(db.prepare("SELECT email, lang FROM users WHERE family_id = ? AND role IN ('admin','adult') AND email IS NOT NULL").all(fam.id));
         let anySent = false;
         for (const [lang, addrs] of Object.entries(groups)) {
-          const { subject, text } = familyDigestMail(lang, fam.name, due, cur);
-          try { await sendMail(addrs, subject, text); sent++; anySent = true; }
+          const { subject, text, html } = familyDigestMail(lang, fam.name, due, cur);
+          try { await sendMail(addrs, subject, text, undefined, html); sent++; anySent = true; }
           catch (err) { errors++; console.error('email reminders (family):', err.message); }
         }
         // only unclaim if nobody got it — otherwise a retry would double-send to the group that did
@@ -2302,10 +2319,11 @@ async function runMonthlyReports() {
       SELECT COALESCE(u.name, '—') name, SUM(e.amount) t FROM expenses e LEFT JOIN users u ON u.id = e.user_id
       WHERE e.family_id = ? AND substr(e.date,1,7) = ? GROUP BY u.id ORDER BY t DESC`).all(fam.id, prev);
     const budgets = db.prepare('SELECT * FROM budgets WHERE family_id = ? AND month = ?').all(fam.id, prev);
-    const budgetLines = budgets.map((b) => {
+    const budgetData = budgets.map((b) => {
       const s = db.prepare('SELECT COALESCE(SUM(amount),0) t FROM expenses WHERE family_id = ? AND category = ? AND substr(date,1,7) = ?').get(fam.id, b.category, prev).t;
-      return `  ${b.category}: ${m(s)} / ${m(b.amount)}${s > b.amount ? '  (over!)' : ''}`;
+      return { category: b.category, spent: s, amount: b.amount, over: s > b.amount };
     });
+    const budgetLines = budgetData.map((b) => `  ${b.category}: ${m(b.spent)} / ${m(b.amount)}${b.over ? '  (over!)' : ''}`);
     const savBal = db.prepare("SELECT COALESCE(SUM(CASE WHEN kind='deposit' THEN amount ELSE -amount END),0) t FROM savings WHERE family_id = ?").get(fam.id).t;
     const savMonth = db.prepare("SELECT COALESCE(SUM(CASE WHEN kind='deposit' THEN amount ELSE -amount END),0) t FROM savings WHERE family_id = ? AND substr(date,1,7) = ?").get(fam.id, prev).t;
     const text = [
@@ -2320,7 +2338,21 @@ async function runMonthlyReports() {
       `\nEconomy account: ${m(savBal)} (${savMonth >= 0 ? '+' : ''}${m(savMonth)} in ${prev})`, '',
       `Open Family Hub for the full picture.`,
     ].filter((s) => s !== '').join('\n');
-    try { await sendMail(to, `Family Hub — ${prev} monthly report`, text + '\n'); }
+    // a "spent vs budget" line: green under budget, red over it
+    const list = (arr, fmt) => arr.map(fmt).join('');
+    const kvRow = (label, val, strong) => `<div style="display:flex;justify-content:space-between;font-size:14px;padding:3px 0;${strong ? 'font-weight:600' : ''}"><span>${htmlEsc(label)}</span><span style="font-family:monospace">${val}</span></div>`;
+    const html = htmlEmail(`
+      <p>Hello,</p>
+      <p>Here is <b>${htmlEsc(fam.name)}</b>'s money summary for <b>${prev}</b>:</p>
+      <div style="margin:14px 0;padding:12px 14px;background:#eff2f1;border-radius:8px;">
+        ${kvRow('Income', m(income))}${kvRow('Spent', m(spent))}${kvRow('Left over', m(income - spent), true)}
+      </div>
+      ${cats.length ? `<p style="font-weight:600;margin:12px 0 2px">Top spending categories</p>${list(cats, (c) => kvRow(c.category, m(c.t)))}` : '<p style="color:#45565f">No expenses were logged.</p>'}
+      ${byMember.length ? `<p style="font-weight:600;margin:14px 0 2px">Spending per person</p>${list(byMember, (x) => kvRow(x.name, m(x.t)))}` : ''}
+      ${budgetData.length ? `<p style="font-weight:600;margin:14px 0 2px">Budgets vs actual</p>${list(budgetData, (b) => `<div style="display:flex;justify-content:space-between;font-size:14px;padding:3px 0"><span>${htmlEsc(b.category)}</span><span style="font-family:monospace;color:${b.over ? '#b23a2e' : '#2f6b5a'}">${m(b.spent)} / ${m(b.amount)}${b.over ? ' ⚠' : ''}</span></div>`)}` : ''}
+      <p style="margin-top:14px">Economy account: <b>${m(savBal)}</b> <span style="color:#45565f">(${savMonth >= 0 ? '+' : ''}${m(savMonth)} in ${prev})</span></p>
+      <p>${htmlButton(`${siteBase()}/#dashboard`, 'Open Family Hub')}</p>`);
+    try { await sendMail(to, `Family Hub — ${prev} monthly report`, text + '\n', undefined, html); }
     catch (err) { releaseKeys([key]); console.error('monthly report:', err.message); }
   }
 }
@@ -2374,7 +2406,10 @@ async function runWeeklyBackup() {
     const stamp = now.toISOString().slice(0, 10);
     if (gz.length > CAP) {
       await sendMail(to, `Family Hub — backup ${stamp} too large to email`,
-        `The weekly database backup is ${size(gz.length)} — too large to attach.\nCopy DATA_DIR/familyhub.db and DATA_DIR/uploads off the server manually.\n`);
+        `The weekly database backup is ${size(gz.length)} — too large to attach.\nCopy DATA_DIR/familyhub.db and DATA_DIR/uploads off the server manually.\n`,
+        undefined,
+        htmlEmail(`<p>The weekly database backup is <b>${size(gz.length)}</b> — too large to attach.</p>
+          <p>Copy <code style="background:#eff2f1;padding:1px 5px;border-radius:4px">DATA_DIR/familyhub.db</code> and <code style="background:#eff2f1;padding:1px 5px;border-radius:4px">DATA_DIR/uploads</code> off the server manually.</p>`));
       return;
     }
     const attachments = [{ filename: `familyhub-${stamp}.db.gz`, content: gz }];
@@ -2400,7 +2435,13 @@ async function runWeeklyBackup() {
       `Attached is this week's backup.\n\n`
       + `- Database: ${(gz.length / 1024).toFixed(1)} KB gzipped\n- ${filesNote}\n\n`
       + `To restore: stop the app, gunzip the .db.gz over familyhub.db in your DATA_DIR, and untar the uploads archive into DATA_DIR/uploads. Then start the app.\n`,
-      attachments);
+      attachments,
+      htmlEmail(`<p>Attached is this week's backup.</p>
+        <div style="margin:12px 0;padding:10px 14px;background:#eff2f1;border-radius:8px;font-size:14px;">
+          <div>Database: <b>${(gz.length / 1024).toFixed(1)} KB</b> gzipped</div>
+          <div style="margin-top:4px">${htmlEsc(filesNote)}</div>
+        </div>
+        <p style="color:#45565f;font-size:13px;">To restore: stop the app, gunzip the .db.gz over <code style="background:#eff2f1;padding:1px 5px;border-radius:4px">familyhub.db</code> in your DATA_DIR, and untar the uploads archive into <code style="background:#eff2f1;padding:1px 5px;border-radius:4px">DATA_DIR/uploads</code>. Then start the app.</p>`));
   } catch (err) {
     try { fs.unlinkSync(tmp); } catch {}
     releaseKeys([key]);
