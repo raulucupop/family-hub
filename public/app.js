@@ -507,12 +507,20 @@ async function pollNotifications() {
 setInterval(pollNotifications, 60000);
 
 function applyTheme() { document.documentElement.dataset.theme = (ME && ME.theme) || 'light'; }
+// a stable hue per name, so different people get distinct avatar colours (the CSS turns the
+// hue into a light/dark-aware tint). Same name always lands on the same colour.
+function avatarHue(name) {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) % 360;
+  return h;
+}
 // profile picture: <img> if set, else a coloured circle with the initial
 function avatarHtml(user, cls = 'avatar') {
   const size = cls === 'avatar-lg' ? 72 : 34;
   if (user && user.avatar) return `<img class="${cls}" src="/api/users/${user.id}/avatar?v=${encodeURIComponent(user.avatar)}" alt="">`;
-  const initial = esc((user?.name || '?').trim().charAt(0).toUpperCase());
-  return `<span class="${cls} avatar-fallback" style="font-size:${Math.round(size * 0.42)}px">${initial}</span>`;
+  const name = (user?.name || '?').trim();
+  const initial = esc(name.charAt(0).toUpperCase());
+  return `<span class="${cls} avatar-fallback" style="--avh:${avatarHue(name)};font-size:${Math.round(size * 0.42)}px">${initial}</span>`;
 }
 
 async function boot() {
@@ -861,6 +869,14 @@ function tenantAccountView(el, data) {
 let DASH_VIEW = 'all'; // 'all' or a member id (person view)
 let DASH_MONTHS = 1;   // 1 / 3 / 6 / 12 month window
 const PERIOD_LABELS = { 1: 'This month', 3: 'Last 3 months', 6: 'Last 6 months', 12: 'Last 12 months' };
+// shimmering placeholder that mirrors the dashboard's real layout, shown while data loads
+function dashSkeleton() {
+  const tile = `<div class="card"><div class="skel skel-line" style="width:55%"></div><div class="skel skel-line" style="width:40%;height:22px;margin-top:10px"></div></div>`;
+  return `<div class="skel skel-line" style="width:200px;height:20px;margin:2px 0 12px"></div>
+    <div class="ribbon" style="overflow:hidden">${[0, 1, 2, 3].map(() => `<div class="skel" style="min-width:168px;height:70px;border-radius:10px"></div>`).join('')}</div>
+    <section class="kpi" style="margin-top:18px">${tile + tile + tile}</section>
+    <section class="grid2" style="margin-top:18px"><div class="card"><div class="skel" style="height:220px"></div></div><div class="card"><div class="skel" style="height:220px"></div></div></section>`;
+}
 async function viewDashboard(el) {
   const members = await api('/family/members');
   el.innerHTML = `<div class="pagehead">
@@ -870,7 +886,7 @@ async function viewDashboard(el) {
       <select id="dashview" style="width:190px">
         <option value="all" ${DASH_VIEW === 'all' ? 'selected' : ''}>Whole family (total)</option>
         ${members.map((m) => `<option value="${m.id}" ${String(DASH_VIEW) === String(m.id) ? 'selected' : ''}>${esc(m.name)}${m.id === ME.id ? ' ' + tr('(me)') : ''}</option>`).join('')}
-      </select></div></div><div id="dash">Loading…</div>`;
+      </select></div></div><div id="dash">${dashSkeleton()}</div>`;
   $('#dashview').onchange = (e) => { DASH_VIEW = e.target.value; viewDashboard(el); };
   $('#dashperiod').onchange = (e) => { DASH_MONTHS = Number(e.target.value); viewDashboard(el); };
   const userQ = DASH_VIEW === 'all' ? '' : `&user=${DASH_VIEW}`;
@@ -925,7 +941,7 @@ async function viewDashboard(el) {
       }).join('') : `<p class="muted">No budgets set for this month yet — set them in <a href="#money">Budget & expenses</a>.</p>`}
     </section>
     ${goalsHtml(savings.goals)}
-    <section class="card" id="dashcal" style="margin-top:18px"><p class="muted">Loading calendar…</p></section>`;
+    <section class="card" id="dashcal" style="margin-top:18px"><div class="skel" style="height:260px"></div></section>`;
   $('#dash').querySelectorAll('[data-tab]').forEach((a) => a.addEventListener('click', () => { PENDING_MONEY_TAB = a.dataset.tab; }));
   drawCharts(stats, DASH_VIEW, DASH_MONTHS);
   renderCalendar($('#dashcal'), true);
@@ -982,9 +998,24 @@ let PENDING_MONEY_TAB = null, PENDING_EXPENSE_FILTER = null;
 // floating + jump straight to a focused amount field.
 let LAST_EXP_CAT = null, EXP_FORM_OPEN = false, FOCUS_AMOUNT = false;
 function drawCharts(stats, scopeView = 'all', scopeMonths = 1) {
-  const c0 = getComputedStyle(document.documentElement).getPropertyValue('--ink-soft').trim();
-  if (window.Chart) { Chart.defaults.color = c0 || '#666'; Chart.defaults.borderColor = getComputedStyle(document.documentElement).getPropertyValue('--line').trim() || '#ddd'; }
-  const colors = ['#2f6b5a', '#c98a2d', '#5b7fa6', '#b23a2e', '#7c5ba6', '#3e7c4f', '#8a6d3b', '#45565f', '#a0522d', '#4a8fb0'];
+  const css = getComputedStyle(document.documentElement);
+  const val = (v, f) => css.getPropertyValue(v).trim() || f;
+  const inkSoft = val('--ink-soft', '#666'), line = val('--line', '#ddd');
+  const cardBg = val('--card', '#fff'), accent = val('--accent', '#2f6b5a'), red = val('--red', '#b23a2e');
+  const dark = document.documentElement.dataset.theme === 'dark';
+  if (window.Chart) {
+    Chart.defaults.color = inkSoft;
+    Chart.defaults.borderColor = line;
+    Chart.defaults.font.family = "'Public Sans', system-ui, sans-serif";
+    Chart.defaults.font.size = 12;
+  }
+  const mono = "'IBM Plex Mono', ui-monospace, monospace";
+  // legend chips as small dots, matching the pill/badge language elsewhere
+  const legendDots = { labels: { usePointStyle: true, pointStyle: 'circle', boxWidth: 8, padding: 14 } };
+  // brighter category palette on the dark card so the slices don't go muddy
+  const colors = dark
+    ? ['#57b394', '#e0a13d', '#7ea6cf', '#e06a5c', '#a98fce', '#5fae6f', '#c3a06a', '#9db0a9', '#cf8a5f', '#79b3cf']
+    : ['#2f6b5a', '#c98a2d', '#5b7fa6', '#b23a2e', '#7c5ba6', '#3e7c4f', '#8a6d3b', '#45565f', '#a0522d', '#4a8fb0'];
   // clicking a category slice opens Expenses filtered to that category, keeping the dashboard's scope
   const drillTo = (cat) => {
     PENDING_MONEY_TAB = 'expenses';
@@ -995,9 +1026,10 @@ function drawCharts(stats, scopeView = 'all', scopeMonths = 1) {
   const cats = stats.byCategory.map((c) => c.category); // untranslated keys for the drill-down filter
   if (cc && stats.byCategory.length) { catChart = new Chart(cc, {
     type: 'doughnut',
-    data: { labels: cats.map(tr), datasets: [{ data: stats.byCategory.map((c) => c.total), backgroundColor: colors }] },
+    data: { labels: cats.map(tr), datasets: [{ data: stats.byCategory.map((c) => c.total), backgroundColor: colors, borderColor: cardBg, borderWidth: 2, hoverOffset: 6 }] },
     options: {
-      maintainAspectRatio: false, plugins: { legend: { position: 'right', onClick: (e, item) => drillTo(cats[item.index]) } },
+      maintainAspectRatio: false, cutout: '62%',
+      plugins: { legend: { position: 'right', ...legendDots, onClick: (e, item) => drillTo(cats[item.index]) } },
       onClick: (e, els) => { if (els.length) drillTo(cats[els[0].index]); },
     },
   }); cc.style.cursor = 'pointer'; }
@@ -1008,11 +1040,18 @@ function drawCharts(stats, scopeView = 'all', scopeMonths = 1) {
     data: {
       labels: months,
       datasets: [
-        { label: tr('Spent'), data: months.map((m) => stats.trend.find((t) => t.m === m)?.total || 0), backgroundColor: '#b23a2e' },
-        { label: tr('Income'), data: months.map((m) => stats.incomeTrend.find((t) => t.m === m)?.total || 0), backgroundColor: '#2f6b5a' },
+        { label: tr('Spent'), data: months.map((m) => stats.trend.find((t) => t.m === m)?.total || 0), backgroundColor: red, borderRadius: 5, maxBarThickness: 30 },
+        { label: tr('Income'), data: months.map((m) => stats.incomeTrend.find((t) => t.m === m)?.total || 0), backgroundColor: accent, borderRadius: 5, maxBarThickness: 30 },
       ],
     },
-    options: { maintainAspectRatio: false, scales: { y: { beginAtZero: true } } },
+    options: {
+      maintainAspectRatio: false,
+      plugins: { legend: legendDots },
+      scales: {
+        y: { beginAtZero: true, border: { display: false }, grid: { color: line }, ticks: { font: { family: mono } } },
+        x: { border: { display: false }, grid: { display: false } },
+      },
+    },
   });
   else if (tc) tc.replaceWith(Object.assign(document.createElement('p'), { className: 'muted', textContent: tr('History appears once you log expenses.') }));
 }

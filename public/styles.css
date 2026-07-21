@@ -477,6 +477,34 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { box-shadow: 
 .sheet:not([hidden]) .sheetbg { animation: fh-fade .2s ease both; }
 .sheet:not([hidden]) .sheetbody { animation: fh-sheet-up .24s var(--ease) both; }
 
+/* ---------- resting elevation: panels float a touch off the paper ---------- */
+:root { --shadow-rest: 0 1px 3px rgba(28, 43, 51, .05), 0 1px 2px rgba(28, 43, 51, .04); }
+:root[data-theme="dark"] { --shadow-rest: 0 1px 3px rgba(0, 0, 0, .30); }
+.card { box-shadow: var(--shadow-rest); }
+.stub { box-shadow: var(--shadow-rest); }
+
+/* ---------- per-person avatar colour: a stable hue derived from the name ---------- */
+.avatar-fallback { background: hsl(var(--avh, 158) 42% 87%); color: hsl(var(--avh, 158) 46% 34%); }
+:root[data-theme="dark"] .avatar-fallback { background: hsl(var(--avh, 158) 26% 28%); color: hsl(var(--avh, 158) 55% 73%); }
+
+/* ---------- skeleton loaders ---------- */
+.skel { position: relative; overflow: hidden; background: var(--line); border-radius: 8px; }
+.skel::after {
+  content: ""; position: absolute; inset: 0; transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .38), transparent);
+  animation: fh-shimmer 1.3s infinite;
+}
+:root[data-theme="dark"] .skel::after { background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .06), transparent); }
+@keyframes fh-shimmer { 100% { transform: translateX(100%); } }
+.skel-line { height: 12px; margin: 8px 0; }
+
+/* ---------- friendlier empty states ---------- */
+.empty { padding: 34px 16px; }
+.empty::before {
+  content: "✦"; display: block; font-size: 24px; line-height: 1;
+  color: var(--accent); opacity: .45; margin-bottom: 10px;
+}
+
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
 }
