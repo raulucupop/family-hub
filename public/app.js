@@ -2022,10 +2022,10 @@ async function renderTenantBox(box, p) {
           <td>${c.status === 'paid' ? `<span class="badge paid">${tr('paid')}${c.confirmed_at ? ' ' + fdate(c.confirmed_at) : ''}</span>`
             : c.status === 'pending' ? `<span class="badge role">${tr('pending — tenant marked paid')} ${c.marked_paid_at ? fdate(c.marked_paid_at) : ''}</span>`
             : `<span class="badge unpaid">unpaid</span>`}</td>
-          <td class="right">${canWrite() ? `
+          <td class="right">${canWrite() ? `<span class="rowacts">
             ${c.status !== 'paid' ? `<button class="btn small" data-chconfirm="${c.id}">Confirm paid</button>` : ''}
             ${c.status === 'pending' ? `<button class="btn ghost small" data-chreject="${c.id}">Reject</button>` : ''}
-            <button class="btn danger small" data-chdel="${c.id}">✕</button>` : ''}</td>
+            <button class="btn danger small" data-chdel="${c.id}">✕</button></span>` : ''}</td>
         </tr>`;
       }).join('')}</tbody></table>` : `<p class="muted">Nothing shared with the tenant yet.</p>`}
     <h3 style="margin-top:16px">Meter readings</h3>
