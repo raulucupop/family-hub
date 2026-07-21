@@ -228,6 +228,7 @@ const RO = {
   'Payment confirmed': 'Plată confirmată', 'Marked back as unpaid': 'Marcat înapoi ca neplătit', 'Delete this charge?': 'Ștergi această plată?',
   // tenant portal
   'Tenant portal ·': 'Portal chiriaș ·', 'Signed in as': 'Autentificat ca', '· rent': '· chirie', 'invoice': 'factură',
+  'Invoices': 'Facturi de plată', 'Amount due': 'De plată', 'Open maintenance': 'Reparații deschise', 'Meter readings due': 'Citiri de trimis',
   'to pay': 'de plată', 'confirmation pending': 'confirmare în așteptare', 'Pay': 'Plătește', 'Mark as paid': 'Marchează plătit',
   'Pay with Revolut': 'Plătește cu Revolut', 'Pick a date': 'Alege data',
   // maintenance requests
@@ -667,25 +668,95 @@ const REVOLUT_MARK = `<svg class="rmark" viewBox="0 0 24 24" width="15" height="
     <rect width="24" height="24" rx="6" fill="#0666EB"></rect>
     <text x="12" y="17.6" text-anchor="middle" font-size="15" font-weight="700" font-family="system-ui, sans-serif" fill="#fff">R</text>
   </svg>`;
+// the tenant gets a slimmed-down version of the same sidebar/tab-bar shell the family uses,
+// with only the four areas that apply to them.
+const TENANT_NAV = [
+  ['dashboard', '⌂', 'Dashboard'],
+  ['invoices', '₤', 'Invoices'],
+  ['maintenance', '⚒', 'Maintenance'],
+  ['account', '⚙', 'Settings'],
+];
+function tenantShell(active, prop) {
+  return `<div class="shell">
+    <nav class="sidebar">
+      <div class="brand">Family Hub<small>${tr('Tenant')} · ${esc(prop.name)}</small></div>
+      ${TENANT_NAV.map(([k, ic, l]) => `<a class="navlink ${k === active ? 'active' : ''}" href="#${k}"><span aria-hidden="true">${ic}</span>${tr(l)}</a>`).join('')}
+      <div class="spacer"></div>
+      <a class="whoami row" href="#account" style="text-decoration:none;color:inherit;gap:8px">${avatarHtml(ME)}<span><b>${esc(ME.name)}</b>${tr('Tenant')} · ${esc(ME.email || '')}</span></a>
+      <button class="navlink" data-logout>↩ Sign out</button>
+    </nav>
+    <main class="main" id="page"></main>
+    <nav class="tabbar">
+      ${TENANT_NAV.map(([k, ic, l]) => `<a class="tab ${k === active ? 'active' : ''}" href="#${k}">
+        <span class="ic" aria-hidden="true">${ic}</span><span class="tl">${tr(l)}</span></a>`).join('')}
+    </nav>
+  </div>`;
+}
+async function tenantLogout() { await api('/auth/logout', { method: 'POST' }); ME = null; renderAuth(); }
+// re-pull the account after a profile/lang/avatar change, then rerender the current section
+const tenantRefreshMe = async () => { const me = await api('/me'); ME = me.user; applyLang(); renderTenantPortal(); };
 async function renderTenantPortal() {
   let data;
   try { data = await api('/tenant/charges'); }
   catch (err) {
     app.innerHTML = `<div class="authwrap"><div class="card authcard"><div class="brandmark">Family<span>Hub</span></div>
       <p class="muted">${esc(err.message)}</p><button class="btn" id="tlogout">Sign out</button></div></div>`;
-    $('#tlogout').onclick = async () => { await api('/auth/logout', { method: 'POST' }); ME = null; renderAuth(); };
+    $('#tlogout').onclick = tenantLogout;
     return;
   }
+  const page = (location.hash || '#dashboard').slice(1);
+  const active = TENANT_NAV.some(([k]) => k === page) ? page : 'dashboard';
+  app.innerHTML = tenantShell(active, data.property);
+  const views = { dashboard: tenantDashboardView, invoices: tenantInvoicesView, maintenance: tenantMaintenanceView, account: tenantAccountView };
+  (views[active] || tenantDashboardView)($('#page'), data);
+  // wire logout after the section renders — the account page has its own sign-out button too
+  app.querySelectorAll('[data-logout]').forEach((b) => (b.onclick = tenantLogout));
+}
+function tenantDashboardView(el, data) {
+  const t = today();
+  const unpaid = data.charges.filter((c) => c.status === 'unpaid');
+  const unpaidTotal = unpaid.reduce((s, c) => s + c.amount, 0);
+  const overdue = unpaid.filter((c) => c.due_date < t).length;
+  const pendingMeters = (data.meters || []).filter((m) => m.status === 'pending');
+  const doneMeters = (data.meters || []).filter((m) => m.status === 'done').slice(0, 5);
+  const openMaint = (data.maintenance || []).filter((m) => m.status !== 'done').length;
+  el.innerHTML = `<div class="pagehead"><div><h1>Dashboard</h1>
+      <p>${esc(data.property.name)}${data.property.address ? ' — ' + esc(data.property.address) : ''}</p></div></div>
+    <section class="kpi">
+      <a class="card clickcard" href="#invoices"><div class="label">${tr('Amount due')}</div><div class="value ${unpaidTotal > 0 ? 'neg' : ''}">${money(unpaidTotal)}</div>
+        <div class="muted" style="font-size:12px">${unpaid.length} ${tr('unpaid')}${overdue ? ` · ${overdue} ${tr('overdue')}` : ''}</div></a>
+      <a class="card clickcard" href="#maintenance"><div class="label">${tr('Open maintenance')}</div><div class="value">${openMaint}</div></a>
+      <div class="card"><div class="label">${tr('Meter readings due')}</div><div class="value">${pendingMeters.length}</div></div>
+    </section>
+    ${(pendingMeters.length || doneMeters.length) ? `<section class="card" style="margin-top:18px"><h3 style="margin-top:0">${tr('Meter readings')}</h3>
+      ${pendingMeters.map((m) => `
+        <div class="row" style="flex-wrap:wrap;border:1px solid var(--line);border-radius:10px;padding:10px;margin-bottom:8px">
+          <b style="text-transform:capitalize">${esc(tr(m.utility))}</b><span class="muted">${tr('requested')} ${fdate(m.requested_at?.slice(0, 10))}</span>
+          <input data-mval="${m.id}" inputmode="decimal" placeholder="meter value" style="max-width:140px">
+          <button class="btn small" data-msend="${m.id}">Send reading</button>
+          <label class="btn ghost small" style="display:inline-block">Upload photo<input type="file" data-mphoto="${m.id}" accept="image/*" hidden></label>
+        </div>`).join('')}
+      ${doneMeters.map((m) => `<p class="muted" style="margin:4px 0">✓ <span style="text-transform:capitalize">${esc(tr(m.utility))}</span>: ${m.reading ? esc(m.reading) : tr('photo sent')} · ${fdate(m.provided_at)}</p>`).join('')}
+    </section>` : ''}`;
+  app.querySelectorAll('[data-msend]').forEach((b) => (b.onclick = async () => {
+    const val = app.querySelector(`[data-mval="${b.dataset.msend}"]`).value;
+    try { await api(`/tenant/meter/${b.dataset.msend}`, { method: 'POST', body: { reading: val } }); toast('Reading sent — thank you!'); renderTenantPortal(); }
+    catch (err) { toast(err.message); }
+  }));
+  app.querySelectorAll('[data-mphoto]').forEach((inp) => (inp.onchange = async () => {
+    const fd = new FormData(); fd.append('file', inp.files[0]);
+    try { await api(`/tenant/meter/${inp.dataset.mphoto}/photo`, { method: 'POST', body: fd }); toast('Photo sent — thank you!'); renderTenantPortal(); }
+    catch (err) { toast(err.message); }
+  }));
+}
+function tenantInvoicesView(el, data) {
   const t = today();
   const payLink = data.property.payment_link ? data.property.payment_link.replace(/\/+$/, '') : null;
   const unpaidTotal = data.charges.filter((c) => c.status === 'unpaid').reduce((s, c) => s + c.amount, 0);
-  app.innerHTML = `<div class="authwrap"><div class="card" style="max-width:720px;width:100%">
-    <div class="row" style="justify-content:space-between;align-items:flex-start">
-      <div><div class="brandmark">Family<span>Hub</span></div>
-        <p class="muted" style="margin:4px 0 0">Tenant portal · <b>${esc(data.property.name)}</b>${data.property.address ? ' — ' + esc(data.property.address) : ''}</p>
-        <p class="muted" style="margin:4px 0 0">${tr('Signed in as')} ${esc(ME.name)} (${esc(ME.email)})</p></div>
-      <button class="btn ghost small" id="tlogout">Sign out</button></div>
-    ${data.charges.length ? `<table style="margin-top:14px"><thead><tr><th>Due</th><th>What</th><th class="right">Amount</th><th>Status</th><th></th></tr></thead><tbody>
+  el.innerHTML = `<div class="pagehead"><div><h1>${tr('Invoices')}</h1><p>${esc(data.property.name)}</p></div>
+      ${unpaidTotal > 0 ? `<div class="row" style="gap:8px;align-items:baseline"><span class="muted">${tr('Amount due')}</span><b class="amount" style="font-size:18px">${money(unpaidTotal)}</b></div>` : ''}</div>
+    <div class="card">
+    ${data.charges.length ? `<table><thead><tr><th>Due</th><th>What</th><th class="right">Amount</th><th>Status</th><th></th></tr></thead><tbody>
       ${data.charges.map((c) => {
         const late = c.status === 'unpaid' && c.due_date < t;
         return `<tr>
@@ -698,66 +769,32 @@ async function renderTenantPortal() {
           <td class="right">${c.status === 'unpaid' ? `<span class="row" style="gap:6px;justify-content:flex-end;flex-wrap:nowrap;white-space:nowrap">${payLink ? `<a class="btn ghost small revolut" href="${esc(payLink)}" target="_blank" rel="noopener" title="Pay with Revolut">Pay ${REVOLUT_MARK}</a>` : ''}<button class="btn small" data-pay="${c.id}">Mark as paid</button></span>` : ''}</td>
         </tr>`;
       }).join('')}</tbody></table>`
-    : `<div class="empty" style="margin-top:14px"><b>Nothing to pay yet</b>Rent and shared invoices from your landlord will appear here.</div>`}
-    <p class="muted">After you mark something as paid, the owner confirms it — until then it shows as "confirmation pending".</p>
-    ${(data.meters || []).length ? `<h3 style="margin-top:16px">Meter readings</h3>
-      ${data.meters.filter((m) => m.status === 'pending').map((m) => `
-        <div class="row" style="flex-wrap:wrap;border:1px solid var(--line);border-radius:10px;padding:10px;margin-bottom:8px">
-          <b style="text-transform:capitalize">${esc(tr(m.utility))}</b><span class="muted">${tr('requested')} ${fdate(m.requested_at?.slice(0, 10))}</span>
-          <input data-mval="${m.id}" inputmode="decimal" placeholder="meter value" style="max-width:140px">
-          <button class="btn small" data-msend="${m.id}">Send reading</button>
-          <label class="btn ghost small" style="display:inline-block">Upload photo<input type="file" data-mphoto="${m.id}" accept="image/*" hidden></label>
-        </div>`).join('')}
-      ${data.meters.filter((m) => m.status === 'done').slice(0, 5).map((m) => `
-        <p class="muted" style="margin:4px 0">✓ <span style="text-transform:capitalize">${esc(tr(m.utility))}</span>: ${m.reading ? esc(m.reading) : tr('photo sent')} · ${fdate(m.provided_at)}</p>`).join('')}` : ''}
-    <h3 style="margin-top:20px">Request maintenance</h3>
-    <p class="muted">Something broken or not working? Tell the owner, and add a photo if it helps.</p>
-    <form id="mreqform" class="formgrid">
-      <div><label>What needs fixing?</label><input name="title" placeholder="Robinet care picură…" required></div>
-      <div><label>Details (optional)</label><input name="note" placeholder="Where it is, since when…"></div>
-      <div><label>Photo (optional)</label><input name="file" type="file" accept="image/*"></div>
-      <button class="btn small">Send request</button></form>
-    ${(data.maintenance || []).length ? `<table style="margin-top:10px"><thead><tr><th>Sent</th><th>What</th><th>Photo</th><th>Status</th></tr></thead><tbody>
+    : `<div class="empty"><b>Nothing to pay yet</b>Rent and shared invoices from your landlord will appear here.</div>`}
+    <p class="muted" style="margin-bottom:0">After you mark something as paid, the owner confirms it — until then it shows as "confirmation pending".</p>
+    </div>`;
+  app.querySelectorAll('[data-pay]').forEach((b) => (b.onclick = async () => {
+    try { await api(`/tenant/charges/${b.dataset.pay}/pay`, { method: 'POST' }); toast('Marked as paid — waiting for owner confirmation'); renderTenantPortal(); }
+    catch (err) { toast(err.message); }
+  }));
+}
+function tenantMaintenanceView(el, data) {
+  el.innerHTML = `<div class="pagehead"><div><h1>${tr('Maintenance')}</h1><p>${esc(data.property.name)}</p></div></div>
+    <div class="card"><h3 style="margin-top:0">${tr('Request maintenance')}</h3>
+      <p class="muted">Something broken or not working? Tell the owner, and add a photo if it helps.</p>
+      <form id="mreqform" class="formgrid">
+        <div><label>What needs fixing?</label><input name="title" placeholder="Robinet care picură…" required></div>
+        <div><label>Details (optional)</label><input name="note" placeholder="Where it is, since when…"></div>
+        <div><label>Photo (optional)</label><input name="file" type="file" accept="image/*"></div>
+        <button class="btn small">Send request</button></form></div>
+    <div class="card" style="margin-top:16px"><h3 style="margin-top:0">${tr('Maintenance requests')}</h3>
+    ${(data.maintenance || []).length ? `<table><thead><tr><th>Sent</th><th>What</th><th>Photo</th><th>Status</th></tr></thead><tbody>
       ${data.maintenance.map((m) => `<tr>
         <td>${fdate(m.created_at?.slice(0, 10))}</td>
         <td><b>${esc(m.title)}</b>${m.note ? `<br><span class="muted">${esc(m.note)}</span>` : ''}</td>
         <td>${m.photo ? `<a href="/api/tenant/maintenance/${m.id}/photo" target="_blank">photo</a>` : '<span class="muted">—</span>'}</td>
         <td>${m.status === 'done' ? `<span class="badge paid">${tr('Fixed')}${m.resolved_at ? ' ' + fdate(m.resolved_at) : ''}</span>` : `<span class="badge unpaid">${tr('Open')}</span>`}</td>
-      </tr>`).join('')}</tbody></table>` : `<p class="muted">No maintenance requests yet.</p>`}
-    <h3 style="margin-top:20px">Your profile</h3>
-    <div class="row" style="gap:16px;align-items:center">${avatarHtml(ME, 'avatar-lg')}
-      <span class="row">
-        <label class="btn ghost small" style="display:inline-block">Upload picture<input type="file" id="tavatar" accept="image/*" hidden></label>
-        ${ME.avatar ? `<button class="btn danger small" id="tavadel">Remove</button>` : ''}
-      </span></div>
-    <form id="tprofile" class="formgrid" style="margin-top:10px;max-width:560px">
-      <div><label>Display name</label><input name="name" value="${esc(ME.name)}" required></div>
-      <div><label>Birthday</label><input name="birthday" type="date" value="${esc(ME.birthday || '')}"></div>
-      <div><label>Phone number</label><input name="phone" type="tel" value="${esc(ME.phone || '')}" placeholder="07xx xxx xxx"></div>
-      <button class="btn small">Save profile</button></form>
-    <p class="muted" style="margin:14px 0 6px">Language</p>
-    <div class="row">${[['en', '🇬🇧 English'], ['ro', '🇷🇴 Română']].map(([lg, lb]) => `<button class="btn ${(ME.lang || 'en') === lg ? '' : 'ghost'} small" data-tlang="${lg}">${lb}</button>`).join('')}</div>
-    <p class="muted" style="margin:14px 0 6px">Appearance</p>
-    <div class="row">${['light', 'dark'].map((tm) => `<button class="btn ${(ME.theme || 'light') === tm ? '' : 'ghost'} small" data-ttheme="${tm}">${tm === 'light' ? '☀ Light' : '🌙 Dark'}</button>`).join('')}</div>
-    <h3 style="margin-top:20px">Password</h3>
-    <p class="muted">Changing it signs you out on every other device.</p>
-    <button class="btn small" id="tpwbtn">Change password</button>
-  </div></div>`;
-  $('#tlogout').onclick = async () => { await api('/auth/logout', { method: 'POST' }); ME = null; renderAuth(); };
-  app.querySelectorAll('[data-pay]').forEach((b) => (b.onclick = async () => {
-    try { await api(`/tenant/charges/${b.dataset.pay}/pay`, { method: 'POST' }); toast('Marked as paid — waiting for owner confirmation'); renderTenantPortal(); }
-    catch (err) { toast(err.message); }
-  }));
-  app.querySelectorAll('[data-msend]').forEach((b) => (b.onclick = async () => {
-    const val = app.querySelector(`[data-mval="${b.dataset.msend}"]`).value;
-    try { await api(`/tenant/meter/${b.dataset.msend}`, { method: 'POST', body: { reading: val } }); toast('Reading sent — thank you!'); renderTenantPortal(); }
-    catch (err) { toast(err.message); }
-  }));
-  app.querySelectorAll('[data-mphoto]').forEach((inp) => (inp.onchange = async () => {
-    const fd = new FormData(); fd.append('file', inp.files[0]);
-    try { await api(`/tenant/meter/${inp.dataset.mphoto}/photo`, { method: 'POST', body: fd }); toast('Photo sent — thank you!'); renderTenantPortal(); }
-    catch (err) { toast(err.message); }
-  }));
+      </tr>`).join('')}</tbody></table>` : `<p class="muted" style="margin-bottom:0">No maintenance requests yet.</p>`}
+    </div>`;
   $('#mreqform').onsubmit = async (e) => {
     e.preventDefault();
     const fd0 = new FormData(e.target);
@@ -771,25 +808,46 @@ async function renderTenantPortal() {
       toast('Request sent — the owner has been notified'); renderTenantPortal();
     } catch (err) { toast(err.message); }
   };
-  // tenant profile: picture, name/birthday/phone, language
-  const refreshMe = async () => { const me = await api('/me'); ME = me.user; applyLang(); renderTenantPortal(); };
+}
+function tenantAccountView(el, data) {
+  el.innerHTML = `<div class="pagehead"><div><h1>${tr('Settings')}</h1><p>${esc(ME.name)} · ${esc(ME.email || '')}</p></div></div>
+    <div class="card"><h3 style="margin-top:0">${tr('Your profile')}</h3>
+      <div class="row" style="gap:16px;align-items:center">${avatarHtml(ME, 'avatar-lg')}
+        <span class="row">
+          <label class="btn ghost small" style="display:inline-block">Upload picture<input type="file" id="tavatar" accept="image/*" hidden></label>
+          ${ME.avatar ? `<button class="btn danger small" id="tavadel">Remove</button>` : ''}
+        </span></div>
+      <form id="tprofile" class="formgrid" style="margin-top:12px;max-width:560px">
+        <div><label>Display name</label><input name="name" value="${esc(ME.name)}" required></div>
+        <div><label>Birthday</label><input name="birthday" type="date" value="${esc(ME.birthday || '')}"></div>
+        <div><label>Phone number</label><input name="phone" type="tel" value="${esc(ME.phone || '')}" placeholder="07xx xxx xxx"></div>
+        <button class="btn small">Save profile</button></form></div>
+    <div class="card" style="margin-top:16px"><h3 style="margin-top:0">Appearance</h3>
+      <p class="muted" style="margin-top:0">Choose how Family Hub looks on this account.</p>
+      <div class="row">${['light', 'dark'].map((tm) => `<button class="btn ${(ME.theme || 'light') === tm ? '' : 'ghost'} small" data-ttheme="${tm}">${tm === 'light' ? '☀ Light' : '🌙 Dark'}</button>`).join('')}</div>
+      <p class="muted" style="margin:14px 0 6px">Language</p>
+      <div class="row">${[['en', '🇬🇧 English'], ['ro', '🇷🇴 Română']].map(([lg, lb]) => `<button class="btn ${(ME.lang || 'en') === lg ? '' : 'ghost'} small" data-tlang="${lg}">${lb}</button>`).join('')}</div></div>
+    <div class="card" style="margin-top:16px"><h3 style="margin-top:0">Password</h3>
+      <p class="muted" style="margin-top:0">Changing it signs you out on every other device.</p>
+      <button class="btn small" id="tpwbtn">Change password</button></div>
+    <button class="btn ghost small" data-logout style="margin-top:16px">↩ Sign out</button>`;
   $('#tavatar').onchange = async () => {
     if (!$('#tavatar').files[0]) return;
     const fd = new FormData(); fd.append('file', $('#tavatar').files[0]);
-    try { await api(`/users/${ME.id}/avatar`, { method: 'POST', body: fd }); toast('Picture updated'); refreshMe(); }
+    try { await api(`/users/${ME.id}/avatar`, { method: 'POST', body: fd }); toast('Picture updated'); tenantRefreshMe(); }
     catch (err) { toast(err.message); }
   };
   $('#tavadel')?.addEventListener('click', async () => {
-    try { await api(`/users/${ME.id}/avatar`, { method: 'DELETE' }); toast('Removed'); refreshMe(); }
+    try { await api(`/users/${ME.id}/avatar`, { method: 'DELETE' }); toast('Removed'); tenantRefreshMe(); }
     catch (err) { toast(err.message); }
   });
   $('#tprofile').onsubmit = async (e) => {
     e.preventDefault();
-    try { await api('/settings', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) }); toast('Saved'); refreshMe(); }
+    try { await api('/settings', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) }); toast('Saved'); tenantRefreshMe(); }
     catch (err) { toast(err.message); }
   };
   app.querySelectorAll('[data-tlang]').forEach((b) => (b.onclick = async () => {
-    try { await api('/settings', { method: 'POST', body: { lang: b.dataset.tlang } }); refreshMe(); }
+    try { await api('/settings', { method: 'POST', body: { lang: b.dataset.tlang } }); tenantRefreshMe(); }
     catch (err) { toast(err.message); }
   }));
   app.querySelectorAll('[data-ttheme]').forEach((b) => (b.onclick = async () => {
