@@ -405,6 +405,78 @@ details.foldcard[open] > summary::after { transform: rotate(180deg); }
   .kpi .value { font-size: 21px; }
   .stub { min-width: 148px; }
 }
+/* ============================================================
+   interactivity & motion — hover lifts, press feedback, gentle
+   entrances. Kept subtle; the reduced-motion guard below wins.
+   ============================================================ */
+:root {
+  --ease: cubic-bezier(.2, .7, .3, 1);
+  --shadow-sm: 0 1px 2px rgba(28, 43, 51, .06);
+  --shadow-md: 0 6px 18px rgba(28, 43, 51, .10);
+  --shadow-lg: 0 14px 40px rgba(28, 43, 51, .16);
+}
+:root[data-theme="dark"] {
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, .35);
+  --shadow-md: 0 6px 18px rgba(0, 0, 0, .45);
+  --shadow-lg: 0 14px 40px rgba(0, 0, 0, .55);
+}
+
+@keyframes fh-fade-up { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: none; } }
+@keyframes fh-pop { from { opacity: 0; transform: scale(.96); } to { opacity: 1; transform: none; } }
+@keyframes fh-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes fh-toast-up { from { opacity: 0; transform: translateX(-50%) translateY(14px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
+@keyframes fh-sheet-up { from { transform: translateY(100%); } to { transform: none; } }
+
+/* buttons: ease every state change, lift on hover, sink when pressed */
+.btn { transition: filter .15s var(--ease), transform .12s var(--ease), box-shadow .18s var(--ease), background-color .15s var(--ease), color .15s var(--ease); box-shadow: var(--shadow-sm); }
+.btn:hover { filter: brightness(1.06); transform: translateY(-1px); box-shadow: var(--shadow-md); }
+.btn:active { transform: translateY(0); box-shadow: var(--shadow-sm); filter: brightness(.97); }
+.btn.ghost, .btn.danger { box-shadow: none; }
+.btn.ghost:hover { background: var(--accent-soft); box-shadow: none; }
+.btn.ghost:active, .btn.danger:active { transform: translateY(0); box-shadow: none; }
+.fab { transition: transform .14s var(--ease), box-shadow .18s var(--ease); }
+.fab:hover { transform: translateY(-2px) scale(1.04); }
+.fab:active { transform: translateY(0) scale(.96); }
+
+/* cards lift and cast a shadow when they're interactive */
+.card { transition: border-color .18s var(--ease), box-shadow .18s var(--ease), transform .18s var(--ease); }
+.clickcard:hover { border-color: var(--accent); box-shadow: var(--shadow-md); transform: translateY(-2px); }
+.clickcard:active { transform: translateY(0); box-shadow: var(--shadow-sm); }
+.stub { transition: transform .18s var(--ease), box-shadow .18s var(--ease); }
+.stub:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); }
+.dead { transition: border-color .15s var(--ease), transform .15s var(--ease); }
+.dead:hover { border-color: var(--accent); transform: translateY(-1px); }
+
+/* disclosure summaries highlight on hover so they read as clickable */
+.navlink, .tabs button, .sheet .sheetlink { transition: background-color .15s var(--ease), color .15s var(--ease), border-color .15s var(--ease), transform .1s var(--ease); }
+.navlink:active { transform: scale(.985); }
+.tabs button:hover { border-color: var(--accent); color: var(--accent); }
+details.entity > summary, details.addbox > summary, details.foldcard > summary { transition: background-color .15s var(--ease); border-radius: 8px; }
+details.entity > summary:hover, details.foldcard > summary:hover { background: var(--accent-soft); }
+
+/* table rows feel alive under the pointer */
+tbody tr { transition: background-color .12s var(--ease); }
+tbody tr:hover { background: var(--accent-soft); }
+@media (max-width: 860px) { table.cards tbody tr:hover { background: var(--card); } } /* card-rows already boxed */
+
+/* inputs: border warms on hover, soft halo on focus */
+input, select, textarea { transition: border-color .15s var(--ease), box-shadow .15s var(--ease); }
+input:hover, select:hover, textarea:hover { border-color: var(--ink-soft); }
+input:focus-visible, select:focus-visible, textarea:focus-visible { box-shadow: 0 0 0 3px var(--accent-soft); }
+
+/* mobile tab bar: taps register with a quick squash */
+.tabbar .tab { transition: color .15s var(--ease), transform .1s var(--ease); }
+.tabbar .tab:active { transform: scale(.9); }
+.tabbar .tab.active .ic { animation: fh-pop .25s var(--ease); }
+
+/* entrances: page content rises in, overlays fade/scale, toast slides up */
+.main > * { animation: fh-fade-up .28s var(--ease) both; }
+.modalwrap .modalbg { animation: fh-fade .2s ease both; }
+.modalwrap .modalcard { animation: fh-pop .22s var(--ease) both; }
+.toast:not([hidden]) { animation: fh-toast-up .26s var(--ease); }
+.sheet:not([hidden]) .sheetbg { animation: fh-fade .2s ease both; }
+.sheet:not([hidden]) .sheetbody { animation: fh-sheet-up .24s var(--ease) both; }
+
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
 }
