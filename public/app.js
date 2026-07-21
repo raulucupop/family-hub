@@ -43,6 +43,7 @@ const RO = {
   'Note': 'Notă', 'optional': 'opțional', 'Source': 'Sursă', 'All categories': 'Toate categoriile', 'All time': 'Tot timpul',
   'Search note…': 'Caută notă…', 'Whole family': 'Toată familia', 'No matching expenses': 'Nicio cheltuială găsită',
   'Adjust the filters or add one above.': 'Ajustează filtrele sau adaugă una mai sus.', 'By': 'De', 'Delete': 'Șterge',
+  'Close': 'Închide', 'Retry': 'Reîncearcă', "Couldn't load this": 'Nu s-a putut încărca',
   'Income history': 'Istoric venituri', 'Monthly budgets': 'Bugete lunare', 'Save budgets': 'Salvează bugetele',
   'Add or remove funds': 'Adaugă sau retrage fonduri', 'Economy account balance': 'Sold cont de economii',
   'Deposit (add)': 'Depunere (adaugă)', 'Withdraw (remove)': 'Retragere', 'History': 'Istoric', 'Save': 'Salvează',
@@ -371,20 +372,52 @@ function toast(msg, action) {
     t._h = setTimeout(() => (t.hidden = true), 2600);
   }
 }
+// what counts as focusable for autofocus and the focus trap
+const FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
+function focusFirst(container) {
+  // prefer the first real field so people can start typing; fall back to any control
+  const el = container.querySelector('input:not([type=hidden]),select,textarea') || container.querySelector(FOCUSABLE) || container;
+  el.focus?.();
+}
+// keep Tab inside the dialog: wrap from last back to first and vice-versa
+function trapTab(e, container) {
+  const items = [...container.querySelectorAll(FOCUSABLE)].filter((el) => el.offsetParent !== null);
+  if (!items.length) return;
+  const first = items[0], last = items[items.length - 1];
+  if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+}
+let _modalPrevFocus = null, _modalKeydown = null;
 // Generic modal: content is a full markup string appended inside #app (not document.body) so it
 // still goes through the RO-translation MutationObserver and the date-input upgrade pass.
 function openModal(innerHtml) {
   closeModal();
+  _modalPrevFocus = document.activeElement; // so focus returns here when the modal closes
   const wrap = document.createElement('div');
   wrap.className = 'modalwrap'; wrap.id = 'genmodal';
+  wrap.setAttribute('role', 'dialog'); wrap.setAttribute('aria-modal', 'true');
   wrap.innerHTML = `<div class="modalbg"></div><div class="modalcard">
-    <button class="modalclose" aria-label="Close">✕</button>${innerHtml}</div>`;
+    <button class="modalclose" aria-label="${tr('Close')}">✕</button>${innerHtml}</div>`;
   wrap.querySelector('.modalbg').onclick = closeModal;
   wrap.querySelector('.modalclose').onclick = closeModal;
   app.appendChild(wrap);
+  const card = wrap.querySelector('.modalcard');
+  _modalKeydown = (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); closeModal(); }
+    else if (e.key === 'Tab') trapTab(e, card);
+  };
+  document.addEventListener('keydown', _modalKeydown);
+  focusFirst(card);
   return wrap;
 }
-function closeModal() { $('#genmodal')?.remove(); }
+function closeModal() {
+  const m = $('#genmodal');
+  if (!m) return;
+  if (_modalKeydown) { document.removeEventListener('keydown', _modalKeydown); _modalKeydown = null; }
+  m.remove();
+  _modalPrevFocus?.focus?.(); // hand focus back to whatever opened the modal
+  _modalPrevFocus = null;
+}
 // Shared Current/New/Confirm password form, used by both the admin Settings page and the tenant portal.
 function passwordChangeModal() {
   const wrap = openModal(`
@@ -547,16 +580,30 @@ function render() {
   app.innerHTML = shell(page);
   app.querySelectorAll('[data-logout]').forEach((b) => (b.onclick = async () => { await api('/auth/logout', { method: 'POST' }); ME = null; renderAuth(); }));
   const sheet = $('#moresheet');
-  const closeSheet = () => (sheet.hidden = true);
-  $('#moretab').onclick = () => (sheet.hidden = !sheet.hidden);
+  const moretab = $('#moretab');
+  const closeSheet = () => { sheet.hidden = true; moretab.setAttribute('aria-expanded', 'false'); };
+  moretab.onclick = () => { sheet.hidden = !sheet.hidden; moretab.setAttribute('aria-expanded', String(!sheet.hidden)); };
   sheet.querySelectorAll('[data-close], .sheetlink').forEach((x) => x.addEventListener('click', closeSheet));
   // floating +: one tap to log an expense from anywhere, straight into a focused Amount
   $('#fab')?.addEventListener('click', () => {
     EXP_FORM_OPEN = true; FOCUS_AMOUNT = true; PENDING_MONEY_TAB = 'expenses';
     if (page === 'money') viewMoney($('#page'), 'expenses'); else location.hash = '#money';
   });
-  fn($('#page'));
+  runView(fn, $('#page'));
   pollNotifications();
+}
+// error boundary around a page render: one failed fetch shouldn't leave a blank/broken page.
+// Shows the reason and a Retry instead, and surfaces a toast.
+function runView(fn, el) {
+  Promise.resolve().then(() => fn(el)).catch((err) => {
+    console.error(err);
+    el.innerHTML = `<div class="card" style="text-align:center;padding:34px 16px">
+      <b style="display:block;font-family:var(--display);font-size:1.05rem">${tr("Couldn't load this")}</b>
+      <p class="muted" style="margin:8px 0 14px">${esc(err.message || '')}</p>
+      <button class="btn small" id="pageretry">${tr('Retry')}</button></div>`;
+    el.querySelector('#pageretry').onclick = () => runView(fn, el);
+    toast(err.message || 'Request failed');
+  });
 }
 const NAV = [
   ['dashboard', '⌂', 'Dashboard'], ['money', '₤', 'Budget & expenses'], ['bills', '☰', 'Bills'],
@@ -2602,14 +2649,32 @@ function addDatePicker(inp) {
   });
 }
 function sweepDates(root) { root.querySelectorAll && root.querySelectorAll('input[type="date"]:not(.dpnative)').forEach(upgradeDateInput); }
+// icon-only buttons (the ✕ deletes scattered across the app) have no text for a screen reader —
+// give any that are just a glyph an aria-label, app-wide, without touching every call site
+const ICON_LABELS = { '✕': 'Delete', '×': 'Delete', '✓': 'Done' };
+function labelIconButtons(root) {
+  const btns = root.matches?.('button') ? [root, ...root.querySelectorAll('button')] : [...(root.querySelectorAll?.('button') || [])];
+  for (const b of btns) {
+    if (b.getAttribute('aria-label') || b.querySelector('*')) continue; // already labelled, or not glyph-only
+    const lbl = ICON_LABELS[b.textContent.trim()];
+    if (lbl) b.setAttribute('aria-label', tr(lbl));
+  }
+}
 new MutationObserver((muts) => {
   for (const m of muts) for (const n of m.addedNodes) {
     if (n.nodeType !== 1) continue;
     if (n.matches && n.matches('input[type="date"]:not(.dpnative)')) upgradeDateInput(n);
     sweepDates(n);
     translateSubtree(n);
+    labelIconButtons(n);
   }
 }).observe(app, { childList: true, subtree: true });
+// Esc closes the mobile "More" sheet when it's open (installed once, reads the live element)
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  const sheet = $('#moresheet');
+  if (sheet && !sheet.hidden) { sheet.hidden = true; $('#moretab')?.setAttribute('aria-expanded', 'false'); }
+});
 document.addEventListener('input', (e) => {
   const t = e.target;
   if (!t.classList || !t.classList.contains('dateinput')) return;
