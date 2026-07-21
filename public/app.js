@@ -216,6 +216,10 @@ const RO = {
   'Your tenant registers with it on the sign-in screen →': 'Chiriașul se înregistrează cu el pe ecranul de autentificare →',
   'tab. They only see the charges below — nothing else.': 'tab. Vede doar costurile de mai jos — nimic altceva.',
   'Tenants': 'Chiriași', 'No tenant has joined yet.': 'Niciun chiriaș nu s-a alăturat încă.',
+  'Codes, rent, invoices, meter readings and maintenance for your rented properties — in one place.': 'Coduri, chirie, facturi, citiri contoare și reparații pentru proprietățile închiriate — într-un singur loc.',
+  'No rented properties yet': 'Nicio proprietate închiriată încă',
+  'Set a rent amount or generate a tenant code on a property, and it shows up here.': 'Setează o chirie sau generează un cod de chiriaș pe o proprietate și va apărea aici.',
+  'code ready — no tenant yet': 'cod gata — încă niciun chiriaș', 'no tenant yet': 'încă niciun chiriaș',
   'Rent (extra)': 'Chirie (suplimentar)', 'Title': 'Titlu', 'Invoice file (PDF/photo)': 'Fișier factură (PDF/poză)', 'Share with tenant': 'Trimite chiriașului',
   'What': 'Ce', 'pending — tenant marked paid': 'în așteptare — chiriașul a marcat plătit', 'Confirm paid': 'Confirmă plata', 'Reject': 'Respinge',
   'Nothing shared with the tenant yet.': 'Nimic trimis chiriașului încă.', 'Meter readings': 'Citiri contoare',
@@ -479,7 +483,7 @@ function daysLabel(d) {
 }
 
 /* ---------- router ---------- */
-const routes = { dashboard: viewDashboard, money: viewMoney, bills: viewBills, search: viewSearch, vehicles: viewVehicles, properties: viewProperties, acte: viewActe, lists: viewLists, import: viewImport, alerts: viewAlerts, family: viewFamily, settings: viewSettings };
+const routes = { dashboard: viewDashboard, money: viewMoney, bills: viewBills, search: viewSearch, vehicles: viewVehicles, properties: viewProperties, tenants: viewTenants, acte: viewActe, lists: viewLists, import: viewImport, alerts: viewAlerts, family: viewFamily, settings: viewSettings };
 window.addEventListener('hashchange', render);
 
 /* ---------- site notifications: polling, badge, browser notifications ---------- */
@@ -557,7 +561,7 @@ function render() {
 const NAV = [
   ['dashboard', '⌂', 'Dashboard'], ['money', '₤', 'Budget & expenses'], ['bills', '☰', 'Bills'],
   ['search', '⌕', 'Search'],
-  ['vehicles', '⛟', 'Vehicles'], ['properties', '⌂', 'Properties'], ['acte', '❏', 'Acte'], ['lists', '☑', 'Lists'],
+  ['vehicles', '⛟', 'Vehicles'], ['properties', '⌂', 'Properties'], ['tenants', '⚷', 'Tenants'], ['acte', '❏', 'Acte'], ['lists', '☑', 'Lists'],
   ['import', '⇪', 'Bank import'], ['alerts', '◉', 'Alerts'], ['family', '☺', 'Family'], ['settings', '⚙', 'Settings'],
 ];
 // the four that earn a permanent spot on a phone; everything else lives behind "More".
@@ -1761,6 +1765,33 @@ async function viewProperties(el) {
     }));
   }
 }
+/* ---------- tenants: every rented property's tenant admin in one place ---------- */
+async function viewTenants(el) {
+  const props = await api('/properties');
+  const info = await Promise.all(props.map((p) => api(`/properties/${p.id}/tenant`).catch(() => ({ tenants: [], invite_code: null }))));
+  // a property belongs here once it's in play as a rental: it has tenants, a code waiting, or a rent set
+  const rows = props.map((p, i) => ({ p, info: info[i] || { tenants: [] } }))
+    .filter(({ p, info }) => (info.tenants && info.tenants.length) || info.invite_code || p.rent_amount);
+  el.innerHTML = `<div class="pagehead"><div><h1>Tenants</h1>
+    <p>Codes, rent, invoices, meter readings and maintenance for your rented properties — in one place.</p></div></div>
+    ${rows.length ? '<div id="tenlist"></div>'
+      : `<div class="card empty"><b>No rented properties yet</b>Set a rent amount or generate a tenant code on a property, and it shows up here.</div>`}`;
+  const list = $('#tenlist');
+  for (const { p, info } of rows) {
+    const names = (info.tenants || []).map((x) => x.name).join(', ');
+    const status = names ? esc(names) : (info.invite_code ? tr('code ready — no tenant yet') : tr('no tenant yet'));
+    const card = document.createElement('details');
+    card.className = 'entity';
+    card.open = rows.length === 1;
+    card.innerHTML = `<summary>
+      <span><b>${esc(p.name)}</b>${p.address ? ` <span class="muted">${esc(p.address)}</span>` : ''}</span>
+      <span class="muted">${status}</span></summary><div class="body"></div>`;
+    list.appendChild(card);
+    // reuse the exact panel from the property card: code, tenants, invoices, meters, maintenance
+    renderTenantBox(card.querySelector('.body'), p);
+  }
+}
+
 /* documents & scans linked to a property or vehicle (upload from the entity, auto-linked) */
 async function renderEntityDocs(box, kind, item, slots, refresh) {
   const key = kind === 'vehicle' ? 'vehicle_id' : 'property_id';
