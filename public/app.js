@@ -137,6 +137,7 @@ const RO = {
   // password ('Password' itself is already in the auth block above)
   'Changing it signs you out on every other device.': 'Schimbarea ei te deconectează de pe toate celelalte dispozitive.',
   'Current password': 'Parola actuală', 'Change password': 'Schimbă parola',
+  'Show password': 'Arată parola', 'Hide password': 'Ascunde parola',
   'Password changed — your other devices are signed out': 'Parolă schimbată — celelalte dispozitive au fost deconectate',
   'Your current password is not right': 'Parola actuală nu este corectă',
   'The new password must be at least 8 characters': 'Parola nouă trebuie să aibă cel puțin 8 caractere',
@@ -1626,6 +1627,7 @@ function creditCard(c, members, properties, refresh) {
       ${saved ? `<span class="badge paid">${tr('saved')} ${money(c.interest_saved)}</span>` : ''}</span>
     ${canWrite() ? `<span class="row"><button class="btn ghost small" data-edit>Edit</button><button class="btn danger small" data-del>Delete</button></span>` : ''}</summary>
     <div class="body">
+      <div data-editbox hidden style="margin-bottom:14px"></div>
       <div style="margin-bottom:14px">
         <div class="row" style="justify-content:space-between;gap:8px">
           <span>${tr('Progress')}${done ? ` <span class="badge paid">${tr('cleared!')}</span>` : ''}</span>
@@ -1644,7 +1646,6 @@ function creditCard(c, members, properties, refresh) {
         <div class="dead"><span class="muted">Money saved (interest)</span><div class="d" style="color:#2f6b5a">${money(c.interest_saved)}</div></div>
         <div class="dead"><span class="muted">Total interest projected</span><div class="d">${money(c.total_interest)} <span class="muted">${tr('vs')} ${money(c.base_total_interest)} ${tr('without')}</span></div></div>
       </div>
-      <div data-editbox hidden style="margin-top:12px"></div>
       <h3 style="margin-top:16px">Anticipated payments</h3>
       <p class="muted">Extra payments on top of the monthly one. The payment stays the same, the credit ends earlier — the interest you skip is your money saved.
       <br>${tr('Paying 1 month in advance now costs ≈')} <b class="amount">${money(c.advance_month_cost)}</b> (${tr('next principal')} ${money(c.next_principal)} + 1%).</p>
@@ -1725,10 +1726,13 @@ function creditCard(c, members, properties, refresh) {
     if (!box.hidden) { box.hidden = true; return; }
     box.hidden = false;
     box.innerHTML = `<form class="formgrid">${creditFormFields(members, properties, c)}<button class="btn small">Save changes</button></form>`;
+    box.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); // otherwise the form opens off-screen below the stats
     box.querySelector('form').onsubmit = async (ev) => {
       ev.preventDefault();
-      try { await api('/credits/' + c.id, { method: 'PUT', body: Object.fromEntries(new FormData(ev.target)) }); toast('Credit updated'); refresh(); }
-      catch (err) { toast(err.message); }
+      const body = Object.fromEntries(new FormData(ev.target));
+      for (const k of Object.keys(body)) if (body[k] === '') body[k] = null; // "Whole family"/"None" clear the link
+      try { await api('/credits/' + c.id, { method: 'PUT', body }); toast('Credit updated', 'success'); refresh(); }
+      catch (err) { toast(err.message, 'error'); }
     };
   });
   return wrap;
@@ -2142,8 +2146,8 @@ function entityCard(item, cfg) {
   wrap.innerHTML = `<summary><span><b>${esc(item.name)}</b> <span class="muted">${esc(cfg.subtitle || '')}</span></span>
     ${canWrite() ? `<span class="row"><button class="btn ghost small" data-edit>Edit</button><button class="btn danger small" data-del>Delete</button></span>` : ''}</summary>
     <div class="body">
+      <div data-editbox hidden style="margin-bottom:12px"></div>
       <div class="deadgrid">${dl}</div>
-      <div data-editbox hidden style="margin-top:12px"></div>
       <div data-extra></div>
       <h3 style="margin-top:16px">${cfg.incomeTypes ? 'History — costs & income' : 'History & costs'}</h3>
       ${canWrite() ? `<form data-recform class="formgrid">
@@ -2210,12 +2214,13 @@ function entityCard(item, cfg) {
       ? `<div><label>${l}</label><select name="${k}">${opts.map(([v, lab]) => `<option value="${v}" ${String(item[k] ?? '') === String(v) ? 'selected' : ''}>${esc(lab)}</option>`).join('')}</select></div>`
       : `<div><label>${l}</label><input name="${k}" type="${ty}" step="${ty === 'number' ? 'any' : ''}" value="${item[k] ?? ''}"></div>`).join('')}
       <button class="btn small">Save</button></form>`;
+    box.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); // keep the form in view on a phone
     box.querySelector('form').onsubmit = async (ev) => {
       ev.preventDefault();
       const body = Object.fromEntries(new FormData(ev.target));
       for (const k of Object.keys(body)) if (body[k] === '') body[k] = null;
-      try { await api(`/${cfg.route}/${item.id}`, { method: 'PUT', body }); toast('Saved'); cfg.refresh(); }
-      catch (err) { toast(err.message); }
+      try { await api(`/${cfg.route}/${item.id}`, { method: 'PUT', body }); toast('Saved', 'success'); cfg.refresh(); }
+      catch (err) { toast(err.message, 'error'); }
     };
   });
   return wrap;
@@ -2802,6 +2807,34 @@ function markSortableHeaders(root) {
   if (!root.querySelectorAll) return;
   for (const th of root.querySelectorAll('th')) if (th.textContent.trim()) th.dataset.sortable = '';
 }
+// eye icons for the password reveal toggle (currentColor so they follow the theme)
+const EYE_SHOW = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>`;
+const EYE_HIDE = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.9 4.24A9.1 9.1 0 0 1 12 4c6.5 0 10 7 10 7a13.2 13.2 0 0 1-1.67 2.68M6.6 6.6A13.5 13.5 0 0 0 2 12s3.5 7 10 7a9.7 9.7 0 0 0 5.4-1.6"/><path d="M9.9 9.9a3 3 0 1 0 4.2 4.2"/><line x1="2" y1="2" x2="22" y2="22"/></svg>`;
+// add a show/hide "eye" to every password field, app-wide, so anyone can check what they typed
+function addPasswordEye(input) {
+  if (input.dataset.pweye) return;
+  input.dataset.pweye = '1';
+  const wrap = document.createElement('span');
+  wrap.className = 'pweye-wrap';
+  input.parentNode.insertBefore(wrap, input);
+  wrap.appendChild(input);
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'pweye';
+  btn.setAttribute('aria-label', tr('Show password'));
+  btn.innerHTML = EYE_SHOW;
+  btn.onclick = () => {
+    const reveal = input.type === 'password';
+    input.type = reveal ? 'text' : 'password';
+    btn.innerHTML = reveal ? EYE_HIDE : EYE_SHOW;
+    btn.setAttribute('aria-label', tr(reveal ? 'Hide password' : 'Show password'));
+  };
+  wrap.appendChild(btn);
+}
+function addPasswordEyes(root) {
+  if (root.matches && root.matches('input[type="password"]')) addPasswordEye(root);
+  root.querySelectorAll?.('input[type="password"]').forEach(addPasswordEye);
+}
 new MutationObserver((muts) => {
   for (const m of muts) for (const n of m.addedNodes) {
     if (n.nodeType !== 1) continue;
@@ -2810,6 +2843,7 @@ new MutationObserver((muts) => {
     translateSubtree(n);
     labelIconButtons(n);
     markSortableHeaders(n);
+    addPasswordEyes(n);
   }
 }).observe(app, { childList: true, subtree: true });
 // click a column header to sort its table: dates (dd/mm/yyyy), RO-formatted amounts

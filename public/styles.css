@@ -526,6 +526,17 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { box-shadow: 
 /* action button mid-"✓ Sent" confirmation */
 .btn.sent { background: var(--ok) !important; color: #fff !important; border-color: var(--ok) !important; }
 
+/* ---------- password reveal "eye" (wrapper + button added by JS) ---------- */
+.pweye-wrap { position: relative; display: block; }
+.pweye-wrap input { padding-right: 42px; }
+.pweye {
+  position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+  width: 34px; height: 34px; display: flex; align-items: center; justify-content: center;
+  border: 0; background: transparent; color: var(--ink-soft); cursor: pointer; padding: 0; border-radius: 8px;
+}
+.pweye:hover { color: var(--accent); }
+.pweye svg { width: 19px; height: 19px; }
+
 /* ---------- attention pulse: overdue items gently breathe so they're impossible to miss ---------- */
 .badge.late { animation: fh-attn 2.4s ease-in-out infinite; }
 @keyframes fh-attn {
