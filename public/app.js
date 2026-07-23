@@ -2991,7 +2991,10 @@ new MutationObserver((muts) => {
 }).observe(app, { childList: true, subtree: true });
 // click a column header to sort its table: dates (dd/mm/yyyy), RO-formatted amounts
 // (1.234,56) and plain text all order correctly; clicking again flips the direction.
-// A hidden row (inline edit form) always travels with the data row above it.
+// A detail row — the inline edit form or an opened payment history — always travels with the data
+// row above it. They are the full-width `<td colspan>` rows, whether currently shown or hidden;
+// testing for `hidden` alone let an OPEN history panel sort itself away from its bill.
+const isDetailRow = (tr) => tr.hidden || (tr.cells.length === 1 && tr.cells[0].hasAttribute('colspan'));
 app.addEventListener('click', (e) => {
   const th = e.target.closest('th[data-sortable]');
   if (!th) return;
@@ -3004,7 +3007,7 @@ app.addEventListener('click', (e) => {
   th.setAttribute('aria-sort', dir === 'asc' ? 'ascending' : 'descending');
   const groups = [];
   for (const tr of [...tbody.rows]) {
-    if (groups.length && (tr.hidden || tr.querySelector('form'))) groups[groups.length - 1].push(tr);
+    if (groups.length && isDetailRow(tr)) groups[groups.length - 1].push(tr);
     else groups.push([tr]);
   }
   const key = (g) => {
