@@ -18,6 +18,7 @@ const RO = {
   // search page
   'Across expenses, income, bills, acte, credits, cars, properties and lists.': 'Prin cheltuieli, venituri, facturi, acte, credite, mașini, proprietăți și liste.',
   'Type at least 2 characters.': 'Scrie cel puțin 2 caractere.', 'Nothing found': 'Nimic găsit',
+  'Tip: press Ctrl+K (or /) anywhere to search without leaving the page.': 'Sfat: apasă Ctrl+K (sau /) oriunde pentru a căuta fără să părăsești pagina.',
   'result': 'rezultat', 'results': 'rezultate',
   // View, not Open — the word Open is already taken further down as the maintenance status
   // (Deschis, adjective), and a later duplicate key silently wins over this button (Deschide, verb)
@@ -44,6 +45,7 @@ const RO = {
   'Search note…': 'Caută notă…', 'Whole family': 'Toată familia', 'No matching expenses': 'Nicio cheltuială găsită',
   'Adjust the filters or add one above.': 'Ajustează filtrele sau adaugă una mai sus.', 'By': 'De', 'Delete': 'Șterge',
   'Close': 'Închide', 'Retry': 'Reîncearcă', "Couldn't load this": 'Nu s-a putut încărca',
+  'Charts are unavailable offline.': 'Graficele nu sunt disponibile offline.',
   'Income history': 'Istoric venituri', 'Monthly budgets': 'Bugete lunare', 'Save budgets': 'Salvează bugetele',
   'Add or remove funds': 'Adaugă sau retrage fonduri', 'Economy account balance': 'Sold cont de economii',
   'Deposit (add)': 'Depunere (adaugă)', 'Withdraw (remove)': 'Retragere', 'History': 'Istoric', 'Save': 'Salvează',
@@ -214,7 +216,8 @@ const RO = {
   'No properties yet': 'Nicio proprietate încă', 'Add your home above to track its deadlines and costs.': 'Adaugă locuința mai sus pentru a urmări termenele și costurile.',
   // tenant & rent box
   'Rent:': 'Chirie:', '/ month, due day': '/ lună, scadentă pe', 'the rent charge is generated automatically once a tenant has joined.': 'chiria se generează automat după ce chiriașul s-a alăturat.',
-  'No rent set — use': 'Nicio chirie setată — folosește', 'to set the monthly rent and due day.': 'pentru a seta chiria lunară și ziua scadenței.',
+  'No rent set yet — set it here and the monthly rent charge generates itself.': 'Nicio chirie setată încă — seteaz-o aici și chiria lunară se generează singură.',
+  'Rent': 'Chirie',
   'Tenant code:': 'Cod chiriaș:', 'No tenant code yet.': 'Niciun cod de chiriaș încă.', 'Generate code': 'Generează cod',
   'Your tenant registers with it on the sign-in screen →': 'Chiriașul se înregistrează cu el pe ecranul de autentificare →',
   'tab. They only see the charges below — nothing else.': 'tab. Vede doar costurile de mai jos — nimic altceva.',
@@ -446,13 +449,13 @@ function trapTab(e, container) {
 let _modalPrevFocus = null, _modalKeydown = null;
 // Generic modal: content is a full markup string appended inside #app (not document.body) so it
 // still goes through the RO-translation MutationObserver and the date-input upgrade pass.
-function openModal(innerHtml) {
+function openModal(innerHtml, cls = '') {
   closeModal();
   _modalPrevFocus = document.activeElement; // so focus returns here when the modal closes
   const wrap = document.createElement('div');
   wrap.className = 'modalwrap'; wrap.id = 'genmodal';
   wrap.setAttribute('role', 'dialog'); wrap.setAttribute('aria-modal', 'true');
-  wrap.innerHTML = `<div class="modalbg"></div><div class="modalcard">
+  wrap.innerHTML = `<div class="modalbg"></div><div class="modalcard ${cls}">
     <button class="modalclose" aria-label="${tr('Close')}">✕</button>${innerHtml}</div>`;
   wrap.querySelector('.modalbg').onclick = closeModal;
   wrap.querySelector('.modalclose').onclick = closeModal;
@@ -495,6 +498,59 @@ function passwordChangeModal() {
     } catch (err) { toast(err.message); }
   };
 }
+/* Quick search (Ctrl/⌘+K, or "/"): jump to any bill, car, document, credit or expense from wherever
+   you are, without losing the page you're on. Same landing behaviour as the Search page, so an
+   expense result opens Expenses already filtered to what you typed. */
+function quickSearch() {
+  const wrap = openModal(`
+    <h3>${tr('Search')}</h3>
+    <input id="qsinput" type="search" placeholder="Digi, pasaport, Kaufland…" autocomplete="off" style="font-size:16px">
+    <div id="qsres" style="margin-top:10px;max-height:46vh;overflow:auto"></div>`, 'wide');
+  const input = wrap.querySelector('#qsinput'), box = wrap.querySelector('#qsres');
+  const hint = (msg) => { box.innerHTML = `<p class="muted" style="margin:10px 0 0">${tr(msg)}</p>`; };
+  let items = [], sel = -1;
+  const paint = () => {
+    if (!items.length) return hint('Nothing found');
+    box.innerHTML = items.map((r, i) => `<button type="button" class="qsitem${i === sel ? ' on' : ''}" data-i="${i}">
+      <span class="badge role">${tr(SEARCH_KINDS[r.kind] || r.kind)}</span>
+      <span class="qsmain"><b>${esc(r.title || '')}</b>${r.sub ? `<br><span class="muted">${esc(r.sub)}</span>` : ''}</span>
+      <span class="muted qsmeta">${r.date ? fdate(r.date) : ''}${r.amount != null ? ` · ${money(r.amount)}` : ''}</span></button>`).join('');
+    box.querySelectorAll('[data-i]').forEach((b) => (b.onclick = () => go(items[Number(b.dataset.i)])));
+  };
+  const go = (r) => {
+    if (!r) return;
+    if (r.kind === 'expense' || r.kind === 'income' || r.kind === 'credit') {
+      PENDING_MONEY_TAB = r.kind === 'expense' ? 'expenses' : r.kind === 'income' ? 'income' : 'credits';
+    }
+    if (r.kind === 'expense') PENDING_EXPENSE_FILTER = { q: input.value.trim(), month: 'all', who: 'all', cat: 'all' };
+    closeModal();
+    if (location.hash === `#${r.tab}`) render(); else location.hash = `#${r.tab}`;
+  };
+  const run = async () => {
+    const q = input.value.trim();
+    if (q.length < 2) { items = []; return hint('Type at least 2 characters.'); }
+    try { ({ results: items } = await api(`/search?q=${encodeURIComponent(q)}`)); } catch { items = []; }
+    sel = items.length ? 0 : -1;
+    paint();
+  };
+  input.oninput = () => { clearTimeout(input._h); input._h = setTimeout(run, 220); };
+  input.onkeydown = (e) => {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (!items.length) return;
+      sel = (sel + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+      paint();
+      box.querySelector('.qsitem.on')?.scrollIntoView({ block: 'nearest' });
+    } else if (e.key === 'Enter') { e.preventDefault(); go(items[sel]); }
+  };
+  hint('Type at least 2 characters.');
+}
+document.addEventListener('keydown', (e) => {
+  if (!ME || ME.role === 'tenant' || $('#genmodal')) return; // tenants have no search; never stack modals
+  const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || e.target.isContentEditable;
+  if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) { e.preventDefault(); quickSearch(); }
+  else if (e.key === '/' && !typing) { e.preventDefault(); quickSearch(); }
+});
 // Undo-on-delete: hide the item now, delete on the server only after the Undo window closes.
 // Clicking Undo cancels it — nothing was ever deleted, so no re-creation and no lost links.
 // A second delete (or leaving the page) commits any still-pending one first.
@@ -1181,13 +1237,38 @@ let PENDING_MONEY_TAB = null, PENDING_EXPENSE_FILTER = null;
 // save (reset when you leave the page, so a fresh visit still shows your data first), and let the
 // floating + jump straight to a focused amount field.
 let LAST_EXP_CAT = null, EXP_FORM_OPEN = false, FOCUS_AMOUNT = false;
-function drawCharts(stats, scopeView = 'all', scopeMonths = 1, trendStats = stats) {
+// Chart.js is a ~200 KB dependency that only the dashboard needs, so it is fetched the first time a
+// chart is actually drawn instead of on every page load. The promise is cached, so later renders
+// (changing the period, switching person) reuse the already-loaded library.
+const CHART_SRC = 'https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js';
+let chartLibPromise = null;
+function loadChartLib() {
+  if (window.Chart) return Promise.resolve(window.Chart);
+  if (!chartLibPromise) {
+    chartLibPromise = new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = CHART_SRC;
+      s.onload = () => resolve(window.Chart);
+      s.onerror = () => { chartLibPromise = null; reject(new Error('Chart.js failed to load')); };
+      document.head.appendChild(s);
+    });
+  }
+  return chartLibPromise;
+}
+async function drawCharts(stats, scopeView = 'all', scopeMonths = 1, trendStats = stats) {
   const css = getComputedStyle(document.documentElement);
   const val = (v, f) => css.getPropertyValue(v).trim() || f;
   const inkSoft = val('--ink-soft', '#666'), line = val('--line', '#ddd');
   const cardBg = val('--card', '#fff'), accent = val('--accent', '#2f6b5a'), red = val('--red', '#b23a2e');
   const dark = document.documentElement.dataset.theme === 'dark';
-  if (window.Chart) {
+  // offline (or the CDN is down): say so in the chart boxes rather than throwing
+  try { await loadChartLib(); } catch {
+    for (const id of ['#catChart', '#trendChart']) {
+      $(id)?.replaceWith(Object.assign(document.createElement('p'), { className: 'muted', textContent: tr('Charts are unavailable offline.') }));
+    }
+    return;
+  }
+  {
     Chart.defaults.color = inkSoft;
     Chart.defaults.borderColor = line;
     Chart.defaults.font.family = "'Public Sans', system-ui, sans-serif";
@@ -2025,7 +2106,11 @@ async function renderTenantBox(box, p) {
     api(`/properties/${p.id}/maintenance`)]);
   const t = today();
   box.innerHTML = `<h3 style="margin-top:16px">Tenant & rent</h3>
-    <p class="muted">${p.rent_amount ? `${tr('Rent:')} <b>${money(p.rent_amount)}</b> ${tr('/ month, due day')} ${p.rent_due_day || 1} — ${tr('the rent charge is generated automatically once a tenant has joined.')}` : 'No rent set — use <b>Edit</b> to set the monthly rent and due day.'}</p>
+    <p class="muted">${p.rent_amount ? `${tr('Rent:')} <b>${money(p.rent_amount)}</b> ${tr('/ month, due day')} ${p.rent_due_day || 1} — ${tr('the rent charge is generated automatically once a tenant has joined.')}` : tr('No rent set yet — set it here and the monthly rent charge generates itself.')}</p>
+    ${canWrite() ? `<form data-rentform class="row" style="flex-wrap:wrap;align-items:flex-end;gap:8px">
+      <div><label>${tr('Rent')} (${cur()})</label><input name="rent_amount" type="number" step="0.01" min="0" value="${p.rent_amount ?? ''}" style="max-width:130px"></div>
+      <div><label>${tr('Rent due day (1-28)')}</label><input name="rent_due_day" type="number" min="1" max="28" value="${p.rent_due_day ?? 1}" style="max-width:120px"></div>
+      <button class="btn small">${tr('Save')}</button></form>` : ''}
     ${canWrite() ? `<p class="row" style="flex-wrap:wrap">
       ${tinfo.invite_code ? `<span>Tenant code: <b class="amount" style="font-size:18px;letter-spacing:.12em">${esc(tinfo.invite_code)}</b></span>
       <button class="btn ghost small" data-copy="${esc(tinfo.invite_code)}">Copy code</button>
@@ -2091,6 +2176,18 @@ async function renderTenantBox(box, p) {
           <button class="btn danger small" data-mdel="${m.id}">✕</button>` : ''}</span></td></tr>`).join('')}
     </tbody></table>` : `<p class="muted">Nothing reported by the tenant.</p>`}`;
   const reload = () => renderTenantBox(box, p);
+  box.querySelector('[data-rentform]')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const f = Object.fromEntries(new FormData(e.target));
+    try {
+      const updated = await api(`/properties/${p.id}`, { method: 'PUT', body: {
+        rent_amount: f.rent_amount === '' ? null : Number(f.rent_amount),
+        rent_due_day: Number(f.rent_due_day) || 1,
+      } });
+      Object.assign(p, updated); // keep the card's copy in step so the reload shows the new rent
+      toast('Saved', 'success'); reload();
+    } catch (err) { toast(err.message, 'error'); }
+  });
   box.querySelector('[data-tremind]')?.addEventListener('click', async (e) => {
     try {
       await api(`/properties/${p.id}/tenant/remind`, { method: 'POST' });
@@ -2525,6 +2622,7 @@ async function viewSearch(el) {
   el.innerHTML = `<div class="pagehead"><div><h1>Search</h1><p>Across expenses, income, bills, acte, credits, cars, properties and lists.</p></div></div>
     <div class="card">
       <input id="sq" type="search" placeholder="Digi, pasaport, Kaufland…" value="${esc(SEARCH_Q)}" autocomplete="off" style="font-size:16px">
+      <p class="muted" style="margin:8px 0 0">${tr('Tip: press Ctrl+K (or /) anywhere to search without leaving the page.')}</p>
       <div id="sres" style="margin-top:12px"></div>
     </div>`;
   const box = $('#sres'), input = $('#sq');

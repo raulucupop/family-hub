@@ -526,6 +526,18 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { box-shadow: 
 /* action button mid-"✓ Sent" confirmation */
 .btn.sent { background: var(--ok) !important; color: #fff !important; border-color: var(--ok) !important; }
 
+/* ---------- quick search palette (Ctrl+K) ---------- */
+.modalwrap .modalcard.wide { max-width: 560px; }
+.qsitem {
+  display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; cursor: pointer;
+  padding: 8px 10px; border: 0; border-radius: 8px; background: transparent;
+  font-family: var(--body); font-size: 13.5px; color: var(--ink);
+}
+.qsitem:hover, .qsitem.on { background: var(--accent-soft); }
+.qsitem .qsmain { flex: 1; min-width: 0; }
+.qsitem .qsmeta { white-space: nowrap; font-size: 12px; }
+@media (max-width: 560px) { .qsitem .qsmeta { display: none; } }
+
 /* ---------- row overflow menu (⋯) ---------- */
 .rowmenu { position: relative; display: inline-block; }
 .rowmenu-btn { padding: 4px 10px; line-height: 1.2; font-size: 15px; }
