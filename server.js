@@ -1203,30 +1203,9 @@ app.get('/api/documents/:id/attachment', auth, (req, res) => {
 });
 
 // ---------- vehicle & property records ----------
-function subRecords(route, table, parentTable, parentKey, types) {
-  app.get(`/api/${route}/:pid/records`, auth, (req, res) => {
-    const rows = db.prepare(`SELECT * FROM ${table} WHERE ${parentKey} = ? AND family_id = ? ORDER BY date DESC, id DESC`)
-      .all(req.params.pid, req.user.family_id);
-    res.json(rows);
-  });
-  app.post(`/api/${route}/:pid/records`, auth, canWrite, (req, res) => {
-    const parent = db.prepare(`SELECT id FROM ${parentTable} WHERE id = ? AND family_id = ?`).get(req.params.pid, req.user.family_id);
-    if (!parent) return res.status(404).json({ error: 'Not found' });
-    const b = req.body || {};
-    if (!types.includes(b.type)) return res.status(400).json({ error: 'Invalid record type' });
-    if (!isDate(b.date)) return res.status(400).json({ error: 'Date must be YYYY-MM-DD' });
-    const cols = table === 'vehicle_records'
-      ? db.prepare(`INSERT INTO ${table} (${parentKey}, family_id, type, date, amount, odometer, note) VALUES (?,?,?,?,?,?,?)`)
-          .run(parent.id, req.user.family_id, b.type, b.date, num(b.amount), num(b.odometer), str(b.note))
-      : db.prepare(`INSERT INTO ${table} (${parentKey}, family_id, type, date, amount, note) VALUES (?,?,?,?,?,?)`)
-          .run(parent.id, req.user.family_id, b.type, b.date, num(b.amount), str(b.note));
-    res.json(db.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(cols.lastInsertRowid));
-  });
-  app.delete(`/api/${route}/:pid/records/:rid`, auth, canWrite, (req, res) => {
-    db.prepare(`DELETE FROM ${table} WHERE id = ? AND family_id = ?`).run(req.params.rid, req.user.family_id);
-    res.json({ ok: true });
-  });
-}
+// (a generic subRecords() factory used to live here — it was superseded by the explicit routes
+//  below and had been dead for a while. Removed: it built table/column names into SQL by
+//  interpolation, which is only ever safe while every caller passes a literal. No caller, no rule.)
 // vehicle records: each cost (fuel, service, tires…) also becomes a family expense attributed to the car's owner
 const VEH_REC_TYPES = ['service', 'tires', 'fuel', 'other'];
 const VEH_CAT_MAP = { fuel: 'Transportation', service: 'Transportation', tires: 'Transportation', other: 'Other' };
