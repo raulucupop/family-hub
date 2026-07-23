@@ -63,6 +63,7 @@ const RO = {
   'Repeats': 'Se repetă', 'Responsible person': 'Persoana responsabilă', 'Linked property': 'Proprietate asociată',
   'Auto-paid subscription': 'Abonament plătit automat', 'Owner': 'Proprietar', 'Due': 'Scadent', 'Status': 'Stare', 'Invoice': 'Factură',
   'Mark paid': 'Marchează plătit', 'Edit': 'Editează', 'Save changes': 'Salvează modificările',
+  'More actions': 'Mai multe acțiuni',
   // vehicles/properties
   'Add vehicle': 'Adaugă vehicul', 'Add property': 'Adaugă proprietate', 'Add': 'Adaugă', 'Add record': 'Adaugă înregistrare',
   'History & costs': 'Istoric și costuri', 'History — costs & income': 'Istoric — costuri și venituri', 'Documents & scans': 'Documente și scanări',
@@ -552,12 +553,38 @@ async function api(path, opts = {}) {
   if (!res.ok) throw new Error(data.error || 'Request failed');
   return data;
 }
-/* An "Add …" form sitting open at the top of a page pushed the actual data 1–2 screens down on a
-   phone. Collapse it there; a desktop has room for it to stay open. The "+" is its own element so
-   the label beside it still matches the RO dictionary exactly. */
-const wideScreen = () => window.innerWidth > 860;
+/* An "Add …" form sitting open at the top of a page pushes the actual data below the fold — on a
+   phone by 1–2 screens, on a desktop still past the first card. Every page now opens on your data
+   and the form is one tap away; forceOpen is for the "+" shortcut, which is asking for the form.
+   The "+" is its own element so the label beside it still matches the RO dictionary exactly. */
+/* Row actions: repeating three or four buttons on every row is a wall of noise and makes each row
+   tall. The primary action (if any) stays visible; the rest tuck into a "⋯" menu. The buttons keep
+   their original data-attributes, so the existing per-page handlers still find and wire them. */
+function rowMenu(items) {
+  const list = items.filter(Boolean);
+  if (!list.length) return '';
+  return `<span class="rowmenu">
+    <button type="button" class="btn ghost small rowmenu-btn" aria-label="${tr('More actions')}" aria-haspopup="true" aria-expanded="false">⋯</button>
+    <span class="rowmenu-pop" hidden>${list.map(([label, attrs, danger]) =>
+      `<button type="button" class="rowmenu-item${danger ? ' danger' : ''}" ${attrs}>${label}</button>`).join('')}</span>
+  </span>`;
+}
+const closeRowMenu = (pop) => { pop.hidden = true; pop.previousElementSibling?.setAttribute('aria-expanded', 'false'); };
+app.addEventListener('click', (e) => {
+  const btn = e.target.closest('.rowmenu-btn');
+  const inPop = e.target.closest('.rowmenu-pop');
+  for (const p of app.querySelectorAll('.rowmenu-pop:not([hidden])')) {
+    if (p !== inPop && !(btn && btn.nextElementSibling === p)) closeRowMenu(p);
+  }
+  if (inPop && e.target.closest('.rowmenu-item')) closeRowMenu(inPop); // acted on it — put the menu away
+  if (!btn) return;
+  const pop = btn.nextElementSibling;
+  const open = pop.hidden;
+  pop.hidden = !open;
+  btn.setAttribute('aria-expanded', String(open));
+});
 function addBox(title, inner, forceOpen) {
-  return `<details class="card addbox" ${(wideScreen() || forceOpen) ? 'open' : ''}>
+  return `<details class="card addbox" ${forceOpen ? 'open' : ''}>
     <summary><span class="plus" aria-hidden="true">+</span> ${title}</summary>
     <div class="addbody">${inner}</div></details>`;
 }
@@ -1041,10 +1068,14 @@ async function viewDashboard(el) {
   $('#dashview').onchange = (e) => { DASH_VIEW = e.target.value; viewDashboard(el); };
   $('#dashperiod').onchange = (e) => { DASH_MONTHS = Number(e.target.value); viewDashboard(el); };
   const userQ = DASH_VIEW === 'all' ? '' : `&user=${DASH_VIEW}`;
-  const [reminders, stats, budgets, rent, savings] = await Promise.all([
-    api(`/reminders?days=60${userQ}`), api(`/stats?months=${DASH_MONTHS}${userQ}`), api('/budgets'),
+  // the KPI tiles follow the period selector, but a trend chart of ONE bar teaches nothing —
+  // so the history chart always pulls a rolling 12 months, whatever the tiles are showing
+  const [reminders, stats, trend12, budgets, rent, savings] = await Promise.all([
+    api(`/reminders?days=60${userQ}`), api(`/stats?months=${DASH_MONTHS}${userQ}`),
+    DASH_MONTHS >= 12 ? null : api(`/stats?months=12${userQ}`).catch(() => null), api('/budgets'),
     api('/rent-status').catch(() => []), api('/savings').catch(() => ({ goals: [] })),
   ]);
+  const trendStats = trend12 || stats;
   const net = stats.income - stats.spent;
   const spentMap = Object.fromEntries(budgets.spent.map((s) => [s.category, s.spent]));
   const scopeNote = DASH_VIEW === 'all' ? '' : ` <span class="muted">· ${esc((members.find((m) => String(m.id) === String(DASH_VIEW)) || {}).name || '')}</span>`;
@@ -1092,10 +1123,11 @@ async function viewDashboard(el) {
       }).join('') : `<p class="muted">No budgets set for this month yet — set them in <a href="#money">Budget & expenses</a>.</p>`}
     </section>
     ${goalsHtml(savings.goals)}
-    <section class="card" id="dashcal" style="margin-top:18px"><div class="skel" style="height:260px"></div></section>`;
+    <details class="card foldcard" style="margin-top:18px"><summary>${tr('Calendar')}</summary>
+      <div id="dashcal" style="padding-top:12px"><div class="skel" style="height:220px"></div></div></details>`;
   $('#dash').querySelectorAll('[data-tab]').forEach((a) => a.addEventListener('click', () => { PENDING_MONEY_TAB = a.dataset.tab; }));
   countUpAll($('#dash'));
-  drawCharts(stats, DASH_VIEW, DASH_MONTHS);
+  drawCharts(stats, DASH_VIEW, DASH_MONTHS, trendStats);
   renderCalendar($('#dashcal'), true);
 }
 /* A number on its own says little: 5.589 spent is only meaningful next to what it usually is.
@@ -1149,7 +1181,7 @@ let PENDING_MONEY_TAB = null, PENDING_EXPENSE_FILTER = null;
 // save (reset when you leave the page, so a fresh visit still shows your data first), and let the
 // floating + jump straight to a focused amount field.
 let LAST_EXP_CAT = null, EXP_FORM_OPEN = false, FOCUS_AMOUNT = false;
-function drawCharts(stats, scopeView = 'all', scopeMonths = 1) {
+function drawCharts(stats, scopeView = 'all', scopeMonths = 1, trendStats = stats) {
   const css = getComputedStyle(document.documentElement);
   const val = (v, f) => css.getPropertyValue(v).trim() || f;
   const inkSoft = val('--ink-soft', '#666'), line = val('--line', '#ddd');
@@ -1186,14 +1218,14 @@ function drawCharts(stats, scopeView = 'all', scopeMonths = 1) {
     },
   }); cc.style.cursor = 'pointer'; }
   else if (cc) cc.replaceWith(Object.assign(document.createElement('p'), { className: 'muted', textContent: tr('No expenses this month yet.') }));
-  const months = [...new Set([...stats.trend.map((t) => t.m), ...stats.incomeTrend.map((t) => t.m)])].sort();
+  const months = [...new Set([...trendStats.trend.map((t) => t.m), ...trendStats.incomeTrend.map((t) => t.m)])].sort();
   const tc = $('#trendChart'); if (tc && months.length) new Chart(tc, {
     type: 'bar',
     data: {
       labels: months,
       datasets: [
-        { label: tr('Spent'), data: months.map((m) => stats.trend.find((t) => t.m === m)?.total || 0), backgroundColor: red, borderRadius: 5, maxBarThickness: 30 },
-        { label: tr('Income'), data: months.map((m) => stats.incomeTrend.find((t) => t.m === m)?.total || 0), backgroundColor: accent, borderRadius: 5, maxBarThickness: 30 },
+        { label: tr('Spent'), data: months.map((m) => trendStats.trend.find((t) => t.m === m)?.total || 0), backgroundColor: red, borderRadius: 5, maxBarThickness: 30 },
+        { label: tr('Income'), data: months.map((m) => trendStats.incomeTrend.find((t) => t.m === m)?.total || 0), backgroundColor: accent, borderRadius: 5, maxBarThickness: 30 },
       ],
     },
     options: {
@@ -1320,7 +1352,7 @@ async function moneyExpenses(body, f = {}) {
     ${canWrite() ? addBox('Add expense', `<form id="expform" class="formgrid">
       ${expenseFormFields(members, properties, vehicles)}
       <button class="btn">Add expense</button></form>`, EXP_FORM_OPEN) : ''}
-    <details class="card addbox" style="margin-top:16px" ${wideScreen() ? 'open' : ''}><summary><span class="plus" aria-hidden="true">+</span> Recurring expenses</summary><div class="addbody">
+    <details class="card addbox" style="margin-top:16px"><summary><span class="plus" aria-hidden="true">+</span> Recurring expenses</summary><div class="addbody">
       <p class="muted" style="margin-top:0">Fixed monthly costs that aren't bills — logged automatically every month on the chosen day.</p>
       ${recurring.length ? `<table><tbody>${recurring.map((r) => `<tr style="${r.active ? '' : 'opacity:.55'}">
         <td><b>${esc(r.note || tr(r.category))}</b> <span class="muted">· ${tr(r.category)} · ${esc(r.user_name || tr('whole family'))} · ${tr('day')} ${r.day}${r.property_name ? ` · ⌂ ${esc(r.property_name)}` : ''}${r.vehicle_name ? ` · ⛟ ${esc(r.vehicle_name)}` : ''}</span>${r.active ? '' : ' <span class="badge role">paused</span>'}</td>
@@ -1352,8 +1384,10 @@ async function moneyExpenses(body, f = {}) {
           <td data-label="Date">${fdate(e.date)}</td><td data-label="Category">${esc(e.category)}</td><td data-label="By">${esc(mname[e.user_id] || '—')}</td>
           <td data-label="Note">${esc(e.note || '')}${link ? `${e.note ? ' · ' : ''}<span class="muted">${link}</span>` : ''}</td>
           <td class="right amount" data-label="Amount">${money(e.amount)}</td>
-          <td class="right"><span class="rowacts">${canWrite() ? `<button class="btn ghost small" data-edit="${e.id}">Edit</button>
-            <button class="btn danger small" data-del="${e.id}">Delete</button>` : ''}</span></td></tr>
+          <td class="right">${canWrite() ? rowMenu([
+            [tr('Edit'), `data-edit="${e.id}"`],
+            [tr('Delete'), `data-del="${e.id}"`, true],
+          ]) : ''}</td></tr>
           <tr id="exprow-${e.id}" hidden><td colspan="6"></td></tr>`; }).join('')}
       </tbody></table>` : `<div class="empty"><b>No matching expenses</b>Adjust the filters or add one above.</div>`}
     </div>`;
@@ -1791,9 +1825,11 @@ async function viewBills(el) {
           <td data-label="Invoice">${b.attachment ? `<a href="/api/bills/${b.id}/attachment" target="_blank">view</a>` : canWrite() ? `<label class="btn ghost small" style="display:inline-block">attach<input type="file" data-attach="${b.id}" accept=".pdf,image/*" hidden></label>` : '—'}</td>
           <td class="right"><span class="rowacts">${canWrite() ? `
             ${b.status === 'unpaid' ? `<button class="btn small" data-pay="${b.id}" data-amt="${b.amount ?? ''}">Mark paid</button>` : ''}
-            <button class="btn ghost small" data-edit="${b.id}">Edit</button>
-            <button class="btn ghost small" data-hist="${b.id}">History</button>
-            <button class="btn danger small" data-del="${b.id}">Delete</button>` : `<button class="btn ghost small" data-hist="${b.id}">History</button>`}</span></td>
+            ${rowMenu([
+              [tr('Edit'), `data-edit="${b.id}"`],
+              [tr('History'), `data-hist="${b.id}"`],
+              [tr('Delete'), `data-del="${b.id}"`, true],
+            ])}` : `<button class="btn ghost small" data-hist="${b.id}">History</button>`}</span></td>
         </tr><tr id="row-${b.id}" hidden><td colspan="7"></td></tr>`;
       }).join('')}</tbody></table>`
       : `<div class="empty"><b>No bills yet</b>Add recurring utilities once — Family Hub rolls the due date forward every time you mark them paid.</div>`}
@@ -2143,7 +2179,16 @@ function entityCard(item, cfg) {
     const days = Math.ceil((new Date(d) - new Date(t)) / 86400000);
     return `<div class="dead ${daysClass(days)}"><span class="muted">${l}</span><div class="d">${fdate(d)} · ${daysLabel(days)}</div></div>`;
   }).join('');
-  wrap.innerHTML = `<summary><span><b>${esc(item.name)}</b> <span class="muted">${esc(cfg.subtitle || '')}</span></span>
+  // the deadlines that are actually set, as compact chips on the closed row — this page exists to
+  // track them, so you shouldn't have to expand every card to see where you stand
+  const chips = cfg.deadlines
+    .filter(([k]) => item[k])
+    .map(([k, l]) => {
+      const days = Math.ceil((new Date(item[k]) - new Date(t)) / 86400000);
+      return `<span class="dchip ${daysClass(days)}">${esc(tr(l))} <b>${fdate(item[k])}</b></span>`;
+    }).join('');
+  wrap.innerHTML = `<summary><span><b>${esc(item.name)}</b> <span class="muted">${esc(cfg.subtitle || '')}</span>
+      ${chips ? `<span class="dchips">${chips}</span>` : ''}</span>
     ${canWrite() ? `<span class="row"><button class="btn ghost small" data-edit>Edit</button><button class="btn danger small" data-del>Delete</button></span>` : ''}</summary>
     <div class="body">
       <div data-editbox hidden style="margin-bottom:12px"></div>
@@ -2888,6 +2933,7 @@ document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   const sheet = $('#moresheet');
   if (sheet && !sheet.hidden) { sheet.hidden = true; $('#moretab')?.setAttribute('aria-expanded', 'false'); }
+  app.querySelectorAll('.rowmenu-pop:not([hidden])').forEach(closeRowMenu);
 });
 document.addEventListener('input', (e) => {
   const t = e.target;

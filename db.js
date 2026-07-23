@@ -419,6 +419,9 @@ if (!userCols.includes('theme')) db.exec("ALTER TABLE users ADD COLUMN theme TEX
 
 const notifCols = db.prepare('PRAGMA table_info(notifications)').all().map((c) => c.name);
 if (!notifCols.includes('owner_id')) db.exec('ALTER TABLE notifications ADD COLUMN owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL');
+// the pieces an alert is built from, so its text can be rendered in each reader's own language
+// (the stored title/body stay English and still drive the "did the message move on" check)
+if (!notifCols.includes('params')) db.exec('ALTER TABLE notifications ADD COLUMN params TEXT');
 
 const propCols2 = db.prepare('PRAGMA table_info(properties)').all().map((c) => c.name);
 if (!propCols2.includes('insurance2_expiry')) db.exec('ALTER TABLE properties ADD COLUMN insurance2_expiry TEXT');

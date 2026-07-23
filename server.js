@@ -1949,13 +1949,15 @@ function getWebPush() {
 // push a payload to every subscribed device of the family (owner-scoped alerts go to admins + the owner)
 async function sendPushToFamily(fid, payload, ownerId = null) {
   let wp; try { wp = getWebPush(); } catch { return; }
-  let subs = db.prepare('SELECT s.*, u.role, u.notif_muted, u.quiet_start, u.quiet_end FROM push_subscriptions s JOIN users u ON u.id = s.user_id WHERE s.family_id = ?').all(fid);
+  let subs = db.prepare('SELECT s.*, u.role, u.lang, u.notif_muted, u.quiet_start, u.quiet_end FROM push_subscriptions s JOIN users u ON u.id = s.user_id WHERE s.family_id = ?').all(fid);
   if (ownerId != null) subs = subs.filter((s) => s.role === 'admin' || s.user_id === ownerId);
   // per-member preferences: muted alert groups drop the push, quiet hours hold everything back
   const group = GROUP_OF_KIND[payload.kind];
   subs = subs.filter((s) => !(group && mutedSet(s).has(group)) && !inQuietHours(s.quiet_start, s.quiet_end));
+  const { i18n, ...shared } = payload; // i18n is rendered per device, never sent as-is
   for (const s of subs) {
-    try { await wp.sendNotification({ endpoint: s.endpoint, keys: JSON.parse(s.keys_json) }, JSON.stringify(payload)); }
+    const body = i18n ? { ...shared, ...alertText(s.lang === 'ro' ? 'ro' : 'en', i18n) } : shared;
+    try { await wp.sendNotification({ endpoint: s.endpoint, keys: JSON.parse(s.keys_json) }, JSON.stringify(body)); }
     catch (err) { if (err.statusCode === 404 || err.statusCode === 410) db.prepare('DELETE FROM push_subscriptions WHERE id = ?').run(s.id); }
   }
 }
@@ -2025,19 +2027,59 @@ const ALERT_PAGE = {
   document: '/#acte', birthday: '/#family',
 };
 function alertUrl(key) { return ALERT_PAGE[String(key).split(':')[0]] || '/#alerts'; }
+// Alerts are stored once per family but read by members who may not share a language, so the text
+// is rendered from `params` at read time (and per subscriber when pushing) instead of being frozen
+// in English at write time. mailLabel/mailDate already translate the deadline names and dates.
+function alertText(lang, p) {
+  if (!p) return null;
+  const ro = lang === 'ro';
+  const days = (n) => (ro ? roDays(n) : `${n} day${n === 1 ? '' : 's'}`);
+  if (p.t === 'maint') {
+    const when = p.days <= 0 ? (ro ? 'azi' : 'today') : (ro ? `acum ${days(p.days)}` : `${days(p.days)} ago`);
+    return {
+      title: ro ? `De reparat: ${p.title}` : `To fix: ${p.title}`,
+      body: ro ? `${p.property} — raportat de ${p.reporter} ${when}` : `${p.property} — reported by ${p.reporter} ${when}`,
+    };
+  }
+  const label = mailLabel(lang, p.label);
+  const tail = `${p.entity ? `${p.entity} — ` : ''}`;
+  const amount = p.amount ? `, ${p.amount}` : '';
+  const when = mailDate(p.date);
+  if (p.days < 0) {
+    const late = -p.days;
+    return {
+      title: ro ? `Restant: ${label}` : `Overdue: ${label}`,
+      body: ro ? `${tail}era scadent ${when}, acum ${days(late)}${amount}` : `${tail}was due ${when}, ${days(late)} ago${amount}`,
+    };
+  }
+  return {
+    title: p.days === 0 ? (ro ? `Scadent azi: ${label}` : `Due today: ${label}`)
+      : (ro ? `${label} — mai ${p.days === 1 ? 'este o zi' : `sunt ${roDays(p.days)}`}` : `${label} — ${days(p.days)} left`),
+    body: ro ? `${tail}scadent ${when}${amount}` : `${tail}due ${when}${amount}`,
+  };
+}
+// stored text is the English rendering; params drive every localized read
+const alertRow = (lang, row) => {
+  let p = null;
+  try { p = row.params ? JSON.parse(row.params) : null; } catch { /* older row without params */ }
+  return alertText(lang, p) || { title: row.title, body: row.body };
+};
 function generateNotifications(fid) {
-  const ins = db.prepare('INSERT OR IGNORE INTO notifications (family_id, key, title, body, owner_id) VALUES (?,?,?,?,?)');
-  const upd = db.prepare('UPDATE notifications SET title = ?, body = ? WHERE family_id = ? AND key = ? AND (title != ? OR body != ?)');
+  const ins = db.prepare('INSERT OR IGNORE INTO notifications (family_id, key, title, body, owner_id, params) VALUES (?,?,?,?,?,?)');
+  const upd = db.prepare('UPDATE notifications SET title = ?, body = ?, params = ? WHERE family_id = ? AND key = ? AND (title != ? OR body != ?)');
   const unread = db.prepare('DELETE FROM notification_reads WHERE notification_id IN (SELECT id FROM notifications WHERE family_id = ? AND key = ?)');
   const fresh = [];
   const live = new Set(); // every key this pass still considers unsolved
+  const cur = familyCurrency(fid);
   // keys are stable per item+threshold, so the text is refreshed on every pass and "X days left"
-  // always matches the dashboard.
-  const add = (key, title, body, owner, push = true) => {
+  // always matches the dashboard. English text is stored; `params` renders it per reader.
+  const add = (key, params, owner, push = true) => {
     live.add(key);
-    if (ins.run(fid, key, title, body, owner).changes > 0) {
-      if (push) fresh.push({ title, body, owner, key });
-    } else if (upd.run(title, body, fid, key, title, body).changes > 0) {
+    const { title, body } = alertText('en', params);
+    const json = JSON.stringify(params);
+    if (ins.run(fid, key, title, body, owner, json).changes > 0) {
+      if (push) fresh.push({ params, owner, key });
+    } else if (upd.run(title, body, json, fid, key, title, body).changes > 0) {
       // the item is still unsolved and its message moved on (another day gone by): a read alert
       // would otherwise stay buried, so put it back in front of the family.
       unread.run(fid, key);
@@ -2046,18 +2088,15 @@ function generateNotifications(fid) {
   for (const r of collectReminders(fid, 31)) {
     if (!ALERT_KINDS.has(r.kind)) continue;
     const prefix = `${r.kind}:${r.ref_id}:${r.date}:`;
+    const base = { label: r.label, entity: r.entity || '', date: r.date, amount: r.amount ? `${Number(r.amount).toFixed(2)} ${cur}` : '' };
     if (r.days_left < 0) {
-      const late = -r.days_left;
       // the days-late count keeps the text moving, so an unsolved overdue item resurfaces daily
-      add(`${prefix}overdue`, `Overdue: ${r.label}`,
-        `${r.entity || ''} — was due ${r.date}, ${late} day${late === 1 ? '' : 's'} ago${r.amount ? `, ${r.amount}` : ''}`.trim(), r.owner_id);
+      add(`${prefix}overdue`, { ...base, days: r.days_left }, r.owner_id);
       continue;
     }
     for (const t of THRESHOLDS) {
       if (r.days_left <= t) {
-        add(`${prefix}${t}`,
-          r.days_left === 0 ? `Due today: ${r.label}` : `${r.label} — ${r.days_left} day${r.days_left === 1 ? '' : 's'} left`,
-          `${r.entity || ''} — due ${r.date}${r.amount ? `, ${r.amount}` : ''}`.trim(), r.owner_id);
+        add(`${prefix}${t}`, { ...base, days: r.days_left }, r.owner_id);
         break; // only the tightest threshold crossed right now
       }
     }
@@ -2074,8 +2113,8 @@ function generateNotifications(fid) {
     WHERE m.family_id = ? AND m.status = 'open'
   `).all(fid)) {
     const days = Math.round((new Date(todayISO) - new Date(String(m.created_at).slice(0, 10))) / 86400000);
-    add(`maintenance:${m.id}:open`, `To fix: ${m.title}`,
-      `${m.property_name} — reported by ${m.reporter || 'the tenant'} ${days <= 0 ? 'today' : `${days} day${days === 1 ? '' : 's'} ago`}`,
+    add(`maintenance:${m.id}:open`,
+      { t: 'maint', title: m.title, property: m.property_name, reporter: m.reporter || 'the tenant', days },
       m.owner_id, false);
   }
   // Anything not regenerated above is solved — renewed deadline, paid charge, deleted item, or an
@@ -2084,14 +2123,15 @@ function generateNotifications(fid) {
   db.prepare(`DELETE FROM notifications WHERE family_id = ?${keep.length ? ` AND key NOT IN (${keep.map(() => '?').join(',')})` : ''}`)
     .run(fid, ...keep);
   // only genuinely new alerts push to devices — a resurfaced one would push every single day
-  for (const n of fresh) sendPushToFamily(fid, { title: n.title, body: n.body, url: alertUrl(n.key), kind: String(n.key).split(':')[0] }, n.owner).catch(() => {});
+  // i18n travels with the payload so each device is pushed in its owner's language
+  for (const n of fresh) sendPushToFamily(fid, { i18n: n.params, url: alertUrl(n.key), kind: String(n.key).split(':')[0] }, n.owner).catch(() => {});
 }
 app.get('/api/notifications', auth, (req, res) => {
   generateNotifications(req.user.family_id);
   // admins see every alert; other members only ones they're responsible for (plus family-wide)
   const isAdmin = req.user.role === 'admin';
   const rows = db.prepare(`
-    SELECT n.id, n.key, n.title, n.body, n.created_at,
+    SELECT n.id, n.key, n.title, n.body, n.params, n.created_at,
            CASE WHEN r.user_id IS NULL THEN 0 ELSE 1 END AS read
     FROM notifications n
     LEFT JOIN notification_reads r ON r.notification_id = n.id AND r.user_id = ?
@@ -2103,7 +2143,7 @@ app.get('/api/notifications', auth, (req, res) => {
   const muted = mutedSet(req.user);
   const items = rows
     .filter((r) => !muted.has(GROUP_OF_KIND[String(r.key).split(':')[0]]))
-    .map(({ key, ...r }) => ({ ...r, url: alertUrl(key) }));
+    .map(({ key, params, title, body, ...r }) => ({ ...r, ...alertRow(req.user.lang, { title, body, params }), url: alertUrl(key) }));
   res.json({ items, unread: items.filter((x) => !x.read).length });
 });
 app.post('/api/notifications/read', auth, (req, res) => {
@@ -2133,6 +2173,8 @@ const MAIL_LABELS_RO = {
   'Additional home insurance': 'Asigurare facultativă locuință', 'Property tax': 'Impozit proprietate',
 };
 const mailDate = (iso) => { const p = String(iso).slice(0, 10).split('-'); return p.length === 3 ? `${p[2]}/${p[1]}/${p[0]}` : String(iso); };
+// Romanian takes "de" from 20 upwards — "3 zile" but "24 de zile". Small thing, reads wrong without it.
+const roDays = (n) => (n === 1 ? 'o zi' : `${n}${n % 100 >= 20 || n % 100 === 0 ? ' de' : ''} zile`);
 function mailLabel(lang, label) {
   if (lang !== 'ro') return label;
   if (MAIL_LABELS_RO[label]) return MAIL_LABELS_RO[label];
@@ -2142,7 +2184,7 @@ function mailLabel(lang, label) {
   return label; // user-entered text (a bill or document name) stays as they typed it
 }
 const mailDays = (lang, d) => (lang === 'ro'
-  ? (d === 0 ? 'astăzi' : `în ${d} ${d === 1 ? 'zi' : 'zile'}`)
+  ? (d === 0 ? 'astăzi' : `în ${roDays(d)}`)
   : (d === 0 ? 'today' : `in ${d} day${d === 1 ? '' : 's'}`));
 // split a recipient list into { en: [...], ro: [...] } so each person reads their own language
 function byLanguage(rows) {
