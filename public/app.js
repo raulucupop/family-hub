@@ -721,7 +721,11 @@ async function boot() {
     render();
   } catch { renderAuth(); }
 }
+// Every render gets a ticket. A view that fetches before it paints can finish after a newer render
+// has already replaced #page — it must then stay quiet instead of writing into a detached node.
+let RENDER_SEQ = 0;
 function render() {
+  RENDER_SEQ++;
   flushPendingDelete(); // a pending undo-delete commits before the page it lived on is torn down
   if (location.hash.startsWith('#reset=')) return renderReset();
   if (!ME) return renderAuth();
@@ -742,7 +746,7 @@ function render() {
     EXP_FORM_OPEN = true; FOCUS_AMOUNT = true; PENDING_MONEY_TAB = 'expenses';
     if (page === 'money') viewMoney($('#page'), 'expenses'); else location.hash = '#money';
   });
-  runView(fn, $('#page'));
+  runView(fn, $('#page'), RENDER_SEQ);
   pollNotifications();
 }
 // error boundary around a page render: one failed fetch shouldn't leave a blank/broken page.
@@ -758,10 +762,12 @@ function pageError(fn, el, err) {
   el.querySelector('#pageretry').onclick = () => runView(fn, el);
   toast(err.message || 'Request failed', 'error');
 }
-function runView(fn, el) {
+function runView(fn, el, seq = RENDER_SEQ) {
+  // a superseded render is not a failure — its page is already gone, so say nothing
+  const report = (err) => { if (seq === RENDER_SEQ) pageError(fn, el, err); else console.debug('stale render discarded:', err.message); };
   let ret;
-  try { ret = fn(el); } catch (err) { pageError(fn, el, err); return; } // synchronous throw
-  if (ret && typeof ret.catch === 'function') ret.catch((err) => pageError(fn, el, err)); // async rejection
+  try { ret = fn(el); } catch (err) { report(err); return; } // synchronous throw
+  if (ret && typeof ret.catch === 'function') ret.catch(report); // async rejection
 }
 const NAV = [
   ['dashboard', '⌂', 'Dashboard'], ['money', '€', 'Budget & expenses'], ['bills', '☰', 'Bills'],
@@ -856,7 +862,9 @@ async function renderAuth(mode = 'login') {
       const r = await api(mode === 'login' ? '/auth/login' : '/auth/register', { method: 'POST', body });
       ME = r.user;
       const me = await api('/me'); FAMILY = me.family;
-      location.hash = '#dashboard'; render();
+      // setting the hash already fires hashchange -> render; calling render() as well started a
+      // second one that tore the first render's #page out from under it mid-fetch
+      if (location.hash === '#dashboard') render(); else location.hash = '#dashboard';
     } catch (err) { toast(err.message); }
   };
 }
@@ -879,7 +887,9 @@ function renderReset() {
       ME = r.user;
       const me = await api('/me'); FAMILY = me.family;
       toast('Password changed — you are signed in');
-      location.hash = '#dashboard'; render();
+      // setting the hash already fires hashchange -> render; calling render() as well started a
+      // second one that tore the first render's #page out from under it mid-fetch
+      if (location.hash === '#dashboard') render(); else location.hash = '#dashboard';
     } catch (err) { toast(err.message); }
   };
 }
@@ -1121,8 +1131,8 @@ async function viewDashboard(el) {
         <option value="all" ${DASH_VIEW === 'all' ? 'selected' : ''}>Whole family (total)</option>
         ${members.map((m) => `<option value="${m.id}" ${String(DASH_VIEW) === String(m.id) ? 'selected' : ''}>${esc(m.name)}${m.id === ME.id ? ' ' + tr('(me)') : ''}</option>`).join('')}
       </select></div></div><div id="dash">${dashSkeleton()}</div>`;
-  $('#dashview').onchange = (e) => { DASH_VIEW = e.target.value; viewDashboard(el); };
-  $('#dashperiod').onchange = (e) => { DASH_MONTHS = Number(e.target.value); viewDashboard(el); };
+  el.querySelector('#dashview').onchange = (e) => { DASH_VIEW = e.target.value; viewDashboard(el); };
+  el.querySelector('#dashperiod').onchange = (e) => { DASH_MONTHS = Number(e.target.value); viewDashboard(el); };
   const userQ = DASH_VIEW === 'all' ? '' : `&user=${DASH_VIEW}`;
   // the KPI tiles follow the period selector, but a trend chart of ONE bar teaches nothing —
   // so the history chart always pulls a rolling 12 months, whatever the tiles are showing
@@ -1138,7 +1148,7 @@ async function viewDashboard(el) {
   const periodLabel = PERIOD_LABELS[DASH_MONTHS];
   // a brand-new family lands on a dashboard of zeroes with nothing telling them where to begin
   const blank = !reminders.length && !stats.byCategory.length && !stats.income && !stats.spent && !budgets.budgets.length;
-  $('#dash').innerHTML = `
+  el.querySelector('#dash').innerHTML = `
     ${blank ? `<section class="card" style="margin-bottom:18px">
       <h3>Welcome — start here</h3>
       <p class="muted" style="margin-top:0">Nothing is set up yet. Add any one of these and this page fills in.</p>
@@ -1181,10 +1191,10 @@ async function viewDashboard(el) {
     ${goalsHtml(savings.goals)}
     <details class="card foldcard" style="margin-top:18px"><summary>${tr('Calendar')}</summary>
       <div id="dashcal" style="padding-top:12px"><div class="skel" style="height:220px"></div></div></details>`;
-  $('#dash').querySelectorAll('[data-tab]').forEach((a) => a.addEventListener('click', () => { PENDING_MONEY_TAB = a.dataset.tab; }));
-  countUpAll($('#dash'));
+  el.querySelector('#dash').querySelectorAll('[data-tab]').forEach((a) => a.addEventListener('click', () => { PENDING_MONEY_TAB = a.dataset.tab; }));
+  countUpAll(el.querySelector('#dash'));
   drawCharts(stats, DASH_VIEW, DASH_MONTHS, trendStats);
-  renderCalendar($('#dashcal'), true);
+  renderCalendar(el.querySelector('#dashcal'), true);
 }
 /* A number on its own says little: 5.589 spent is only meaningful next to what it usually is.
    `sense` says which direction is good, so spending more reads amber and earning more reads green.
