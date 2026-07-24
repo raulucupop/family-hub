@@ -205,7 +205,7 @@ CREATE TABLE IF NOT EXISTS properties (
   mortgage_due_day INTEGER, -- day of month
   owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL, -- NULL = whole family
   rent_amount REAL,            -- monthly rent charged to the tenant
-  rent_due_day INTEGER,        -- day of month rent is due (1-28)
+  rent_due_day INTEGER,        -- day of month rent is due (1-31; clamped to the last day in shorter months)
   tenant_invite_code TEXT,     -- code a tenant uses to register
   payment_link TEXT,           -- e.g. revolut.me link the tenant pays to (amount gets appended)
   notes TEXT
@@ -292,7 +292,7 @@ CREATE TABLE IF NOT EXISTS recurring_incomes (
   user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
   source TEXT NOT NULL,
   amount REAL NOT NULL,
-  day INTEGER NOT NULL DEFAULT 1,   -- day of month (1-28)
+  day INTEGER NOT NULL DEFAULT 1,   -- day of month (1-31; clamped to the last day in shorter months)
   active INTEGER NOT NULL DEFAULT 1,
   last_period TEXT                  -- YYYY-MM of the last auto-logged month
 );
@@ -306,7 +306,7 @@ CREATE TABLE IF NOT EXISTS recurring_expenses (
   category TEXT NOT NULL,
   note TEXT,
   amount REAL NOT NULL,
-  day INTEGER NOT NULL DEFAULT 1,   -- day of month (1-28)
+  day INTEGER NOT NULL DEFAULT 1,   -- day of month (1-31; clamped to the last day in shorter months)
   property_id INTEGER REFERENCES properties(id) ON DELETE SET NULL,
   vehicle_id INTEGER REFERENCES vehicles(id) ON DELETE SET NULL,
   active INTEGER NOT NULL DEFAULT 1,
@@ -389,6 +389,16 @@ CREATE TABLE IF NOT EXISTS notification_reads (
   notification_id INTEGER NOT NULL REFERENCES notifications(id) ON DELETE CASCADE,
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   PRIMARY KEY (notification_id, user_id)
+);
+-- Quieting an alert without doing the task yet. Keyed on the ITEM (kind:ref:date) rather than the
+-- alert row, so it survives the alert being regenerated at a tighter threshold — and so renewing
+-- the thing (which moves the date, hence the key) brings it back on its own.
+CREATE TABLE IF NOT EXISTS alert_snoozes (
+  family_id INTEGER NOT NULL REFERENCES families(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  item_key TEXT NOT NULL,
+  until TEXT NOT NULL,
+  PRIMARY KEY (user_id, item_key)
 );
 `);
 

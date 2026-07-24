@@ -175,6 +175,15 @@ function addDays(dateStr, days) {
   d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().slice(0, 10);
 }
+// A day-of-month setting means "that day where the month has one, otherwise the last day": the 31st
+// is the 31st in January and the 28th in February. Same rule addMonths() uses for recurring bills,
+// so there is no reason to cap the setting itself at 28.
+function monthDate(period, day) {
+  const [y, m] = String(period).split('-').map(Number);
+  const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  const d = Math.min(Math.max(Math.round(Number(day)) || 1, 1), last);
+  return `${period}-${String(d).padStart(2, '0')}`;
+}
 function addMonths(dateStr, months) {
   const d = new Date(dateStr + 'T00:00:00Z');
   const day = d.getUTCDate();
@@ -603,9 +612,8 @@ function autoLogRecurringExpenses() {
   const period = new Date().toISOString().slice(0, 7);
   const todayDay = new Date().getUTCDate();
   for (const r of db.prepare('SELECT * FROM recurring_expenses WHERE active = 1').all()) {
-    const day = Math.min(Math.max(r.day, 1), 28);
-    if (r.last_period === period || todayDay < day) continue;
-    const date = `${period}-${String(day).padStart(2, '0')}`;
+    const date = monthDate(period, r.day); // the 31st means the 30th in a 30-day month, not the 28th
+    if (r.last_period === period || todayDay < Number(date.slice(8))) continue;
     const b = { category: r.category, amount: r.amount, note: r.note, date, property_id: r.property_id, vehicle_id: r.vehicle_id };
     db.transaction(() => {
       const info = db.prepare('INSERT INTO expenses (family_id, user_id, category, amount, note, date, property_id, vehicle_id) VALUES (?,?,?,?,?,?,?,?)')
@@ -627,7 +635,7 @@ app.get('/api/recurring-expenses', auth, (req, res) => {
 app.post('/api/recurring-expenses', auth, canWrite, (req, res) => {
   const b = req.body || {};
   const day = Math.round(Number(b.day));
-  if (!(day >= 1 && day <= 28)) return res.status(400).json({ error: 'Day must be between 1 and 28' });
+  if (!(day >= 1 && day <= 31)) return res.status(400).json({ error: 'Day must be between 1 and 31' });
   // reuse the one-off expense rules: same categories, same person and link checks
   const err = validateExpense({ ...b, date: '2000-01-01' }, req.user.family_id);
   if (err) return res.status(400).json({ error: err });
@@ -665,8 +673,8 @@ function autoLogIncomes() {
   const period = new Date().toISOString().slice(0, 7);
   const todayDay = new Date().getUTCDate();
   for (const r of db.prepare('SELECT * FROM recurring_incomes WHERE active = 1').all()) {
-    if (r.last_period === period || todayDay < Math.min(Math.max(r.day, 1), 28)) continue;
-    const date = `${period}-${String(Math.min(Math.max(r.day, 1), 28)).padStart(2, '0')}`;
+    const date = monthDate(period, r.day); // a salary paid "on the 31st" still lands in February
+    if (r.last_period === period || todayDay < Number(date.slice(8))) continue;
     db.prepare('INSERT INTO incomes (family_id, user_id, source, amount, date) VALUES (?,?,?,?,?)')
       .run(r.family_id, r.user_id, r.source, r.amount, date);
     db.prepare('UPDATE recurring_incomes SET last_period = ? WHERE id = ?').run(period, r.id);
@@ -680,7 +688,7 @@ app.post('/api/recurring-incomes', auth, canWrite, (req, res) => {
   if (!str(b.source)) return res.status(400).json({ error: 'Source is required' });
   if (!okAmount(b.amount)) return res.status(400).json({ error: 'Amount must be greater than 0' });
   const day = Math.round(Number(b.day));
-  if (!(day >= 1 && day <= 28)) return res.status(400).json({ error: 'Day must be between 1 and 28' });
+  if (!(day >= 1 && day <= 31)) return res.status(400).json({ error: 'Day must be between 1 and 31' });
   let uid = num(b.user_id);
   if (uid != null && !db.prepare('SELECT id FROM users WHERE id = ? AND family_id = ?').get(uid, req.user.family_id)) {
     return res.status(400).json({ error: 'Person must be a member of the family' });
@@ -853,15 +861,16 @@ function autoLogCreditExpenses() {
   const todayDay = new Date().getUTCDate();
   for (const c of db.prepare('SELECT * FROM credits').all()) {
     if (c.auto_expense_period === period) continue;
-    const dueDay = Number(String(c.start_date).slice(8, 10)) || 1;
-    if (todayDay < dueDay) continue; // payment not due yet this month
+    // an instalment dated the 31st is due on the 30th in a 30-day month — comparing against the raw
+    // day would skip that month's payment entirely
+    const dueDate = monthDate(period, Number(String(c.start_date).slice(8, 10)) || 1);
+    if (todayDay < Number(dueDate.slice(8))) continue; // payment not due yet this month
     const stats = creditStats(c, db.prepare('SELECT * FROM credit_payments WHERE credit_id = ?').all(c.id));
     if (!(stats.months_left > 0) && stats.balance <= 0.005) { // already paid off
       db.prepare('UPDATE credits SET auto_expense_period = ? WHERE id = ?').run(period, c.id);
       continue;
     }
     const total = Math.round((stats.monthly_payment + (Number(c.commission) || 0)) * 100) / 100;
-    const dueDate = `${period}-${String(Math.min(dueDay, 28)).padStart(2, '0')}`;
     // a credit tied to a property carries that link onto the expense, so the mortgage lands in
     // the property's own cost history — without it "is this flat making money?" ignores the loan
     // the mirror label is built as "<category>: <note>", so the note here carries no "Credit:"
@@ -960,7 +969,9 @@ app.delete('/api/credits/:id/payments/:pid', auth, canWrite, (req, res) => {
 const EXPENSE_CATEGORIES = ['Groceries', 'Utilities', 'Transportation', 'Entertainment', 'Healthcare', 'Education', 'Taxes', 'Credit', 'Subscriptions', 'Other'];
 const BILL_CAT_MAP = { electricity: 'Utilities', gas: 'Utilities', water: 'Utilities', internet: 'Utilities', mobile: 'Utilities', subscription: 'Subscriptions', property_tax: 'Taxes', other: 'Other' };
 const BILL_SELECT = `
-  SELECT b.*, u.name AS owner_name, p.name AS property_name, v.name AS vehicle_name
+  SELECT b.*, u.name AS owner_name, p.name AS property_name, v.name AS vehicle_name,
+    -- what this bill last actually cost, so the subscriptions panel can flag a price change
+    (SELECT bp.amount FROM bill_payments bp WHERE bp.bill_id = b.id ORDER BY bp.paid_at DESC, bp.id DESC LIMIT 1) AS last_paid_amount
   FROM bills b
   LEFT JOIN users u ON u.id = b.owner_id
   LEFT JOIN properties p ON p.id = b.property_id
@@ -1334,9 +1345,8 @@ function ensureRentCharge(prop) {
   if (!db.prepare("SELECT id FROM users WHERE role = 'tenant' AND tenant_property_id = ?").get(prop.id)) return;
   const period = new Date().toISOString().slice(0, 7);
   if (db.prepare("SELECT id FROM tenant_charges WHERE property_id = ? AND type = 'rent' AND period = ?").get(prop.id, period)) return;
-  const day = Math.min(Math.max(Math.round(Number(prop.rent_due_day)) || 1, 1), 28);
   db.prepare('INSERT INTO tenant_charges (family_id, property_id, type, title, amount, due_date, period) VALUES (?,?,?,?,?,?,?)')
-    .run(prop.family_id, prop.id, 'rent', `Rent ${period}`, Number(prop.rent_amount), `${period}-${String(day).padStart(2, '0')}`, period);
+    .run(prop.family_id, prop.id, 'rent', `Rent ${period}`, Number(prop.rent_amount), monthDate(period, prop.rent_due_day), period);
 }
 function familyProperty(req) {
   return db.prepare('SELECT * FROM properties WHERE id = ? AND family_id = ?').get(req.params.id, req.user.family_id);
@@ -1580,7 +1590,8 @@ function ensureMeterRequests(prop) {
   if (!utils.length) return;
   if (!db.prepare("SELECT id FROM users WHERE role = 'tenant' AND tenant_property_id = ?").get(prop.id)) return;
   const period = new Date().toISOString().slice(0, 7);
-  if (new Date().getUTCDate() < Math.min(day, 28)) return;
+  // a 31st reading day fires on the 30th in a 30-day month, not never
+  if (new Date().toISOString().slice(0, 10) < monthDate(period, day)) return;
   const created = [];
   for (const u of utils) {
     if (db.prepare('SELECT id FROM meter_requests WHERE property_id = ? AND utility = ? AND period = ?').get(prop.id, u, period)) continue;
@@ -1970,7 +1981,8 @@ async function sendPushToFamily(fid, payload, ownerId = null) {
   if (ownerId != null) subs = subs.filter((s) => s.role === 'admin' || s.user_id === ownerId);
   // per-member preferences: muted alert groups drop the push, quiet hours hold everything back
   const group = GROUP_OF_KIND[payload.kind];
-  subs = subs.filter((s) => !(group && mutedSet(s).has(group)) && !inQuietHours(s.quiet_start, s.quiet_end));
+  subs = subs.filter((s) => !(group && mutedSet(s).has(group)) && !inQuietHours(s.quiet_start, s.quiet_end)
+    && !(payload.item && snoozedItems(s.user_id).has(payload.item))); // snoozed for them = no buzz either
   const { i18n, ...shared } = payload; // i18n is rendered per device, never sent as-is
   for (const s of subs) {
     const body = i18n ? { ...shared, ...alertText(s.lang === 'ro' ? 'ro' : 'en', i18n) } : shared;
@@ -2044,6 +2056,15 @@ const ALERT_PAGE = {
   document: '/#acte', birthday: '/#family',
 };
 function alertUrl(key) { return ALERT_PAGE[String(key).split(':')[0]] || '/#alerts'; }
+// the thing an alert is about, without the threshold: "rca:3:2026-08-16:14" -> "rca:3:2026-08-16".
+// Snoozes hang off this, so they hold as the alert escalates and lapse when the date moves.
+const alertItem = (key) => String(key).split(':').slice(0, 3).join(':');
+const DISMISSED_UNTIL = '9999-12-31'; // "not this time round" — the key changes when it's renewed
+function snoozedItems(userId) {
+  const today = new Date().toISOString().slice(0, 10);
+  return new Set(db.prepare('SELECT item_key FROM alert_snoozes WHERE user_id = ? AND until > ?')
+    .all(userId, today).map((r) => r.item_key));
+}
 // Alerts are stored once per family but read by members who may not share a language, so the text
 // is rendered from `params` at read time (and per subscriber when pushing) instead of being frozen
 // in English at write time. mailLabel/mailDate already translate the deadline names and dates.
@@ -2139,9 +2160,14 @@ function generateNotifications(fid) {
   const keep = [...live];
   db.prepare(`DELETE FROM notifications WHERE family_id = ?${keep.length ? ` AND key NOT IN (${keep.map(() => '?').join(',')})` : ''}`)
     .run(fid, ...keep);
+  // Snoozes outlive their alert otherwise. Dropping the ones whose item is gone keeps the table from
+  // growing forever, and means a renewed deadline (new date -> new item key) starts alerting again.
+  const items = [...new Set(keep.map(alertItem))];
+  db.prepare(`DELETE FROM alert_snoozes WHERE family_id = ?${items.length ? ` AND item_key NOT IN (${items.map(() => '?').join(',')})` : ''}`)
+    .run(fid, ...items);
   // only genuinely new alerts push to devices — a resurfaced one would push every single day
   // i18n travels with the payload so each device is pushed in its owner's language
-  for (const n of fresh) sendPushToFamily(fid, { i18n: n.params, url: alertUrl(n.key), kind: String(n.key).split(':')[0] }, n.owner).catch(() => {});
+  for (const n of fresh) sendPushToFamily(fid, { i18n: n.params, url: alertUrl(n.key), kind: String(n.key).split(':')[0], item: alertItem(n.key) }, n.owner).catch(() => {});
 }
 app.get('/api/notifications', auth, (req, res) => {
   generateNotifications(req.user.family_id);
@@ -2158,10 +2184,23 @@ app.get('/api/notifications', auth, (req, res) => {
   // url derived from the key, not the key itself — clients get a destination, not internal shape.
   // Muted groups disappear from this member's list and badge; other members still see them.
   const muted = mutedSet(req.user);
+  const snoozed = snoozedItems(req.user.id);
   const items = rows
-    .filter((r) => !muted.has(GROUP_OF_KIND[String(r.key).split(':')[0]]))
-    .map(({ key, params, title, body, ...r }) => ({ ...r, ...alertRow(req.user.lang, { title, body, params }), url: alertUrl(key) }));
+    .filter((r) => !muted.has(GROUP_OF_KIND[String(r.key).split(':')[0]]) && !snoozed.has(alertItem(r.key)))
+    .map(({ key, params, title, body, ...r }) => ({ ...r, ...alertRow(req.user.lang, { title, body, params }), item: alertItem(key), url: alertUrl(key) }));
   res.json({ items, unread: items.filter((x) => !x.read).length });
+});
+// quiet an alert you have dealt with (or will deal with later) without having to finish the task
+app.post('/api/notifications/snooze', auth, (req, res) => {
+  const item = String(req.body?.item || '');
+  if (!/^[a-z_]+:\d+:[a-z0-9-]+$/.test(item)) return res.status(400).json({ error: 'Unknown alert' });
+  const days = Number(req.body?.days);
+  const until = req.body?.dismiss ? DISMISSED_UNTIL : addDays(new Date().toISOString().slice(0, 10), Number.isFinite(days) && days > 0 ? Math.min(days, 90) : 7);
+  db.prepare(`
+    INSERT INTO alert_snoozes (family_id, user_id, item_key, until) VALUES (?,?,?,?)
+    ON CONFLICT(user_id, item_key) DO UPDATE SET until = excluded.until
+  `).run(req.user.family_id, req.user.id, item, until);
+  res.json({ ok: true, until });
 });
 app.post('/api/notifications/read', auth, (req, res) => {
   const ids = Array.isArray(req.body?.ids) ? req.body.ids : null;

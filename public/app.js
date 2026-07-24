@@ -86,6 +86,8 @@ const RO = {
   'Family settings': 'Setări familie', 'Currency': 'Monedă', 'Send invite': 'Trimite invitația', 'Role': 'Rol', 'no login': 'fără cont',
   // alerts
   'Alerts': 'Alerte', 'Mark all as read': 'Marchează toate ca citite', 'Browser notifications': 'Notificări în browser',
+  'Remind me in 7 days': 'Amintește-mi peste 7 zile', 'Handled': 'Rezolvat', 'Hidden for 7 days': 'Ascunsă 7 zile',
+  'Alert hidden — it comes back if the deadline is renewed': 'Alertă ascunsă — reapare când reînnoiești termenul',
   // lists
   'Lists': 'Liste', 'Buy wishlist': 'De cumpărat', 'Travel wishlist': 'Călătorii', 'Grocery list': 'Cumpărături',
   'Personal targets': 'Obiective personale', 'Wishlists, groceries and personal goals for the whole family.': 'Liste de dorințe, cumpărături și obiective personale pentru toată familia.',
@@ -207,8 +209,8 @@ const RO = {
   'Insurance (PAD)': 'Asigurare (PAD)', 'Additional insurance': 'Asigurare facultativă',
   'Insurance (PAD) due': 'Asigurarea (PAD) expiră', 'Additional insurance due': 'Asigurarea facultativă expiră', 'Property tax due': 'Impozitul scadent',
   'Mortgage lender': 'Banca ipotecii', 'Monthly payment (RON)': 'Rată lunară (RON)', 'Payment day of month': 'Ziua plății în lună',
-  'Rent (RON/mo, if rented out)': 'Chirie (RON/lună, dacă e închiriată)', 'Rent due day (1-28)': 'Ziua scadenței chiriei (1-28)', 'Rent (RON/mo)': 'Chirie (RON/lună)',
-  'Meter reading day (1-28)': 'Ziua citirii contoarelor (1-28)', 'Meters to read monthly': 'Contoare de citit lunar',
+  'Rent (RON/mo, if rented out)': 'Chirie (RON/lună, dacă e închiriată)', 'Rent due day (1-31)': 'Ziua scadenței chiriei (1-31)', 'Rent (RON/mo)': 'Chirie (RON/lună)',
+  'Meter reading day (1-31)': 'Ziua citirii contoarelor (1-31)', 'Meters to read monthly': 'Contoare de citit lunar',
   '— none —': '— niciunul —', 'Electricity + gas': 'Electricitate + gaz', 'Electricity + gas + water': 'Electricitate + gaz + apă',
   'Payment link (Revolut.me)': 'Link de plată (Revolut.me)', 'Mortgage': 'Ipotecă', 'on day': 'în ziua',
   'Maintenance': 'Întreținere', 'Renovation': 'Renovare', 'Utility': 'Utilitate', 'Rent (income)': 'Chirie (venit)', 'Other income': 'Alt venit',
@@ -293,8 +295,8 @@ const RO = {
   'Could not read any rows from this file': 'Nu s-au putut citi rânduri din acest fișier',
   'No valid transactions found — check the column mapping': 'Nicio tranzacție validă — verifică maparea coloanelor',
   // alerts
-  'Generated automatically when a bill or deadline gets within 30, 14, 7 or 1 days — or goes overdue. Shared by the whole family; read status is yours.':
-    'Generate automat când o factură sau un termen ajunge la 30, 14, 7 sau 1 zile — sau întârzie. Comune întregii familii; starea de citit e a ta.',
+  'Generated automatically when a bill or deadline gets within 30, 14, 7 or 1 days — or goes overdue. Shared by the whole family; hiding one only affects you.':
+    'Generate automat când o factură sau un termen ajunge la 30, 14, 7 sau 1 zile — sau întârzie. Comune întregii familii; dacă ascunzi una, dispare doar pentru tine.',
   'While Family Hub is open in a tab, new alerts also pop up as system notifications.': 'Cât timp Family Hub e deschis într-un tab, alertele noi apar și ca notificări de sistem.',
   'Not supported by this browser': 'Nesuportat de acest browser', 'Blocked in browser settings': 'Blocat din setările browserului',
   'Turn off': 'Oprește', 'Turn on': 'Pornește', 'No alerts yet': 'Nicio alertă încă',
@@ -1514,7 +1516,7 @@ async function moneyExpenses(body, f = {}) {
         <div><label>Category</label><select name="category">${CATEGORIES.map((c) => `<option value="${c}">${c}</option>`).join('')}</select></div>
         <div><label>Note</label><input name="note" placeholder="Grădiniță, asigurare…"></div>
         <div><label>Amount (${cur()}/mo)</label><input name="amount" type="number" step="0.01" min="0.01" required></div>
-        <div><label>Day of month</label><input name="day" type="number" min="1" max="28" value="1" required></div>
+        <div><label>Day of month</label><input name="day" type="number" min="1" max="31" value="1" required></div>
         <div><label>Person</label><select name="user_id">${members.map((m) => `<option value="${m.id}" ${m.id === ME.id ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}</select></div>
         ${properties.length || vehicles.length ? `<div><label>Link to (optional)</label><select name="link"><option value="">Nothing</option>
           ${properties.map((p) => `<option value="property:${p.id}">⌂ ${esc(p.name)}</option>`).join('')}
@@ -1611,7 +1613,7 @@ async function moneyIncome(body, who = 'all') {
       ${canWrite() ? `<form id="recform" class="formgrid" style="margin-top:10px">
         <div><label>Source</label><input name="source" placeholder="Salariu Raul" required></div>
         <div><label>Amount (${cur()}/mo)</label><input name="amount" type="number" step="0.01" min="0.01" required></div>
-        <div><label>Day of month</label><input name="day" type="number" min="1" max="28" value="1" required></div>
+        <div><label>Day of month</label><input name="day" type="number" min="1" max="31" value="1" required></div>
         <div><label>Person</label><select name="user_id">${members.map((m) => `<option value="${m.id}" ${m.id === ME.id ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}</select></div>
         <button class="btn small">Add recurring</button></form>` : ''}
     </div>
@@ -1955,11 +1957,54 @@ function billFormFields(members, properties, vehicles, b = {}) {
       ${vehicles.map((v) => `<option value="vehicle:${v.id}" ${link === `vehicle:${v.id}` ? 'selected' : ''}>⛟ ${esc(v.name)}</option>`).join('')}</select></div>
     <div style="align-self:center"><label style="display:inline-flex;align-items:center;gap:6px;font-size:13px"><input type="checkbox" name="auto_pay" value="1" ${b.auto_pay ? 'checked' : ''} style="width:auto"> Auto-paid subscription</label></div>`;
 }
+// Recurring bills run on different clocks — one every 30 days, one quarterly, one yearly — so their
+// face amounts aren't comparable. Normalising each to a month puts them side by side and makes the
+// question "what do the subscriptions actually cost us?" answerable.
+function monthlyCost(b) {
+  const amt = Number(b.amount);
+  if (!Number.isFinite(amt) || amt <= 0) return 0;
+  if (b.recur_days > 0) return (amt * (365 / b.recur_days)) / 12;
+  if (b.recur_months > 0) return amt / b.recur_months;
+  return 0; // one-off: not a subscription
+}
+function subsCard(bills, recurLabel) {
+  const subs = bills.map((b) => ({ b, m: monthlyCost(b) })).filter((s) => s.m > 0).sort((x, y) => y.m - x.m);
+  if (!subs.length) return '';
+  const perMonth = subs.reduce((s, x) => s + x.m, 0);
+  const ro = LANG === 'ro';
+  const rows = subs.map(({ b, m }) => {
+    // a price change only means something once it's been paid at least once at the old amount
+    const was = Number(b.last_paid_amount);
+    const pct = Number.isFinite(was) && was > 0 ? Math.round(((Number(b.amount) - was) / was) * 100) : 0;
+    const changed = Math.abs(pct) >= 1;
+    return `<tr>
+      <td><b>${esc(b.name)}</b>${b.auto_pay ? ` <span class="muted">· ${ro ? 'plată automată' : 'auto-pay'}</span>` : ''}
+        ${changed ? `<span class="dchip ${pct > 0 ? 'warn' : 'ok'}" title="${ro ? `Ultima plată: ${money(was)}` : `Last paid: ${money(was)}`}">${pct > 0 ? '+' : ''}${pct}%</span>` : ''}</td>
+      <td class="muted" data-label="${ro ? 'Ciclu' : 'Cycle'}">${tr(recurLabel(b))}</td>
+      <td class="right amount" data-label="${ro ? 'Pe ciclu' : 'Per cycle'}">${money(b.amount)}</td>
+      <td class="right amount" data-label="${ro ? 'Pe lună' : 'Per month'}">${money(m)}</td>
+    </tr>`;
+  }).join('');
+  return `<div class="card subs" style="margin-top:16px">
+    <div class="row" style="justify-content:space-between;align-items:flex-start;gap:12px">
+      <div><h3 style="margin:0">${ro ? 'Abonamente' : 'Subscriptions'}</h3>
+        <p class="muted" style="margin:4px 0 0">${ro
+          ? `${subs.length} facturi recurente, aduse toate la echivalentul lunar.`
+          : `${subs.length} recurring bills, each brought to its monthly equivalent.`}</p></div>
+      <div class="right"><div class="amount" style="font-size:22px">${money(perMonth)}</div>
+        <div class="muted" style="font-size:12.5px">${ro ? `pe lună · ${money(perMonth * 12)} pe an` : `per month · ${money(perMonth * 12)} a year`}</div></div>
+    </div>
+    <details style="margin-top:10px"><summary>${ro ? 'Vezi defalcarea' : 'See the breakdown'}</summary>
+      <table class="cards" style="margin-top:8px"><tbody>${rows}</tbody></table>
+    </details>
+  </div>`;
+}
 async function viewBills(el) {
   const [bills, members, properties, vehicles] = await Promise.all([api('/bills'), api('/family/members'), api('/properties'), api('/vehicles')]);
   const t = today();
   const recurLabel = (b) => (RECUR_OPTS.find(([v]) => v === recurValue(b)) || [])[1];
   el.innerHTML = `<div class="pagehead"><div><h1>Bills & invoices</h1><p>Electricity, gas, internet, water, taxes — with due dates, owner, attachments and payment history. Auto-paid subscriptions are marked paid automatically once due.</p></div></div>
+    ${subsCard(bills, recurLabel)}
     ${canWrite() ? addBox('Add bill', `<form id="billform" class="formgrid">
       ${billFormFields(members, properties, vehicles)}
       <button class="btn">Add bill</button></form>`) : ''}
@@ -1968,7 +2013,7 @@ async function viewBills(el) {
       ${bills.map((b) => {
         const late = b.status === 'unpaid' && b.due_date < t;
         return `<tr>
-          <td><b>${esc(b.name)}</b><br><span class="muted">${esc(b.provider || tr(BILL_CATS[b.category]) || '')}${recurValue(b) === '0' ? '' : ` · ${tr(recurLabel(b))}`}${b.auto_pay ? ' · auto-pay' : ''}${b.expense_category ? ` · ${tr(b.expense_category)}` : ''}${b.property_name ? ` · ⌂ ${esc(b.property_name)}` : ''}${b.vehicle_name ? ` · ⛟ ${esc(b.vehicle_name)}` : ''}</span></td>
+          <td><b>${esc(b.name)}</b><br><span class="muted">${esc(b.provider || tr(BILL_CATS[b.category]) || '')}${recurValue(b) === '0' ? '' : ` · ${tr(recurLabel(b))}`}${b.auto_pay ? (LANG === 'ro' ? ' · plată automată' : ' · auto-pay') : ''}${b.expense_category ? ` · ${tr(b.expense_category)}` : ''}${b.property_name ? ` · ⌂ ${esc(b.property_name)}` : ''}${b.vehicle_name ? ` · ⛟ ${esc(b.vehicle_name)}` : ''}</span></td>
           <td data-label="Owner">${esc(b.owner_name || 'Family')}</td>
           <td data-label="Due">${fdate(b.due_date)}</td>
           <td class="right amount" data-label="Amount">${money(b.amount)}</td>
@@ -2073,7 +2118,7 @@ async function viewProperties(el) {
       ['owner_id', 'Owner', 'select', ownerOpts],
       ...P_DEADLINES.map(([k, l]) => [k, l + ' due', 'date', '']),
       ['mortgage_lender', 'Mortgage lender', 'text', 'optional'], ['mortgage_payment', `Monthly payment (${cur()})`, 'number', ''], ['mortgage_due_day', 'Payment day of month', 'number', '15'],
-      ['rent_amount', `Rent (${cur()}/mo, if rented out)`, 'number', ''], ['rent_due_day', 'Rent due day (1-28)', 'number', '1'],
+      ['rent_amount', `Rent (${cur()}/mo, if rented out)`, 'number', ''], ['rent_due_day', 'Rent due day (1-31)', 'number', '1'],
       ['payment_link', 'Payment link (Revolut.me)', 'text', 'https://revolut.me/...'],
     ]) : ''}
     <div id="proplist" style="margin-top:16px">${props.length ? '' : `<div class="card empty"><b>No properties yet</b>Add your home above to track its deadlines and costs.</div>`}</div>`;
@@ -2088,8 +2133,8 @@ async function viewProperties(el) {
     list.appendChild(entityCard(p, {
       subtitle: [p.address, `${tr('Owner')}: ${mname[p.owner_id] || tr('whole family')}`, p.mortgage_lender ? `${tr('Mortgage')}: ${p.mortgage_lender}, ${money(p.mortgage_payment)} ${tr('on day')} ${p.mortgage_due_day ?? '—'}` : null].filter(Boolean).join(' · '),
       deadlines: P_DEADLINES, route: 'properties',
-      editExtra: [['owner_id', 'Owner', 'select', ownerOpts], ['rent_amount', `Rent (${cur()}/mo)`, 'number'], ['rent_due_day', 'Rent due day (1-28)', 'number'],
-        ['reading_day', 'Meter reading day (1-28)', 'number'],
+      editExtra: [['owner_id', 'Owner', 'select', ownerOpts], ['rent_amount', `Rent (${cur()}/mo)`, 'number'], ['rent_due_day', 'Rent due day (1-31)', 'number'],
+        ['reading_day', 'Meter reading day (1-31)', 'number'],
         ['reading_utilities', 'Meters to read monthly', 'select', [['', '— none —'], ['electricity', 'Electricity'], ['gas', 'Gas'], ['water', 'Water'], ['electricity,gas', 'Electricity + gas'], ['electricity,gas,water', 'Electricity + gas + water']]],
         ['payment_link', 'Payment link (Revolut.me)', 'text']],
       extra: (box, it) => { const d1 = document.createElement('div'), d2 = document.createElement('div'); box.append(d1, d2); renderTenantBox(d1, it); renderEntityDocs(d2, 'property', it, pSlots, () => viewProperties(el)); },
@@ -2179,7 +2224,7 @@ async function renderTenantBox(box, p) {
     <p class="muted">${p.rent_amount ? `${tr('Rent:')} <b>${money(p.rent_amount)}</b> ${tr('/ month, due day')} ${p.rent_due_day || 1} — ${tr('the rent charge is generated automatically once a tenant has joined.')}` : tr('No rent set yet — set it here and the monthly rent charge generates itself.')}</p>
     ${canWrite() ? `<form data-rentform class="row" style="flex-wrap:wrap;align-items:flex-end;gap:8px">
       <div><label>${tr('Rent')} (${cur()})</label><input name="rent_amount" type="number" step="0.01" min="0" value="${p.rent_amount ?? ''}" style="max-width:130px"></div>
-      <div><label>${tr('Rent due day (1-28)')}</label><input name="rent_due_day" type="number" min="1" max="28" value="${p.rent_due_day ?? 1}" style="max-width:120px"></div>
+      <div><label>${tr('Rent due day (1-31)')}</label><input name="rent_due_day" type="number" min="1" max="31" value="${p.rent_due_day ?? 1}" style="max-width:120px"></div>
       <button class="btn small">${tr('Save')}</button></form>` : ''}
     ${canWrite() ? `<p class="row" style="flex-wrap:wrap">
       ${tinfo.invite_code ? `<span>Tenant code: <b class="amount" style="font-size:18px;letter-spacing:.12em">${esc(tinfo.invite_code)}</b></span>
@@ -2729,7 +2774,7 @@ async function viewAlerts(el) {
   const perm = 'Notification' in window ? Notification.permission : 'unsupported';
   const enabled = browserNotifOn();
   el.innerHTML = `<div class="pagehead"><div><h1>Alerts</h1>
-    <p>Generated automatically when a bill or deadline gets within 30, 14, 7 or 1 days — or goes overdue. Shared by the whole family; read status is yours.</p></div>
+    <p>Generated automatically when a bill or deadline gets within 30, 14, 7 or 1 days — or goes overdue. Shared by the whole family; hiding one only affects you.</p></div>
     ${data.items.some((n) => !n.read) ? `<button class="btn ghost small" id="readall">Mark all as read</button>` : ''}</div>
     <div class="card">
       <div class="row" style="justify-content:space-between">
@@ -2742,10 +2787,25 @@ async function viewAlerts(el) {
     <div class="card" style="margin-top:16px">
       ${data.items.length ? `<table><tbody>${data.items.map((n) => `
         <tr style="${n.read ? 'opacity:.55' : ''}"><td style="width:20px">${n.read ? '' : '<span class="dot"></span>'}</td>
-        <td><b>${esc(n.title)}</b><br><span class="muted">${esc(n.body || '')}</span></td>
+        <td><b>${esc(n.title)}</b><br><span class="muted">${esc(n.body || '')}</span>
+          ${n.item ? `<div class="snoozerow">
+            <button class="btn ghost tiny" data-snooze="${esc(n.item)}">Remind me in 7 days</button>
+            <button class="btn ghost tiny" data-handled="${esc(n.item)}">Handled</button>
+          </div>` : ''}</td>
         <td class="right muted" style="white-space:nowrap">${new Date(n.created_at + 'Z').toLocaleDateString('ro-RO')}</td></tr>`).join('')}
       </tbody></table>` : `<div class="empty"><b>No alerts yet</b>They appear here as your bills and deadlines get close.</div>`}
     </div>`;
+  // Quieting is per person: it hides the alert for you, the rest of the family still sees it.
+  el.querySelectorAll('[data-snooze],[data-handled]').forEach((b) => b.addEventListener('click', async () => {
+    const dismiss = b.hasAttribute('data-handled');
+    const item = b.getAttribute(dismiss ? 'data-handled' : 'data-snooze');
+    b.disabled = true;
+    try {
+      await api('/notifications/snooze', { method: 'POST', body: dismiss ? { item, dismiss: true } : { item, days: 7 } });
+      toast(dismiss ? 'Alert hidden — it comes back if the deadline is renewed' : 'Hidden for 7 days', 'ok');
+      viewAlerts(el); pollNotifications();
+    } catch (err) { b.disabled = false; toast(err.message, 'err'); }
+  }));
   $('#readall')?.addEventListener('click', async () => {
     await api('/notifications/read', { method: 'POST', body: {} }); viewAlerts(el); pollNotifications();
   });
