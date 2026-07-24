@@ -119,6 +119,9 @@ const RO = {
   'Add bills, vehicle or property deadlines and they will line up here.': 'Adaugă facturi sau termene pentru vehicule și proprietăți și vor apărea aici.',
   'Nothing assigned to this person is coming up.': 'Nimic atribuit acestei persoane nu urmează.',
   'Spent': 'Cheltuit', 'Spending by category': 'Cheltuieli pe categorii', 'Budget vs actual': 'Buget vs realizat',
+  'No budgets set for this month yet.': 'Niciun buget setat pentru luna aceasta.',
+  'Set from my 3-month average': 'Setează din media pe 3 luni', 'You can fine-tune them afterwards.': 'Le poți ajusta după aceea.',
+  'Set them in': 'Setează-le în',
   'No budgets set for this month yet — set them in': 'Niciun buget setat pentru luna aceasta — setează-le în',
   'No expenses this month yet.': 'Nicio cheltuială luna aceasta.', 'History appears once you log expenses.': 'Istoricul apare după ce înregistrezi cheltuieli.',
   // calendar
@@ -1121,6 +1124,50 @@ function dashSkeleton() {
     <section class="kpi" style="margin-top:18px">${tile + tile + tile}</section>
     <section class="grid2" style="margin-top:18px"><div class="card"><div class="skel" style="height:220px"></div></div><div class="card"><div class="skel" style="height:220px"></div></div></section>`;
 }
+/* One plain sentence under the tiles: where this month lands if nothing changes, and whichever
+   category is most out of step with its usual self. Whole sentences per language — the RO
+   dictionary matches exact strings, so a sentence glued from translated words would not survive.
+   Only shown for the current month, and only once enough days have passed to mean anything. */
+function dashInsight(stats, suggest, months) {
+  if (months !== 1) return '';
+  const ro = LANG === 'ro';
+  const now = new Date();
+  const day = now.getUTCDate();
+  const inMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0)).getUTCDate();
+  const bits = [];
+  if (day >= 4 && stats.spent > 0 && day < inMonth) {
+    const projected = (stats.spent / day) * inMonth;
+    const monthName = now.toLocaleDateString(ro ? 'ro-RO' : 'en-GB', { month: 'long', timeZone: 'UTC' });
+    bits.push(ro
+      ? `În ritmul ăsta, ${monthName} se închide pe la <b class="amount">${money(projected)}</b>.`
+      : `At this pace, ${monthName} closes around <b class="amount">${money(projected)}</b>.`);
+    if (stats.income > 0) {
+      const diff = stats.income - projected;
+      bits.push(diff >= 0
+        ? (ro ? `Îți rămân aproximativ <b class="amount" style="color:var(--ok)">${money(diff)}</b> din venituri.`
+          : `That leaves about <b class="amount" style="color:var(--ok)">${money(diff)}</b> of your income.`)
+        : (ro ? `Ai depăși veniturile cu circa <b class="amount" style="color:var(--red)">${money(-diff)}</b>.`
+          : `That is about <b class="amount" style="color:var(--red)">${money(-diff)}</b> more than you earn.`));
+    }
+  }
+  // the category most above its own 3-month average (needs a real gap, not rounding noise)
+  const avg = Object.fromEntries((suggest?.categories || []).map((c) => [c.category, c.avg]));
+  let worst = null;
+  for (const c of stats.byCategory || []) {
+    const a = avg[c.category];
+    if (!a || a < 50 || c.total < a * 1.25 || c.total - a < 50) continue;
+    const over = (c.total / a - 1) * 100;
+    if (!worst || over > worst.over) worst = { category: c.category, over };
+  }
+  if (worst) {
+    bits.push(ro
+      ? `<b>${esc(tr(worst.category))}</b> este cu ${Math.round(worst.over)}% peste media ultimelor 3 luni.`
+      : `<b>${esc(tr(worst.category))}</b> is ${Math.round(worst.over)}% above its 3-month average.`);
+  }
+  if (!bits.length) return '';
+  return `<section class="card insight" style="margin-top:18px"><span class="insight-ic" aria-hidden="true">◆</span>
+    <p>${bits.join(' ')}</p></section>`;
+}
 async function viewDashboard(el) {
   const members = await api('/family/members');
   el.innerHTML = `<div class="pagehead">
@@ -1136,10 +1183,11 @@ async function viewDashboard(el) {
   const userQ = DASH_VIEW === 'all' ? '' : `&user=${DASH_VIEW}`;
   // the KPI tiles follow the period selector, but a trend chart of ONE bar teaches nothing —
   // so the history chart always pulls a rolling 12 months, whatever the tiles are showing
-  const [reminders, stats, trend12, budgets, rent, savings] = await Promise.all([
+  const [reminders, stats, trend12, budgets, rent, savings, suggest] = await Promise.all([
     api(`/reminders?days=60${userQ}`), api(`/stats?months=${DASH_MONTHS}${userQ}`),
     DASH_MONTHS >= 12 ? null : api(`/stats?months=12${userQ}`).catch(() => null), api('/budgets'),
     api('/rent-status').catch(() => []), api('/savings').catch(() => ({ goals: [] })),
+    api('/budgets/suggest').catch(() => null),
   ]);
   const trendStats = trend12 || stats;
   const net = stats.income - stats.spent;
@@ -1174,6 +1222,7 @@ async function viewDashboard(el) {
       <a class="card clickcard" href="#money" data-tab="expenses"><div class="label">${tr('Spent')} · ${esc(tr(periodLabel))}</div><div class="value" data-cu="${stats.spent}">${money(stats.spent)}</div>${deltaHtml(stats.spent, stats.prev?.spent, 'up-bad')}</a>
       <div class="card"><div class="label">Left over</div><div class="value ${net < 0 ? 'neg' : ''}" data-cu="${net}">${money(net)}</div>${deltaHtml(net, (stats.prev?.income ?? 0) - (stats.prev?.spent ?? 0), 'up-good')}</div>
     </section>
+    ${dashInsight(stats, suggest, DASH_MONTHS)}
     ${rentHtml(rent)}
     <section class="grid2" style="margin-top:18px">
       <div class="card"><h3>${tr('Spending by category')} · ${esc(tr(periodLabel))}</h3><div class="chartbox"><canvas id="catChart"></canvas></div></div>
@@ -1186,12 +1235,23 @@ async function viewDashboard(el) {
         return `<div style="margin-bottom:10px"><div class="row" style="justify-content:space-between">
           <span>${esc(b.category)}</span><span class="amount muted">${money(s)} / ${money(b.amount)}</span></div>
           <div class="bar"><i class="${s > b.amount ? 'over' : ''}" style="width:${pct}%"></i></div></div>`;
-      }).join('') : `<p class="muted">No budgets set for this month yet — set them in <a href="#money">Budget & expenses</a>.</p>`}
+      }).join('') : `<p class="muted" style="margin-top:0">No budgets set for this month yet.</p>
+        ${canWrite() && suggest?.categories?.length ? `<button class="btn small" id="budgetkick">${tr('Set from my 3-month average')}</button>
+          <span class="muted" style="margin-left:8px">${tr('You can fine-tune them afterwards.')}</span>`
+        : `<p class="muted">${tr('Set them in')} <a href="#money">Budget & expenses</a>.</p>`}`}
     </section>
     ${goalsHtml(savings.goals)}
     <details class="card foldcard" style="margin-top:18px"><summary>${tr('Calendar')}</summary>
       <div id="dashcal" style="padding-top:12px"><div class="skel" style="height:220px"></div></div></details>`;
   el.querySelector('#dash').querySelectorAll('[data-tab]').forEach((a) => a.addEventListener('click', () => { PENDING_MONEY_TAB = a.dataset.tab; }));
+  el.querySelector('#budgetkick')?.addEventListener('click', async (e) => {
+    e.target.disabled = true;
+    try {
+      const r = await api('/budgets/bulk', { method: 'POST', body: { month: budgets.month, items: suggest.categories } });
+      toast(LANG === 'ro' ? `${r.saved} bugete setate din media ultimelor 3 luni` : `${r.saved} budgets set from your 3-month average`, 'success');
+      viewDashboard(el);
+    } catch (err) { e.target.disabled = false; toast(err.message, 'error'); }
+  });
   countUpAll(el.querySelector('#dash'));
   drawCharts(stats, DASH_VIEW, DASH_MONTHS, trendStats);
   renderCalendar(el.querySelector('#dashcal'), true);

@@ -750,6 +750,44 @@ app.delete('/api/budgets/:id', auth, canWrite, (req, res) => {
   db.prepare('DELETE FROM budgets WHERE id = ? AND family_id = ?').run(req.params.id, req.user.family_id);
   res.json({ ok: true });
 });
+// What each category actually costs, averaged over the last N COMPLETE months — the current month
+// is deliberately excluded, since a partial month would drag every average down. Dividing by the
+// whole window (not by the months that happened to have spending) keeps a once-a-quarter category
+// from being budgeted as if it were monthly. Feeds both the "start my budgets" button and the
+// dashboard's "this category is above its usual" line.
+const BUDGET_BASIS_MONTHS = 3;
+app.get('/api/budgets/suggest', auth, (req, res) => {
+  const n = BUDGET_BASIS_MONTHS;
+  const now = new Date();
+  const monthAt = (back) => new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - back, 1)).toISOString().slice(0, 7);
+  const from = monthAt(n), to = monthAt(1);
+  const rows = db.prepare(`
+    SELECT category, SUM(amount) AS total FROM expenses
+    WHERE family_id = ? AND substr(date,1,7) >= ? AND substr(date,1,7) <= ?
+    GROUP BY category ORDER BY total DESC
+  `).all(req.user.family_id, from, to);
+  // rounded up to the nearest 10 — a budget you are instantly over is useless
+  const categories = rows.map((r) => ({ category: r.category, avg: r.total / n, amount: Math.max(10, Math.ceil(r.total / n / 10) * 10) }));
+  res.json({ months: n, from, to, categories });
+});
+app.post('/api/budgets/bulk', auth, canWrite, (req, res) => {
+  const month = String(req.body?.month || '');
+  if (!/^\d{4}-\d{2}$/.test(month)) return res.status(400).json({ error: 'month (YYYY-MM) is required' });
+  const items = Array.isArray(req.body?.items) ? req.body.items : [];
+  const ins = db.prepare(`
+    INSERT INTO budgets (family_id, category, month, amount) VALUES (?,?,?,?)
+    ON CONFLICT(family_id, category, month) DO UPDATE SET amount = excluded.amount
+  `);
+  let saved = 0;
+  db.transaction(() => {
+    for (const it of items) {
+      if (!EXPENSE_CATEGORIES.includes(String(it?.category)) || !(Number(it?.amount) >= 0)) continue;
+      ins.run(req.user.family_id, String(it.category), month, Number(it.amount));
+      saved++;
+    }
+  })();
+  res.json({ ok: true, saved });
+});
 
 // ---------- credits (loans) ----------
 // Monthly payment from the annuity formula; anticipated payments keep the payment

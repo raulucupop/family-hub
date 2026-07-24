@@ -526,6 +526,12 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { box-shadow: 
 /* action button mid-"✓ Sent" confirmation */
 .btn.sent { background: var(--ok) !important; color: #fff !important; border-color: var(--ok) !important; }
 
+/* ---------- dashboard insight line ---------- */
+.insight { display: flex; gap: 11px; align-items: flex-start; border-left: 3px solid var(--accent); }
+.insight .insight-ic { color: var(--accent); font-size: 13px; line-height: 1.7; flex-shrink: 0; }
+.insight p { margin: 0; font-size: 14px; line-height: 1.65; }
+.insight b { font-weight: 600; }
+
 /* ---------- quick search palette (Ctrl+K) ---------- */
 .modalwrap .modalcard.wide { max-width: 560px; }
 .qsitem {
