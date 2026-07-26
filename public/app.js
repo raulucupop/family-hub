@@ -261,6 +261,9 @@ const RO = {
   'Open': 'Deschis', 'Fixed': 'Rezolvat', 'Mark fixed': 'Marchează rezolvat',
   'No maintenance requests yet.': 'Nicio cerere de reparație încă.', 'Nothing reported by the tenant.': 'Nimic raportat de chiriaș.',
   'Request sent — the owner has been notified': 'Cerere trimisă — proprietarul a fost anunțat',
+  'Reopened': 'Redeschis', 'Not fixed — reopen': 'Nu e reparat — redeschide',
+  'What is still not fixed?': 'Ce nu e reparat încă?',
+  'Reopened — the owner has been notified': 'Redeschis — proprietarul a fost anunțat',
   'Delete this maintenance request?': 'Ștergi această cerere de reparație?',
   'Nothing to pay yet': 'Nimic de plată încă', 'Rent and shared invoices from your landlord will appear here.': 'Chiria și facturile trimise de proprietar vor apărea aici.',
   'Pay with Revolut:': 'Plătește cu Revolut:',
@@ -1043,15 +1046,28 @@ function tenantMaintenanceView(el, data) {
     ${(data.maintenance || []).length ? `<table><thead><tr><th>Sent</th><th>What</th><th>Photo</th><th>Status</th></tr></thead><tbody>
       ${data.maintenance.map((m) => `<tr>
         <td>${fdate(m.created_at?.slice(0, 10))}</td>
-        <td><b>${esc(m.title)}</b>${m.note ? `<br><span class="muted">${esc(m.note)}</span>` : ''}</td>
+        <td><b>${esc(m.title)}</b>${m.note ? `<br><span class="muted">${esc(m.note)}</span>` : ''}${
+          m.reopen_note ? `<br><span class="muted">↻ ${tr('Reopened')}: ${esc(m.reopen_note)}</span>` : ''}</td>
         <td>${m.photo ? `<a href="/api/tenant/maintenance/${m.id}/photo" target="_blank">photo</a>` : '<span class="muted">—</span>'}</td>
-        <td>${m.status === 'done' ? `<span class="badge paid">${tr('Fixed')}${m.resolved_at ? ' ' + fdate(m.resolved_at) : ''}</span>` : `<span class="badge unpaid">${tr('Open')}</span>`}</td>
+        <td>${m.status === 'done'
+          ? `<span class="badge paid">${tr('Fixed')}${m.resolved_at ? ' ' + fdate(m.resolved_at) : ''}</span>
+             <div style="margin-top:6px"><button class="btn ghost tiny" data-mreopen="${m.id}" data-title="${esc(m.title)}">${tr('Not fixed — reopen')}</button></div>`
+          : `<span class="badge unpaid">${tr('Open')}</span>`}</td>
       </tr>`).join('')}</tbody></table>` : `<p class="muted" style="margin-bottom:0">No maintenance requests yet.</p>`}
     ${(data.maintenance || []).some((m) => m.status !== 'done') ? `<div class="row" style="align-items:center;margin-top:12px">
       <button class="btn ghost small" data-remindowner>${tr('Remind the owner')}</button>
       <span class="muted">${tr('Still waiting to be fixed? Give the owner a nudge.')}</span></div>` : ''}
     </div>`;
   wireRemindOwner(el);
+  el.querySelectorAll('[data-mreopen]').forEach((b) => (b.onclick = async () => {
+    // an optional line telling the owner what is still wrong; blank is fine, Cancel aborts
+    const note = prompt(tr('What is still not fixed?') + '\n(' + tr('optional') + ')', '');
+    if (note === null) return; // cancelled
+    try {
+      await api(`/tenant/maintenance/${b.dataset.mreopen}/reopen`, { method: 'POST', body: { note: note.trim() } });
+      toast(tr('Reopened — the owner has been notified'), 'success'); renderTenantPortal();
+    } catch (err) { toast(err.message, 'error'); }
+  }));
   $('#mreqform').onsubmit = async (e) => {
     e.preventDefault();
     const fd0 = new FormData(e.target);
@@ -2284,7 +2300,8 @@ async function renderTenantBox(box, p) {
     ${maint.length ? `<table><thead><tr><th>Reported</th><th>What</th><th>Photo</th><th>Status</th><th></th></tr></thead><tbody>
       ${maint.map((m) => `<tr style="${m.status === 'done' ? 'opacity:.6' : ''}">
         <td>${fdate(m.created_at?.slice(0, 10))}<br><span class="muted">${esc(m.reported_by || '')}</span></td>
-        <td><b>${esc(m.title)}</b>${m.note ? `<br><span class="muted">${esc(m.note)}</span>` : ''}</td>
+        <td><b>${esc(m.title)}</b>${m.note ? `<br><span class="muted">${esc(m.note)}</span>` : ''}${
+          m.reopened_at ? `<br><span class="badge late" style="margin-top:4px">↻ ${tr('Reopened')} ${fdate(m.reopened_at)}</span>${m.reopen_note ? ` <span class="muted">${esc(m.reopen_note)}</span>` : ''}` : ''}</td>
         <td>${m.photo ? `<a href="/api/properties/${p.id}/maintenance/${m.id}/photo" target="_blank">photo</a>` : '<span class="muted">—</span>'}</td>
         <td>${m.status === 'done' ? `<span class="badge paid">${tr('Fixed')}${m.resolved_at ? ' ' + fdate(m.resolved_at) : ''}</span>` : `<span class="badge unpaid">${tr('Open')}</span>`}</td>
         <td class="right"><span class="rowacts">${canWrite() ? `<button class="btn ${m.status === 'done' ? 'ghost ' : ''}small" data-mdone="${m.id}">${m.status === 'done' ? 'Reopen' : tr('Mark fixed')}</button>

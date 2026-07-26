@@ -256,7 +256,9 @@ CREATE TABLE IF NOT EXISTS maintenance_requests (
   photo TEXT,                -- uploaded filename
   status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','done')),
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  resolved_at TEXT
+  resolved_at TEXT,
+  reopened_at TEXT,   -- set when the tenant reopens a ticket the owner had marked done
+  reopen_note TEXT    -- what the tenant says is still wrong, so the owner knows why it came back
 );
 CREATE INDEX IF NOT EXISTS idx_maintenance_property ON maintenance_requests(property_id);
 
@@ -451,6 +453,10 @@ if (!savCols.includes('goal_id')) db.exec('ALTER TABLE savings ADD COLUMN goal_i
 
 const tcCols = db.prepare('PRAGMA table_info(tenant_charges)').all().map((c) => c.name);
 if (!tcCols.includes('attachment')) db.exec('ALTER TABLE tenant_charges ADD COLUMN attachment TEXT');
+
+const maintCols = db.prepare('PRAGMA table_info(maintenance_requests)').all().map((c) => c.name);
+if (!maintCols.includes('reopened_at')) db.exec('ALTER TABLE maintenance_requests ADD COLUMN reopened_at TEXT');
+if (!maintCols.includes('reopen_note')) db.exec('ALTER TABLE maintenance_requests ADD COLUMN reopen_note TEXT');
 
 const propCols3 = db.prepare('PRAGMA table_info(properties)').all().map((c) => c.name);
 if (!propCols3.includes('reading_day')) db.exec('ALTER TABLE properties ADD COLUMN reading_day INTEGER');

@@ -1700,7 +1700,7 @@ app.get('/api/tenant/charges', auth, (req, res) => {
   ensureMeterRequests(prop);
   const charges = db.prepare("SELECT id, type, title, amount, due_date, status, marked_paid_at, confirmed_at, attachment, note FROM tenant_charges WHERE property_id = ? ORDER BY (status = 'paid'), due_date DESC, id DESC").all(prop.id);
   const meters = db.prepare("SELECT id, utility, status, reading, provided_at, requested_at FROM meter_requests WHERE property_id = ? ORDER BY (status = 'done'), id DESC LIMIT 20").all(prop.id);
-  const maintenance = db.prepare("SELECT id, title, note, photo, status, created_at, resolved_at FROM maintenance_requests WHERE property_id = ? ORDER BY (status = 'done'), id DESC LIMIT 20").all(prop.id);
+  const maintenance = db.prepare("SELECT id, title, note, photo, status, created_at, resolved_at, reopened_at, reopen_note FROM maintenance_requests WHERE property_id = ? ORDER BY (status = 'done'), id DESC LIMIT 20").all(prop.id);
   const fam = db.prepare('SELECT currency FROM families WHERE id = ?').get(prop.family_id);
   res.json({ property: { name: prop.name, address: prop.address, payment_link: prop.payment_link, currency: fam?.currency || 'RON' }, charges, meters, maintenance });
 });
@@ -1778,6 +1778,26 @@ app.get('/api/tenant/maintenance/:rid/photo', auth, (req, res) => {
   const row = db.prepare('SELECT * FROM maintenance_requests WHERE id = ? AND property_id = ?').get(req.params.rid, req.user.tenant_property_id);
   if (!row || !row.photo) return res.status(404).json({ error: 'No photo' });
   res.sendFile(path.join(UPLOAD_DIR, row.photo));
+});
+// the owner marked it done but it is not actually fixed — the tenant reopens the SAME ticket rather
+// than filing a fresh one, so the history and photo stay attached to the original report
+app.post('/api/tenant/maintenance/:rid/reopen', auth, (req, res) => {
+  if (req.user.role !== 'tenant') return res.status(403).json({ error: 'Tenant accounts only' });
+  const prop = tenantProp(req);
+  const row = prop && db.prepare("SELECT * FROM maintenance_requests WHERE id = ? AND property_id = ? AND status = 'done'").get(req.params.rid, prop.id);
+  if (!row) return res.status(404).json({ error: 'Request not found or not marked as fixed' });
+  const note = str(req.body?.note);
+  db.prepare("UPDATE maintenance_requests SET status = 'open', resolved_at = NULL, reopened_at = ?, reopen_note = ? WHERE id = ?")
+    .run(new Date().toISOString().slice(0, 10), note || null, row.id);
+  notifyOwners(prop, `Maintenance reopened — ${prop.name}`,
+    `Hello,\n\n${req.user.name} reopened a report at ${prop.name} — it is not actually fixed:\n\n- ${row.title}${note ? `\n\n"${note}"` : ''}\n\nOpen Family Hub to see it:\n${siteBase()}/#properties\n`,
+    `${req.user.name} reopened: ${row.title}`,
+    { html: htmlEmail(`<p>Hello,</p><p><b>${htmlEsc(req.user.name)}</b> reopened a report at <b>${htmlEsc(prop.name)}</b> — it is not actually fixed:</p>
+      <div style="margin:14px 0;padding:12px 14px;background:#eff2f1;border-radius:8px;">
+        <b>${htmlEsc(row.title)}</b>${note ? `<br><span style="color:#45565f">${htmlEsc(note)}</span>` : ''}
+      </div>
+      <p>${htmlButton(`${siteBase()}/#properties`, 'Open Properties')}</p>`) });
+  res.json({ ok: true });
 });
 // tenant nudges the owner about anything waiting on THEM: payments marked paid but not yet
 // confirmed, and maintenance still open. Owner-facing, so English + a push (respects the owner's
