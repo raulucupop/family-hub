@@ -2285,7 +2285,7 @@ async function renderTenantBox(box, p) {
         </tr>`;
       }).join('')}</tbody></table>` : `<p class="muted">Nothing shared with the tenant yet.</p>`}
     <h3 style="margin-top:16px">Meter readings</h3>
-    <p class="muted">${p.reading_day && p.reading_utilities ? `${tr('Scheduled:')} ${esc(p.reading_utilities)} ${tr('on day')} ${p.reading_day} ${tr('of every month (tenant gets an email).')}` : tr('No monthly schedule yet — set the day and meters below, or request a reading now.')}</p>
+    <p class="muted">${p.reading_day && p.reading_utilities ? `${tr('Scheduled:')} ${p.reading_utilities.split(',').map((u) => esc(tr(u[0].toUpperCase() + u.slice(1)))).join(', ')} ${tr('on day')} ${p.reading_day} ${tr('of every month (tenant gets an email).')}` : tr('No monthly schedule yet — set the day and meters below, or request a reading now.')}</p>
     ${canWrite() ? `<form data-schedform class="row" style="flex-wrap:wrap;align-items:flex-end;gap:8px;margin-bottom:6px">
       <div><label>${tr('Meter reading day (1-31)')}</label><input name="reading_day" type="number" min="1" max="31" value="${p.reading_day ?? ''}" style="max-width:120px"></div>
       <div><label>${tr('Meters to read monthly')}</label><select name="reading_utilities" style="max-width:230px">
