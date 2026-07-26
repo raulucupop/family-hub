@@ -241,8 +241,8 @@ const RO = {
   'What': 'Ce', 'pending — tenant marked paid': 'în așteptare — chiriașul a marcat plătit', 'Confirm paid': 'Confirmă plata', 'Reject': 'Respinge',
   'Nothing shared with the tenant yet.': 'Nimic trimis chiriașului încă.', 'Meter readings': 'Citiri contoare',
   'Scheduled:': 'Programat:', 'of every month (tenant gets an email).': 'a fiecărei luni (chiriașul primește email).',
-  'No monthly schedule — set "Meter reading day" and the meters via': 'Fără program lunar — setează „Ziua citirii contoarelor” și contoarele din',
-  ', or request one now.': 'sau cere una acum.', 'Request now:': 'Cere acum:',
+  'No monthly schedule yet — set the day and meters below, or request a reading now.': 'Fără program lunar încă — setează ziua și contoarele mai jos, sau cere o citire acum.',
+  'Request now:': 'Cere acum:',
   'Requested': 'Cerut', 'Reading': 'Citire', 'received': 'primit', 'No reading requests yet.': 'Nicio cerere de citire încă.',
   'Tenant code generated': 'Cod de chiriaș generat', 'Remove this tenant? Their account will be deleted.': 'Elimini acest chiriaș? Contul lui va fi șters.',
   'Shared with tenant': 'Trimis chiriașului', 'Reading requested — tenant notified': 'Citire cerută — chiriașul a fost notificat',
@@ -2285,7 +2285,13 @@ async function renderTenantBox(box, p) {
         </tr>`;
       }).join('')}</tbody></table>` : `<p class="muted">Nothing shared with the tenant yet.</p>`}
     <h3 style="margin-top:16px">Meter readings</h3>
-    <p class="muted">${p.reading_day && p.reading_utilities ? `${tr('Scheduled:')} ${esc(p.reading_utilities)} ${tr('on day')} ${p.reading_day} ${tr('of every month (tenant gets an email).')}` : 'No monthly schedule — set "Meter reading day" and the meters via <b>Edit</b>, or request one now.'}</p>
+    <p class="muted">${p.reading_day && p.reading_utilities ? `${tr('Scheduled:')} ${esc(p.reading_utilities)} ${tr('on day')} ${p.reading_day} ${tr('of every month (tenant gets an email).')}` : tr('No monthly schedule yet — set the day and meters below, or request a reading now.')}</p>
+    ${canWrite() ? `<form data-schedform class="row" style="flex-wrap:wrap;align-items:flex-end;gap:8px;margin-bottom:6px">
+      <div><label>${tr('Meter reading day (1-31)')}</label><input name="reading_day" type="number" min="1" max="31" value="${p.reading_day ?? ''}" style="max-width:120px"></div>
+      <div><label>${tr('Meters to read monthly')}</label><select name="reading_utilities" style="max-width:230px">
+        ${[['', '— none —'], ['electricity', 'Electricity'], ['gas', 'Gas'], ['water', 'Water'], ['electricity,gas', 'Electricity + gas'], ['electricity,gas,water', 'Electricity + gas + water']]
+          .map(([v, l]) => `<option value="${v}" ${(p.reading_utilities || '') === v ? 'selected' : ''}>${tr(l)}</option>`).join('')}</select></div>
+      <button class="btn small">${tr('Save')}</button></form>` : ''}
     ${canWrite() && tinfo.tenants.length ? `<p class="row">Request now:
       ${['electricity', 'gas', 'water'].map((u) => `<button class="btn ghost small" data-meterreq="${u}">${u[0].toUpperCase() + u.slice(1)}</button>`).join('')}</p>` : ''}
     ${meters.length ? `<table><thead><tr><th>Requested</th><th>Utility</th><th>Status</th><th>Reading</th><th></th></tr></thead><tbody>
@@ -2317,6 +2323,20 @@ async function renderTenantBox(box, p) {
         rent_due_day: Number(f.rent_due_day) || 1,
       } });
       Object.assign(p, updated); // keep the card's copy in step so the reload shows the new rent
+      toast('Saved', 'success'); reload();
+    } catch (err) { toast(err.message, 'error'); }
+  });
+  // the meter schedule used to be editable only from the property's Edit form; the Tenants page
+  // reuses this panel without that button, so it's set here directly
+  box.querySelector('[data-schedform]')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const f = Object.fromEntries(new FormData(e.target));
+    try {
+      const updated = await api(`/properties/${p.id}`, { method: 'PUT', body: {
+        reading_day: f.reading_day === '' ? null : Number(f.reading_day),
+        reading_utilities: f.reading_utilities || null,
+      } });
+      Object.assign(p, updated);
       toast('Saved', 'success'); reload();
     } catch (err) { toast(err.message, 'error'); }
   });
