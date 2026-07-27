@@ -612,8 +612,13 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { box-shadow: 
 .rowmenu-item:hover { background: var(--accent-soft); color: var(--accent); }
 .rowmenu-item.danger { color: var(--red); }
 .rowmenu-item.danger:hover { background: var(--red-soft); color: var(--red); }
-/* in the phone card layout the row is a block, so anchor the menu to the card's right edge */
-@media (max-width: 860px) { table.cards td .rowmenu { display: inline-block; } }
+/* In the phone card layout the ⋯ button sits at the card's LEFT edge, so anchoring the popup to
+   its right pushed the whole 152px menu off-screen (left: -74px on a 375px phone) and its labels
+   were unreadable. Open it rightward from the button instead. */
+@media (max-width: 860px) {
+  table.cards td .rowmenu { display: inline-block; }
+  table.cards td .rowmenu-pop { left: 0; right: auto; }
+}
 
 /* ---------- deadline chips on a closed vehicle/property row ---------- */
 .dchips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
