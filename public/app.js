@@ -6,6 +6,22 @@ const app = $('#app');
 let ME = null, FAMILY = null;
 const CATEGORIES = ['Groceries', 'Utilities', 'Transportation', 'Entertainment', 'Healthcare', 'Education', 'Taxes', 'Credit', 'Subscriptions', 'Other'];
 const BILL_CATS = { electricity: 'Electricity', gas: 'Gas', internet: 'Internet', mobile: 'Mobile', water: 'Water', subscription: 'Subscription', property_tax: 'Property tax', other: 'Other' };
+// one stable colour per category, keyed by position in CATEGORIES, so a category reads as the same
+// colour everywhere — the dashboard donut and the expense-list dots. Two palettes: the donut/dots
+// pick the theme-matched one at render time. (Same values the donut already used.)
+const CAT_PALETTE_LIGHT = ['#2f6b5a', '#c98a2d', '#5b7fa6', '#b23a2e', '#7c5ba6', '#3e7c4f', '#8a6d3b', '#45565f', '#a0522d', '#4a8fb0'];
+const CAT_PALETTE_DARK = ['#57b394', '#e0a13d', '#7ea6cf', '#e06a5c', '#a98fce', '#5fae6f', '#c3a06a', '#9db0a9', '#cf8a5f', '#79b3cf'];
+function catColor(category) {
+  const pal = document.documentElement.dataset.theme === 'dark' ? CAT_PALETTE_DARK : CAT_PALETTE_LIGHT;
+  const i = CATEGORIES.indexOf(category);
+  return pal[(i < 0 ? CATEGORIES.length - 1 : i) % pal.length]; // unknown -> the 'Other' colour
+}
+// a small coloured initial + name, so "who paid" is scannable in a dense list
+function whoChip(name) {
+  const n = (name || '').trim();
+  if (!n) return '<span class="muted">—</span>';
+  return `<span class="who"><span class="who-av avatar-fallback" style="--avh:${avatarHue(n)}">${esc(n.charAt(0).toUpperCase())}</span>${esc(n)}</span>`;
+}
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -1367,10 +1383,6 @@ async function drawCharts(stats, scopeView = 'all', scopeMonths = 1, trendStats 
   const mono = "'IBM Plex Mono', ui-monospace, monospace";
   // legend chips as small dots, matching the pill/badge language elsewhere
   const legendDots = { labels: { usePointStyle: true, pointStyle: 'circle', boxWidth: 8, padding: 14 } };
-  // brighter category palette on the dark card so the slices don't go muddy
-  const colors = dark
-    ? ['#57b394', '#e0a13d', '#7ea6cf', '#e06a5c', '#a98fce', '#5fae6f', '#c3a06a', '#9db0a9', '#cf8a5f', '#79b3cf']
-    : ['#2f6b5a', '#c98a2d', '#5b7fa6', '#b23a2e', '#7c5ba6', '#3e7c4f', '#8a6d3b', '#45565f', '#a0522d', '#4a8fb0'];
   // clicking a category slice opens Expenses filtered to that category, keeping the dashboard's scope
   const drillTo = (cat) => {
     PENDING_MONEY_TAB = 'expenses';
@@ -1381,14 +1393,14 @@ async function drawCharts(stats, scopeView = 'all', scopeMonths = 1, trendStats 
   const cats = stats.byCategory.map((c) => c.category); // untranslated keys for the drill-down filter
   if (cc && stats.byCategory.length) { catChart = new Chart(cc, {
     type: 'doughnut',
-    data: { labels: cats.map(tr), datasets: [{ data: stats.byCategory.map((c) => c.total), backgroundColor: colors, borderColor: cardBg, borderWidth: 2, hoverOffset: 6 }] },
+    data: { labels: cats.map(tr), datasets: [{ data: stats.byCategory.map((c) => c.total), backgroundColor: cats.map(catColor), borderColor: cardBg, borderWidth: 2, hoverOffset: 6 }] },
     options: {
       maintainAspectRatio: false, cutout: '62%',
       plugins: { legend: { position: 'right', ...legendDots, onClick: (e, item) => drillTo(cats[item.index]) } },
       onClick: (e, els) => { if (els.length) drillTo(cats[els[0].index]); },
     },
   }); cc.style.cursor = 'pointer'; }
-  else if (cc) cc.replaceWith(Object.assign(document.createElement('p'), { className: 'muted', textContent: tr('No expenses this month yet.') }));
+  else if (cc) cc.replaceWith(Object.assign(document.createElement('div'), { className: 'empty', innerHTML: `<b>${tr('No expenses this month yet.')}</b>` }));
   const months = [...new Set([...trendStats.trend.map((t) => t.m), ...trendStats.incomeTrend.map((t) => t.m)])].sort();
   const tc = $('#trendChart'); if (tc && months.length) new Chart(tc, {
     type: 'bar',
@@ -1408,7 +1420,7 @@ async function drawCharts(stats, scopeView = 'all', scopeMonths = 1, trendStats 
       },
     },
   });
-  else if (tc) tc.replaceWith(Object.assign(document.createElement('p'), { className: 'muted', textContent: tr('History appears once you log expenses.') }));
+  else if (tc) tc.replaceWith(Object.assign(document.createElement('div'), { className: 'empty', innerHTML: `<b>${tr('History appears once you log expenses.')}</b>` }));
 }
 
 /* ---------- calendar ---------- */
@@ -1518,6 +1530,11 @@ async function moneyExpenses(body, f = {}) {
     (flt.cat === 'all' || e.category === flt.cat) &&
     (!q || (e.note || '').toLowerCase().includes(q) || e.category.toLowerCase().includes(q)));
   const total = rows.reduce((s, e) => s + e.amount, 0);
+  // top categories in the current view — the breakdown that otherwise only lives in the dashboard donut
+  const byCat = Object.entries(rows.reduce((m, e) => ((m[e.category] = (m[e.category] || 0) + e.amount), m), {}))
+    .sort((a, b) => b[1] - a[1]);
+  const subtotals = (byCat.length > 1 && total > 0) ? `<div class="catstrip">${byCat.slice(0, 6).map(([c, amt]) =>
+    `<button class="catpill" data-catjump="${esc(c)}" style="--cat:${catColor(c)}"><span class="catdot"></span>${esc(tr(c))}<b>${money(amt)}</b><span class="muted">${Math.round((amt / total) * 100)}%</span></button>`).join('')}</div>` : '';
   const reload = (patch) => moneyExpenses(body, { ...flt, ...patch });
   body.innerHTML = `
     ${canWrite() ? addBox('Add expense', `<form id="expform" class="formgrid">
@@ -1550,11 +1567,14 @@ async function moneyExpenses(body, f = {}) {
         <button class="btn ghost small" id="allmonths">${flt.month === 'all' ? '● All time' : 'All time'}</button>
         <input id="qfilter" type="search" placeholder="Search note…" value="${esc(flt.q)}" style="width:180px">
       </div>
-      ${rows.length ? `<table class="cards"><thead><tr><th>Date</th><th>Category</th><th>By</th><th>Note</th><th class="right">Amount</th><th></th></tr></thead><tbody>
+      ${subtotals}
+      ${rows.length ? `<table class="cards"><thead><tr><th>${tr('Date')}</th><th>${tr('Category')}</th><th>${tr('By')}</th><th>${tr('Note')}</th><th class="right">${tr('Amount')}</th><th></th></tr></thead><tbody>
         ${rows.map((e) => { const link = e.property_name ? `⌂ ${esc(e.property_name)}` : e.vehicle_name ? `⛟ ${esc(e.vehicle_name)}` : ''; return `<tr>
-          <td data-label="Date">${fdate(e.date)}</td><td data-label="Category">${esc(e.category)}</td><td data-label="By">${esc(mname[e.user_id] || '—')}</td>
-          <td data-label="Note">${esc(e.note || '')}${link ? `${e.note ? ' · ' : ''}<span class="muted">${link}</span>` : ''}</td>
-          <td class="right amount" data-label="Amount">${money(e.amount)}</td>
+          <td data-label="${tr('Date')}">${fdate(e.date)}</td>
+          <td data-label="${tr('Category')}"><span class="catcell"><span class="catdot" style="--cat:${catColor(e.category)}"></span>${esc(e.category)}</span></td>
+          <td data-label="${tr('By')}">${whoChip(mname[e.user_id])}</td>
+          <td data-label="${tr('Note')}">${esc(e.note || '')}${link ? `${e.note ? ' · ' : ''}<span class="muted">${link}</span>` : ''}</td>
+          <td class="right amount" data-label="${tr('Amount')}">${money(e.amount)}</td>
           <td class="right">${canWrite() ? rowMenu([
             [tr('Edit'), `data-edit="${e.id}"`],
             [tr('Delete'), `data-del="${e.id}"`, true],
@@ -1566,6 +1586,8 @@ async function moneyExpenses(body, f = {}) {
   $('#allmonths').onclick = () => reload({ month: flt.month === 'all' ? thisMonth() : 'all' });
   $('#wfilter').onchange = (e) => reload({ who: e.target.value });
   $('#cfilter').onchange = (e) => reload({ cat: e.target.value });
+  // a subtotal pill toggles that category filter (click again to clear)
+  body.querySelectorAll('[data-catjump]').forEach((b) => (b.onclick = () => reload({ cat: flt.cat === b.dataset.catjump ? 'all' : b.dataset.catjump })));
   const qEl = $('#qfilter');
   qEl.oninput = () => { clearTimeout(qEl._h); qEl._h = setTimeout(() => reload({ q: qEl.value }), 250); };
   $('#expform')?.addEventListener('submit', async (e) => {
@@ -2032,11 +2054,11 @@ async function viewBills(el) {
         const late = b.status === 'unpaid' && b.due_date < t;
         return `<tr>
           <td><b>${esc(b.name)}</b><br><span class="muted">${esc(b.provider || tr(BILL_CATS[b.category]) || '')}${recurValue(b) === '0' ? '' : ` · ${tr(recurLabel(b))}`}${b.auto_pay ? (LANG === 'ro' ? ' · plată automată' : ' · auto-pay') : ''}${b.expense_category ? ` · ${tr(b.expense_category)}` : ''}${b.property_name ? ` · ⌂ ${esc(b.property_name)}` : ''}${b.vehicle_name ? ` · ⛟ ${esc(b.vehicle_name)}` : ''}</span></td>
-          <td data-label="Owner">${esc(b.owner_name || 'Family')}</td>
-          <td data-label="Due">${fdate(b.due_date)}</td>
-          <td class="right amount" data-label="Amount">${money(b.amount)}</td>
-          <td data-label="Status"><span class="badge ${late ? 'late' : b.status}">${tr(late ? 'overdue' : b.status)}</span></td>
-          <td data-label="Invoice">${b.attachment ? `<a href="/api/bills/${b.id}/attachment" target="_blank">view</a>` : canWrite() ? `<label class="btn ghost small" style="display:inline-block">attach<input type="file" data-attach="${b.id}" accept=".pdf,image/*" hidden></label>` : '—'}</td>
+          <td data-label="${tr('Owner')}">${esc(b.owner_name || 'Family')}</td>
+          <td data-label="${tr('Due')}">${fdate(b.due_date)}</td>
+          <td class="right amount" data-label="${tr('Amount')}">${money(b.amount)}</td>
+          <td data-label="${tr('Status')}"><span class="badge ${late ? 'late' : b.status}">${tr(late ? 'overdue' : b.status)}</span></td>
+          <td data-label="${tr('Invoice')}">${b.attachment ? `<a href="/api/bills/${b.id}/attachment" target="_blank">view</a>` : canWrite() ? `<label class="btn ghost small" style="display:inline-block">attach<input type="file" data-attach="${b.id}" accept=".pdf,image/*" hidden></label>` : '—'}</td>
           <td class="right"><span class="rowacts">${canWrite() ? `
             ${b.status === 'unpaid' ? `<button class="btn small" data-pay="${b.id}" data-amt="${b.amount ?? ''}">Mark paid</button>` : ''}
             ${rowMenu([
@@ -2816,10 +2838,10 @@ async function viewSearch(el) {
     if (!results.length) { box.innerHTML = `<div class="empty"><b>Nothing found</b>No match for "${esc(q)}".</div>`; return; }
     box.innerHTML = `<p class="muted">${results.length} ${tr(results.length === 1 ? 'result' : 'results')}</p>
       <table class="cards"><tbody>${results.map((r) => `<tr>
-        <td data-label="Type"><span class="badge role">${tr(SEARCH_KINDS[r.kind] || r.kind)}</span></td>
+        <td data-label="${tr('Type')}"><span class="badge role">${tr(SEARCH_KINDS[r.kind] || r.kind)}</span></td>
         <td><b>${esc(r.title || '')}</b>${r.sub ? `<br><span class="muted">${esc(r.sub)}</span>` : ''}</td>
-        <td data-label="Date">${r.date ? fdate(r.date) : ''}</td>
-        <td class="right amount" data-label="Amount">${r.amount != null ? money(r.amount) : ''}</td>
+        <td data-label="${tr('Date')}">${r.date ? fdate(r.date) : ''}</td>
+        <td class="right amount" data-label="${tr('Amount')}">${r.amount != null ? money(r.amount) : ''}</td>
         <td class="right"><a class="btn ghost small" href="#${r.tab}" data-go="${r.kind}">${tr('View')}</a></td>
       </tr>`).join('')}</tbody></table>`;
     // an expense result lands on the Expenses tab already filtered to what was searched

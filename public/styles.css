@@ -136,6 +136,24 @@ td.right, th.right { text-align: right; }
 .meterrow .mname { min-width: 96px; }
 .meterrow input[type=number] { max-width: 78px; }
 .meterrow input:disabled { opacity: .4; }
+
+/* category colour dot (expense list) — colour comes from --cat, set per row */
+.catcell { display: inline-flex; align-items: center; gap: 7px; }
+.catdot { width: 9px; height: 9px; border-radius: 50%; background: var(--cat, var(--ink-soft)); flex: none; }
+/* who-paid chip: small hue-tinted initial + name */
+.who { display: inline-flex; align-items: center; gap: 6px; }
+.who-av { width: 20px; height: 20px; border-radius: 50%; font-size: 11px; font-weight: 700; flex: none; }
+/* top-categories strip above the expenses table */
+.catstrip { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 14px; }
+.catpill {
+  display: inline-flex; align-items: center; gap: 7px; padding: 5px 12px; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--card); color: var(--ink); font-size: 13px; cursor: pointer;
+  transition: border-color var(--ease, .2s), box-shadow var(--ease, .2s), transform var(--ease, .2s);
+}
+.catpill:hover { border-color: var(--cat); box-shadow: var(--shadow-sm); transform: translateY(-1px); }
+.catpill b { font-family: var(--mono); font-weight: 500; }
+.catpill .catdot { width: 8px; height: 8px; }
+.catpill .muted { font-size: 12px; }
 .btn.danger { background: transparent; color: var(--red); border: 1px solid var(--red-soft); }
 .btn.danger:hover { background: var(--red-soft); }
 /* row action buttons (Mark paid / Edit / History / Delete): a flex row so the gaps are
@@ -215,7 +233,8 @@ details.entity { border: 1px solid var(--line); border-radius: 12px; background:
 .avatar { width: 34px; height: 34px; border-radius: 50%; object-fit: cover; background: var(--accent-soft); flex-shrink: 0; }
 .avatar-lg { width: 72px; height: 72px; border-radius: 50%; object-fit: cover; background: var(--accent-soft); }
 .avatar-fallback { display: inline-flex; align-items: center; justify-content: center; font-family: var(--display); font-weight: 700; color: var(--accent); background: var(--accent-soft); }
-.clickcard { cursor: pointer; transition: border-color .12s; }
+/* KPI cards are <a> links; kill the default underline/link colour so the numbers don't read as links */
+.clickcard { cursor: pointer; transition: border-color .12s; text-decoration: none; color: inherit; }
 .clickcard:hover { border-color: var(--accent); }
 details.entity > summary { list-style: none; cursor: pointer; padding: 14px 18px; display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; align-items: center; }
 details.entity > summary::-webkit-details-marker { display: none; }
@@ -386,11 +405,14 @@ details.foldcard[open] > summary::after { transform: rotate(180deg); }
   table.cards tr { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; }
   table.cards tr:last-child { margin-bottom: 0; }
   table.cards td { border: 0; padding: 2px 0; text-align: left; }
-  /* the header each cell lost with thead, put back in front of its value */
+  /* label:value on one line, value pushed to the right so a card reads as a tidy key/value list
+     instead of a stack of stray words */
+  table.cards td[data-label] { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 3px 0; }
   table.cards td[data-label]::before {
-    content: attr(data-label); display: inline-block; min-width: 84px;
+    content: attr(data-label); flex: none;
     color: var(--ink-soft); font-size: 12px; font-weight: 600;
   }
+  table.cards td[data-label].amount { font-size: 16px; font-weight: 600; } /* the number is what you scan for */
   table.cards td:empty { display: none; }
   table.cards td .rowacts { display: flex; flex-direction: column; align-items: stretch; gap: 6px; margin-top: 8px; }
   /* an edit form opened inside a card row must not inherit the card padding twice */
