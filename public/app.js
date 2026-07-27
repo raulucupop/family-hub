@@ -1541,17 +1541,21 @@ async function moneyExpenses(body, f = {}) {
     api('/expenses'), api('/family/members'), api('/properties'), api('/vehicles'), api('/recurring-expenses')]);
   const mname = Object.fromEntries(members.map((m) => [m.id, m.name]));
   const q = flt.q.trim().toLowerCase();
-  const rows = all.filter((e) =>
+  // every filter EXCEPT category — the subtotals strip is built from this, so picking a category
+  // narrows the table without collapsing the strip to the one pill you just clicked (which would
+  // leave no way to click it again and clear)
+  const inScope = all.filter((e) =>
     (flt.month === 'all' || e.date.startsWith(flt.month)) &&
     (flt.who === 'all' || String(e.user_id) === String(flt.who)) &&
-    (flt.cat === 'all' || e.category === flt.cat) &&
     (!q || (e.note || '').toLowerCase().includes(q) || e.category.toLowerCase().includes(q)));
+  const rows = inScope.filter((e) => flt.cat === 'all' || e.category === flt.cat);
   const total = rows.reduce((s, e) => s + e.amount, 0);
   // top categories in the current view — the breakdown that otherwise only lives in the dashboard donut
-  const byCat = Object.entries(rows.reduce((m, e) => ((m[e.category] = (m[e.category] || 0) + e.amount), m), {}))
+  const scopeTotal = inScope.reduce((s, e) => s + e.amount, 0);
+  const byCat = Object.entries(inScope.reduce((m, e) => ((m[e.category] = (m[e.category] || 0) + e.amount), m), {}))
     .sort((a, b) => b[1] - a[1]);
-  const subtotals = (byCat.length > 1 && total > 0) ? `<div class="catstrip">${byCat.slice(0, 6).map(([c, amt]) =>
-    `<button class="catpill" data-catjump="${esc(c)}" style="--cat:${catColor(c)}"><span class="catdot"></span>${esc(tr(c))}<b>${money(amt)}</b><span class="muted">${Math.round((amt / total) * 100)}%</span></button>`).join('')}</div>` : '';
+  const subtotals = (byCat.length > 1 && scopeTotal > 0) ? `<div class="catstrip">${byCat.slice(0, 6).map(([c, amt]) =>
+    `<button class="catpill${flt.cat === c ? ' on' : ''}" data-catjump="${esc(c)}" style="--cat:${catColor(c)}" aria-pressed="${flt.cat === c}"><span class="catdot"></span>${esc(tr(c))}<b>${money(amt)}</b><span class="muted">${Math.round((amt / scopeTotal) * 100)}%</span></button>`).join('')}</div>` : '';
   const reload = (patch) => moneyExpenses(body, { ...flt, ...patch });
   body.innerHTML = `
     ${canWrite() ? addBox('Add expense', `<form id="expform" class="formgrid">

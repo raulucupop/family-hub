@@ -156,6 +156,8 @@ td.right, th.right { text-align: right; }
   transition: border-color var(--ease, .2s), box-shadow var(--ease, .2s), transform var(--ease, .2s);
 }
 .catpill:hover { border-color: var(--cat); box-shadow: var(--shadow-sm); transform: translateY(-1px); }
+/* the category currently filtering the table — click it again to clear */
+.catpill.on { border-color: var(--cat); box-shadow: inset 0 0 0 1px var(--cat); font-weight: 600; }
 .catpill b { font-family: var(--mono); font-weight: 500; }
 .catpill .catdot { width: 8px; height: 8px; }
 .catpill .muted { font-size: 12px; }
@@ -182,6 +184,8 @@ td.right, th.right { text-align: right; }
 .bar { height: 8px; background: var(--paper); border-radius: 999px; overflow: hidden; margin-top: 5px; }
 .bar i { display: block; height: 100%; background: var(--accent); border-radius: 999px; }
 .bar i.over { background: var(--red); }
+/* nearly at the limit — warn before it's blown, not after */
+.bar i.near { background: var(--amber); }
 /* two-tone paydown bar: regular schedule vs cleared early. The container clips the rounding, so
    the inner segments sit flush side by side. Amber marks the accelerated (in-advance) part. */
 .bar.split { display: flex; }
@@ -238,6 +242,9 @@ details.entity { border: 1px solid var(--line); border-radius: 12px; background:
 #vehlist, #proplist { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px; align-items: start; }
 #vehlist > details.entity, #proplist > details.entity { margin-bottom: 0; }
 #vehlist > details.entity[open], #proplist > details.entity[open] { grid-column: 1 / -1; }
+/* the "nothing here yet" card is not a card in the collection — it spans, rather than sitting
+   stranded at one column width on a wide screen */
+#vehlist > .empty, #proplist > .empty { grid-column: 1 / -1; }
 /* small glyph badge in front of a vehicle/property name */
 .entity-ic { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 8px; background: var(--accent-soft); color: var(--accent); font-size: 15px; margin-right: 8px; flex: none; vertical-align: middle; }
 
