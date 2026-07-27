@@ -110,6 +110,11 @@ label { display: block; font-size: 12.5px; font-weight: 600; color: var(--ink-so
 .kpi .label { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--ink-soft); font-weight: 600; }
 .kpi .value { font-family: var(--mono); font-size: 24px; margin-top: 4px; }
 .kpi .value.neg { color: var(--red); }
+/* mini trend line under a KPI number; colour comes from the wrapper (currentColor in the SVG) */
+.spark { display: block; width: 100%; height: 24px; margin-top: 10px; }
+.spark-pos { color: var(--accent); }
+.spark-neg { color: var(--red); }
+.spark polyline { opacity: .8; }
 
 /* tables */
 table { width: 100%; border-collapse: collapse; font-size: 14px; }
@@ -228,6 +233,13 @@ td.right, th.right { text-align: right; }
 .empty { text-align: center; color: var(--ink-soft); padding: 26px 10px; }
 .empty b { display: block; font-family: var(--display); font-size: 1.05rem; color: var(--ink); }
 details.entity { border: 1px solid var(--line); border-radius: 12px; background: var(--card); margin-bottom: 12px; }
+/* vehicles & properties sit 2-up on a wide screen; an opened card spans the row so its detail
+   (edit form, history, the whole tenant panel) has full width */
+#vehlist, #proplist { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px; align-items: start; }
+#vehlist > details.entity, #proplist > details.entity { margin-bottom: 0; }
+#vehlist > details.entity[open], #proplist > details.entity[open] { grid-column: 1 / -1; }
+/* small glyph badge in front of a vehicle/property name */
+.entity-ic { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 8px; background: var(--accent-soft); color: var(--accent); font-size: 15px; margin-right: 8px; flex: none; vertical-align: middle; }
 
 /* profile pictures */
 .avatar { width: 34px; height: 34px; border-radius: 50%; object-fit: cover; background: var(--accent-soft); flex-shrink: 0; }
@@ -610,6 +622,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { box-shadow: 
 /* a price that moved the right way (a subscription that got cheaper) */
 .dchip.ok { border-color: var(--ok); background: var(--accent-soft); color: var(--ok); }
 .dchip.ok b { color: var(--ok); }
+/* the exact date, kept alongside the relative countdown but visually secondary */
+.dchip-d { opacity: .7; font-size: 11px; }
 
 /* ---------- subscriptions panel on Bills ---------- */
 .card.subs summary { cursor: pointer; font-size: 13px; color: var(--accent); font-weight: 600; }

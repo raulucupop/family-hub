@@ -671,6 +671,17 @@ function addBox(title, inner, forceOpen) {
     <div class="addbody">${inner}</div></details>`;
 }
 function daysClass(d) { return d < 0 ? 'late' : d <= 14 ? 'warn' : ''; }
+// budget bar colour: green under, amber once you're near the limit (>=80%), red over it
+function budgetClass(spent, limit) { return limit > 0 && spent > limit ? 'over' : limit > 0 && spent >= limit * 0.8 ? 'near' : ''; }
+// a tiny inline-SVG trend line for the KPI cards; '' when there isn't enough history to be a line
+function sparkline(values) {
+  const v = (values || []).filter((n) => Number.isFinite(n));
+  if (v.length < 2) return '';
+  const w = 100, h = 24, max = Math.max(...v), min = Math.min(...v), span = (max - min) || 1;
+  const pts = v.map((n, i) => `${(i / (v.length - 1)) * w},${(h - 2) - ((n - min) / span) * (h - 4)}`).join(' ');
+  return `<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true">
+    <polyline points="${pts}" fill="none" stroke="currentColor" stroke-width="1.5" vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+}
 // auto-paid subscriptions take care of themselves — list them, but without the
 // amber/red "this needs you" colour that every other deadline gets
 function remClass(r) { return r.auto_pay ? '' : daysClass(r.days_left); }
@@ -1226,6 +1237,11 @@ async function viewDashboard(el) {
     api('/budgets/suggest').catch(() => null),
   ]);
   const trendStats = trend12 || stats;
+  // monthly series behind each KPI, for the sparklines under the numbers
+  const sparkMonths = [...new Set([...trendStats.trend.map((x) => x.m), ...trendStats.incomeTrend.map((x) => x.m)])].sort();
+  const spendSeries = sparkMonths.map((m) => trendStats.trend.find((x) => x.m === m)?.total || 0);
+  const incomeSeries = sparkMonths.map((m) => trendStats.incomeTrend.find((x) => x.m === m)?.total || 0);
+  const netSeries = sparkMonths.map((m, i) => incomeSeries[i] - spendSeries[i]);
   const net = stats.income - stats.spent;
   const spentMap = Object.fromEntries(budgets.spent.map((s) => [s.category, s.spent]));
   const scopeNote = DASH_VIEW === 'all' ? '' : ` <span class="muted">· ${esc((members.find((m) => String(m.id) === String(DASH_VIEW)) || {}).name || '')}</span>`;
@@ -1254,9 +1270,9 @@ async function viewDashboard(el) {
       : `<div class="card empty"><b>Nothing due soon</b>${DASH_VIEW === 'all' ? 'Add bills, vehicle or property deadlines and they will line up here.' : 'Nothing assigned to this person is coming up.'}</div>`}
     </section>
     <section class="kpi" style="margin-top:18px">
-      <a class="card clickcard" href="#money" data-tab="income"><div class="label">${tr('Income')} · ${esc(tr(periodLabel))}</div><div class="value" data-cu="${stats.income}">${money(stats.income)}</div>${deltaHtml(stats.income, stats.prev?.income, 'up-good')}</a>
-      <a class="card clickcard" href="#money" data-tab="expenses"><div class="label">${tr('Spent')} · ${esc(tr(periodLabel))}</div><div class="value" data-cu="${stats.spent}">${money(stats.spent)}</div>${deltaHtml(stats.spent, stats.prev?.spent, 'up-bad')}</a>
-      <div class="card"><div class="label">Left over</div><div class="value ${net < 0 ? 'neg' : ''}" data-cu="${net}">${money(net)}</div>${deltaHtml(net, (stats.prev?.income ?? 0) - (stats.prev?.spent ?? 0), 'up-good')}</div>
+      <a class="card clickcard" href="#money" data-tab="income"><div class="label">${tr('Income')} · ${esc(tr(periodLabel))}</div><div class="value" data-cu="${stats.income}">${money(stats.income)}</div>${deltaHtml(stats.income, stats.prev?.income, 'up-good')}<span class="spark-pos">${sparkline(incomeSeries)}</span></a>
+      <a class="card clickcard" href="#money" data-tab="expenses"><div class="label">${tr('Spent')} · ${esc(tr(periodLabel))}</div><div class="value" data-cu="${stats.spent}">${money(stats.spent)}</div>${deltaHtml(stats.spent, stats.prev?.spent, 'up-bad')}<span class="spark-neg">${sparkline(spendSeries)}</span></a>
+      <div class="card"><div class="label">Left over</div><div class="value ${net < 0 ? 'neg' : ''}" data-cu="${net}">${money(net)}</div>${deltaHtml(net, (stats.prev?.income ?? 0) - (stats.prev?.spent ?? 0), 'up-good')}<span class="spark-pos">${sparkline(netSeries)}</span></div>
     </section>
     ${dashInsight(stats, suggest, DASH_MONTHS)}
     ${rentHtml(rent)}
@@ -1268,9 +1284,10 @@ async function viewDashboard(el) {
       <h3>${tr('Budget vs actual')} · ${budgets.month}</h3>
       ${budgets.budgets.length ? budgets.budgets.map((b) => {
         const s = spentMap[b.category] || 0; const pct = Math.min(100, (s / b.amount) * 100 || 0);
+        const truePct = b.amount > 0 ? Math.round((s / b.amount) * 100) : 0;
         return `<div style="margin-bottom:10px"><div class="row" style="justify-content:space-between">
-          <span>${esc(b.category)}</span><span class="amount muted">${money(s)} / ${money(b.amount)}</span></div>
-          <div class="bar"><i class="${s > b.amount ? 'over' : ''}" style="width:${pct}%"></i></div></div>`;
+          <span>${esc(b.category)}</span><span class="amount muted">${money(s)} / ${money(b.amount)} · ${truePct}%</span></div>
+          <div class="bar"><i class="${budgetClass(s, b.amount)}" style="width:${pct}%"></i></div></div>`;
       }).join('') : `<p class="muted" style="margin-top:0">No budgets set for this month yet.</p>
         ${canWrite() && suggest?.categories?.length ? `<button class="btn small" id="budgetkick">${tr('Set from my 3-month average')}</button>
           <span class="muted" style="margin-left:8px">${tr('You can fine-tune them afterwards.')}</span>`
@@ -1701,7 +1718,8 @@ async function moneyBudgets(body, month = thisMonth()) {
         return `<tr><td>${c}</td>
           <td class="right">${canWrite() ? `<input data-cat="${c}" class="amount" type="number" step="1" min="0" value="${b ? b.amount : ''}" placeholder="—" style="width:110px;text-align:right">` : `<span class="amount">${b ? money(b.amount) : '—'}</span>`}</td>
           <td class="right amount">${money(s)}</td>
-          <td>${b ? `<div class="bar"><i class="${s > b.amount ? 'over' : ''}" style="width:${pct}%"></i></div>` : '<span class="muted">no budget</span>'}</td></tr>`;
+          <td>${b ? `<div class="bar"><i class="${budgetClass(s, b.amount)}" style="width:${pct}%"></i></div>
+            <span class="muted" style="font-size:12px">${b.amount > 0 ? Math.round((s / b.amount) * 100) : 0}%</span>` : `<span class="muted">${tr('no budget')}</span>`}</td></tr>`;
       }).join('')}</tbody></table>
       ${canWrite() ? `<div style="margin-top:12px"><button class="btn" id="saveb">Save budgets</button></div>` : ''}
     </div>`;
@@ -2133,7 +2151,7 @@ async function viewVehicles(el) {
   const list = $('#vehlist');
   const vSlots = [['', 'Not a specific deadline'], ...V_DEADLINES.map(([k, l]) => [k, l])];
   for (const v of vehicles) list.appendChild(entityCard(v, {
-    subtitle: [v.plate, `${tr('Owner')}: ${mname[v.owner_id] || tr('whole family')}`].filter(Boolean).join(' · '),
+    icon: '⛟', subtitle: [v.plate, `${tr('Owner')}: ${mname[v.owner_id] || tr('whole family')}`].filter(Boolean).join(' · '),
     deadlines: V_DEADLINES, route: 'vehicles',
     editExtra: [['owner_id', 'Owner', 'select', ownerOpts]],
     extra: (box, it) => renderEntityDocs(box, 'vehicle', it, vSlots, () => viewVehicles(el)),
@@ -2171,7 +2189,7 @@ async function viewProperties(el) {
       ...members.map((m) => [m.id, m.name]),
       ...(tenants.length ? [['tenant', `${tr('Tenant — bill to')} ${esc(tenants[0].name)}`]] : [])];
     list.appendChild(entityCard(p, {
-      subtitle: [p.address, `${tr('Owner')}: ${mname[p.owner_id] || tr('whole family')}`, p.mortgage_lender ? `${tr('Mortgage')}: ${p.mortgage_lender}, ${money(p.mortgage_payment)} ${tr('on day')} ${p.mortgage_due_day ?? '—'}` : null].filter(Boolean).join(' · '),
+      icon: '⌂', subtitle: [p.address, `${tr('Owner')}: ${mname[p.owner_id] || tr('whole family')}`, p.mortgage_lender ? `${tr('Mortgage')}: ${p.mortgage_lender}, ${money(p.mortgage_payment)} ${tr('on day')} ${p.mortgage_due_day ?? '—'}` : null].filter(Boolean).join(' · '),
       deadlines: P_DEADLINES, route: 'properties',
       // rent + meter schedule live in the always-visible Tenant panel below (renderTenantBox), not
       // here — a second editor would let a stray save wipe the per-meter reading days
@@ -2486,9 +2504,10 @@ function entityCard(item, cfg) {
     .filter(([k]) => item[k])
     .map(([k, l]) => {
       const days = Math.ceil((new Date(item[k]) - new Date(t)) / 86400000);
-      return `<span class="dchip ${daysClass(days)}">${esc(tr(l))} <b>${fdate(item[k])}</b></span>`;
+      // relative countdown up front (matches the dashboard), exact date kept alongside
+      return `<span class="dchip ${daysClass(days)}">${esc(tr(l))} <b>${daysLabel(days)}</b> <span class="dchip-d">${fdate(item[k])}</span></span>`;
     }).join('');
-  wrap.innerHTML = `<summary><span><b>${esc(item.name)}</b> <span class="muted">${esc(cfg.subtitle || '')}</span>
+  wrap.innerHTML = `<summary><span>${cfg.icon ? `<span class="entity-ic" aria-hidden="true">${cfg.icon}</span>` : ''}<b>${esc(item.name)}</b> <span class="muted">${esc(cfg.subtitle || '')}</span>
       ${chips ? `<span class="dchips">${chips}</span>` : ''}</span>
     ${canWrite() ? `<span class="row"><button class="btn ghost small" data-edit>Edit</button><button class="btn danger small" data-del>Delete</button></span>` : ''}</summary>
     <div class="body">
