@@ -673,6 +673,8 @@ function addBox(title, inner, forceOpen) {
     <summary><span class="plus" aria-hidden="true">+</span> ${title}</summary>
     <div class="addbody">${inner}</div></details>`;
 }
+// same breakpoint the stylesheet switches layouts at, so JS and CSS never disagree about "phone"
+const isPhone = () => matchMedia('(max-width: 860px)').matches;
 function daysClass(d) { return d < 0 ? 'late' : d <= 14 ? 'warn' : ''; }
 // an alert's item key is "kind:ref:YYYY-MM-DD" for dated things (and "maintenance:3:open" for the
 // undated ones) — pull the days-left out of it so the alert list can show the same urgency colours
@@ -1575,7 +1577,13 @@ async function moneyExpenses(body, f = {}) {
     `<button class="catpill${flt.cat === c ? ' on' : ''}" data-catjump="${esc(c)}" style="--cat:${catColor(c)}" aria-pressed="${flt.cat === c}"><span class="catdot"></span>${esc(tr(c))}<b>${money(amt)}</b><span class="muted">${Math.round((amt / scopeTotal) * 100)}%</span></button>`).join('')}</div>` : '';
   const reload = (patch) => moneyExpenses(body, { ...flt, ...patch });
   body.innerHTML = `
-    ${canWrite() ? `<div class="card quickadd"><form id="expform">
+    ${canWrite() ? (isPhone()
+      // phone: the original collapsed form with every field laid out, as it was
+      ? addBox('Add expense', `<form id="expform" class="formgrid">
+        ${expenseFormFields(members, properties, vehicles)}
+        <button class="btn">Add expense</button></form>`, EXP_FORM_OPEN)
+      // desktop: one wide row is enough for amount + category, the rest folds away
+      : `<div class="card quickadd"><form id="expform">
       <div class="qrow">
         <input name="amount" type="number" step="0.01" min="0.01" required inputmode="decimal"
           class="qamt" placeholder="0,00" aria-label="${tr('Amount')} (${cur()})">
@@ -1591,7 +1599,7 @@ async function moneyExpenses(body, f = {}) {
           ${properties.map((p) => `<option value="property:${p.id}">⌂ ${esc(p.name)}</option>`).join('')}
           ${vehicles.map((v) => `<option value="vehicle:${v.id}">⛟ ${esc(v.name)}</option>`).join('')}</select></div>` : ''}
         <div><label>Note</label><input name="note" placeholder="optional"></div>
-      </div></form></div>` : ''}
+      </div></form></div>`) : ''}
     <details class="card addbox" style="margin-top:16px"><summary><span class="plus" aria-hidden="true">+</span> Recurring expenses</summary><div class="addbody">
       <p class="muted" style="margin-top:0">Fixed monthly costs that aren't bills — logged automatically every month on the chosen day.</p>
       ${recurring.length ? `<table><tbody>${recurring.map((r) => `<tr style="${r.active ? '' : 'opacity:.55'}">
