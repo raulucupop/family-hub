@@ -129,6 +129,13 @@ td.right, th.right { text-align: right; }
 /* secondary, low-stakes actions that live *inside* a cell under the text it acts on */
 .btn.tiny { padding: 3px 9px; font-size: 12px; border-radius: 999px; min-height: 0; }
 .snoozerow { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+/* per-meter reading schedule: tick a meter, give it its own day of month */
+.meterlist { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 2px; }
+.meterrow { display: inline-flex; align-items: center; gap: 8px; font-size: 13.5px; font-weight: 500; }
+.meterrow input[type=checkbox] { width: auto; margin: 0; }
+.meterrow .mname { min-width: 96px; }
+.meterrow input[type=number] { max-width: 78px; }
+.meterrow input:disabled { opacity: .4; }
 .btn.danger { background: transparent; color: var(--red); border: 1px solid var(--red-soft); }
 .btn.danger:hover { background: var(--red-soft); }
 /* row action buttons (Mark paid / Edit / History / Delete): a flex row so the gaps are

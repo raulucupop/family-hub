@@ -242,6 +242,8 @@ const RO = {
   'Nothing shared with the tenant yet.': 'Nimic trimis chiriașului încă.', 'Meter readings': 'Citiri contoare',
   'Scheduled:': 'Programat:', 'of every month (tenant gets an email).': 'a fiecărei luni (chiriașul primește email).',
   'No monthly schedule yet — set the day and meters below, or request a reading now.': 'Fără program lunar încă — setează ziua și contoarele mai jos, sau cere o citire acum.',
+  'day of month for each': 'ziua din lună pentru fiecare',
+  'Give each ticked meter a day between 1 and 31': 'Dă fiecărui contor bifat o zi între 1 și 31',
   'Request now:': 'Cere acum:',
   'Requested': 'Cerut', 'Reading': 'Citire', 'received': 'primit', 'No reading requests yet.': 'Nicio cerere de citire încă.',
   'Tenant code generated': 'Cod de chiriaș generat', 'Remove this tenant? Their account will be deleted.': 'Elimini acest chiriaș? Contul lui va fi șters.',
@@ -2149,10 +2151,9 @@ async function viewProperties(el) {
     list.appendChild(entityCard(p, {
       subtitle: [p.address, `${tr('Owner')}: ${mname[p.owner_id] || tr('whole family')}`, p.mortgage_lender ? `${tr('Mortgage')}: ${p.mortgage_lender}, ${money(p.mortgage_payment)} ${tr('on day')} ${p.mortgage_due_day ?? '—'}` : null].filter(Boolean).join(' · '),
       deadlines: P_DEADLINES, route: 'properties',
-      editExtra: [['owner_id', 'Owner', 'select', ownerOpts], ['rent_amount', `Rent (${cur()}/mo)`, 'number'], ['rent_due_day', 'Rent due day (1-31)', 'number'],
-        ['reading_day', 'Meter reading day (1-31)', 'number'],
-        ['reading_utilities', 'Meters to read monthly', 'select', [['', '— none —'], ['electricity', 'Electricity'], ['gas', 'Gas'], ['water', 'Water'], ['electricity,gas', 'Electricity + gas'], ['electricity,gas,water', 'Electricity + gas + water']]],
-        ['payment_link', 'Payment link (Revolut.me)', 'text']],
+      // rent + meter schedule live in the always-visible Tenant panel below (renderTenantBox), not
+      // here — a second editor would let a stray save wipe the per-meter reading days
+      editExtra: [['owner_id', 'Owner', 'select', ownerOpts], ['payment_link', 'Payment link (Revolut.me)', 'text']],
       extra: (box, it) => { const d1 = document.createElement('div'), d2 = document.createElement('div'); box.append(d1, d2); renderTenantBox(d1, it); renderEntityDocs(d2, 'property', it, pSlots, () => viewProperties(el)); },
       recordTypes: { maintenance: 'Maintenance', renovation: 'Renovation', utility: 'Utility', rent: 'Rent (income)', other_income: 'Other income', other: 'Other' },
       incomeTypes: ['rent', 'other_income'],
@@ -2231,6 +2232,18 @@ async function renderEntityDocs(box, kind, item, slots, refresh) {
 }
 
 /* tenant & rent section inside a property card (owner view) */
+// reading_utilities is a comma list where each entry is "utility:day" (e.g. "electricity:10,gas:15").
+// A bare "electricity" (older data) falls back to the property's single reading_day. -> { util: day }.
+function parseSchedule(p) {
+  const def = Number(p.reading_day) || null;
+  const out = {};
+  String(p.reading_utilities || '').split(',').map((s) => s.trim()).filter(Boolean).forEach((entry) => {
+    const [u, d] = entry.split(':');
+    const day = Number(d) || def;
+    if (['electricity', 'gas', 'water'].includes(u) && day) out[u] = day;
+  });
+  return out;
+}
 async function renderTenantBox(box, p) {
   const [tinfo, charges, meters, maint] = await Promise.all([
     api(`/properties/${p.id}/tenant`), api(`/properties/${p.id}/charges`), api(`/properties/${p.id}/meter-requests`),
@@ -2285,13 +2298,18 @@ async function renderTenantBox(box, p) {
         </tr>`;
       }).join('')}</tbody></table>` : `<p class="muted">Nothing shared with the tenant yet.</p>`}
     <h3 style="margin-top:16px">Meter readings</h3>
-    <p class="muted">${p.reading_day && p.reading_utilities ? `${tr('Scheduled:')} ${p.reading_utilities.split(',').map((u) => esc(tr(u[0].toUpperCase() + u.slice(1)))).join(', ')} ${tr('on day')} ${p.reading_day} ${tr('of every month (tenant gets an email).')}` : tr('No monthly schedule yet — set the day and meters below, or request a reading now.')}</p>
-    ${canWrite() ? `<form data-schedform class="row" style="flex-wrap:wrap;align-items:flex-end;gap:8px;margin-bottom:6px">
-      <div><label>${tr('Meter reading day (1-31)')}</label><input name="reading_day" type="number" min="1" max="31" value="${p.reading_day ?? ''}" style="max-width:120px"></div>
-      <div><label>${tr('Meters to read monthly')}</label><select name="reading_utilities" style="max-width:230px">
-        ${[['', '— none —'], ['electricity', 'Electricity'], ['gas', 'Gas'], ['water', 'Water'], ['electricity,gas', 'Electricity + gas'], ['electricity,gas,water', 'Electricity + gas + water']]
-          .map(([v, l]) => `<option value="${v}" ${(p.reading_utilities || '') === v ? 'selected' : ''}>${tr(l)}</option>`).join('')}</select></div>
-      <button class="btn small">${tr('Save')}</button></form>` : ''}
+    <p class="muted">${Object.keys(parseSchedule(p)).length
+      ? `${tr('Scheduled:')} ${Object.entries(parseSchedule(p)).map(([u, d]) => `${esc(tr(u[0].toUpperCase() + u.slice(1)))} ${tr('on day')} ${d}`).join(', ')} ${tr('of every month (tenant gets an email).')}`
+      : tr('No monthly schedule yet — set the day and meters below, or request a reading now.')}</p>
+    ${canWrite() ? (() => { const sched = parseSchedule(p); return `<form data-schedform style="margin-bottom:6px">
+      <label>${tr('Meters to read monthly')} <span class="muted" style="font-weight:400">(${tr('day of month for each')})</span></label>
+      <div class="meterlist">${[['electricity', 'Electricity'], ['gas', 'Gas'], ['water', 'Water']].map(([v, l]) => {
+        const day = sched[v];
+        return `<label class="meterrow"><input type="checkbox" data-meter="${v}" ${day != null ? 'checked' : ''}>
+          <span class="mname">${tr(l)}</span>
+          <input type="number" min="1" max="31" data-day="${v}" value="${day ?? ''}" placeholder="${tr('day')}" ${day != null ? '' : 'disabled'}></label>`;
+      }).join('')}</div>
+      <button class="btn small" style="margin-top:8px">${tr('Save')}</button></form>`; })() : ''}
     ${canWrite() && tinfo.tenants.length ? `<p class="row">Request now:
       ${['electricity', 'gas', 'water'].map((u) => `<button class="btn ghost small" data-meterreq="${u}">${u[0].toUpperCase() + u.slice(1)}</button>`).join('')}</p>` : ''}
     ${meters.length ? `<table><thead><tr><th>Requested</th><th>Utility</th><th>Status</th><th>Reading</th><th></th></tr></thead><tbody>
@@ -2328,13 +2346,25 @@ async function renderTenantBox(box, p) {
   });
   // the meter schedule used to be editable only from the property's Edit form; the Tenants page
   // reuses this panel without that button, so it's set here directly
+  // a meter's day input is only live while its box is ticked
+  box.querySelectorAll('[data-schedform] [data-meter]').forEach((cb) => (cb.onchange = () => {
+    const day = box.querySelector(`[data-schedform] [data-day="${cb.dataset.meter}"]`);
+    day.disabled = !cb.checked;
+    if (cb.checked && !day.value) day.focus();
+  }));
   box.querySelector('[data-schedform]')?.addEventListener('submit', async (e) => {
     e.preventDefault();
-    const f = Object.fromEntries(new FormData(e.target));
+    const parts = [];
+    for (const cb of box.querySelectorAll('[data-schedform] [data-meter]')) {
+      if (!cb.checked) continue;
+      const day = Math.round(Number(box.querySelector(`[data-schedform] [data-day="${cb.dataset.meter}"]`).value));
+      if (!(day >= 1 && day <= 31)) return toast(tr('Give each ticked meter a day between 1 and 31'), 'error');
+      parts.push(`${cb.dataset.meter}:${day}`);
+    }
     try {
       const updated = await api(`/properties/${p.id}`, { method: 'PUT', body: {
-        reading_day: f.reading_day === '' ? null : Number(f.reading_day),
-        reading_utilities: f.reading_utilities || null,
+        reading_utilities: parts.join(',') || null,
+        reading_day: parts.length ? Number(parts[0].split(':')[1]) : null, // legacy default = first meter's day
       } });
       Object.assign(p, updated);
       toast('Saved', 'success'); reload();

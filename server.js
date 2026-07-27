@@ -1583,17 +1583,23 @@ app.delete('/api/properties/:id/charges/:cid', auth, canWrite, (req, res) => {
 // ---------- meter reading requests ----------
 const METER_UTILITIES = ['electricity', 'gas', 'water'];
 // scheduled readings: once per month on/after reading_day, create a request per configured utility and email the tenant
+// each entry of reading_utilities is "utility:day"; a bare "utility" falls back to reading_day
+function readingSchedule(prop) {
+  const def = Number(prop.reading_day) || 0;
+  return String(prop.reading_utilities || '').split(',').map((s) => s.trim()).filter(Boolean)
+    .map((entry) => { const [u, d] = entry.split(':'); return { util: (u || '').trim(), day: Number(d) || def }; })
+    .filter((x) => METER_UTILITIES.includes(x.util) && x.day >= 1);
+}
 function ensureMeterRequests(prop) {
-  const day = Number(prop.reading_day);
-  if (!day || day < 1) return;
-  const utils = String(prop.reading_utilities || '').split(',').map((s) => s.trim()).filter((u) => METER_UTILITIES.includes(u));
-  if (!utils.length) return;
+  const sched = readingSchedule(prop);
+  if (!sched.length) return;
   if (!db.prepare("SELECT id FROM users WHERE role = 'tenant' AND tenant_property_id = ?").get(prop.id)) return;
   const period = new Date().toISOString().slice(0, 7);
-  // a 31st reading day fires on the 30th in a 30-day month, not never
-  if (new Date().toISOString().slice(0, 10) < monthDate(period, day)) return;
+  const todayISO = new Date().toISOString().slice(0, 10);
   const created = [];
-  for (const u of utils) {
+  for (const { util: u, day } of sched) {
+    // each meter fires on its own day; a 31st fires on the 30th in a 30-day month, not never
+    if (todayISO < monthDate(period, day)) continue;
     if (db.prepare('SELECT id FROM meter_requests WHERE property_id = ? AND utility = ? AND period = ?').get(prop.id, u, period)) continue;
     db.prepare('INSERT INTO meter_requests (family_id, property_id, utility, period) VALUES (?,?,?,?)').run(prop.family_id, prop.id, u, period);
     created.push(u);
