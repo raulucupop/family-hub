@@ -134,6 +134,40 @@ td.right, th.right { text-align: right; }
 /* secondary, low-stakes actions that live *inside* a cell under the text it acts on */
 .btn.tiny { padding: 3px 9px; font-size: 12px; border-radius: 999px; min-height: 0; }
 .snoozerow { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+/* quick-add: the amount is what you came to type, so it leads and is always visible */
+.card.quickadd { padding: 12px 14px; }
+.quickadd .qrow { display: flex; gap: 8px; align-items: stretch; }
+.quickadd .qamt {
+  flex: 1 1 40%; min-width: 0; font-family: var(--mono); font-size: 19px; font-weight: 600; text-align: right;
+}
+.quickadd .qcat { flex: 1 1 40%; min-width: 0; }
+.quickadd .qgo { flex: 0 0 auto; white-space: nowrap; }
+.quickadd .qmore-btn { margin-top: 8px; padding-left: 0; border: 0; background: none; color: var(--accent); }
+.quickadd .qmore { margin-top: 10px; }
+/* .qmore is a .formgrid, whose display:grid would otherwise beat the [hidden] attribute */
+.quickadd .qmore[hidden] { display: none; }
+@media (max-width: 860px) {
+  /* the amount takes its own full-width line to type into; category + Add share the next one */
+  .quickadd .qrow { flex-wrap: wrap; }
+  .quickadd .qamt { flex: 1 1 100%; font-size: 22px; min-height: 46px; }
+  .quickadd .qcat { flex: 1 1 0; width: auto; }
+  .quickadd .qgo { flex: 0 0 auto; }
+}
+
+/* Day header inside the expense list. The flex lives on an inner div, not the <td>: making the
+   cell itself a flex container drops it out of table layout and its colspan stops spanning. */
+tr.daysep > td { background: var(--paper); padding: 6px 10px; border-bottom: 1px solid var(--line); }
+.daysep-in {
+  display: flex; justify-content: space-between; gap: 10px; align-items: baseline;
+  font-size: 12px; font-weight: 700; color: var(--ink-soft); text-transform: uppercase; letter-spacing: .04em;
+}
+.daysep-in .amount { font-weight: 600; letter-spacing: 0; text-transform: none; }
+/* alert rows carry the same urgency language as the dashboard: a coloured left edge */
+.alerts .alertrow > td:first-child { border-left: 3px solid transparent; }
+.alerts .alertrow.warn > td:first-child { border-left-color: var(--amber); }
+.alerts .alertrow.late > td:first-child { border-left-color: var(--red); }
+.alerts .alertrow.warn .dot { background: var(--amber); }
+.alerts .alertrow.late .dot { background: var(--red); }
 /* per-meter reading schedule: tick a meter, give it its own day of month */
 .meterlist { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 2px; }
 .meterrow { display: inline-flex; align-items: center; gap: 8px; font-size: 13.5px; font-weight: 500; }
@@ -422,6 +456,9 @@ details.foldcard[open] > summary::after { transform: rotate(180deg); }
   table.cards thead { display: none; }
   table.cards tbody, table.cards tr, table.cards td { display: block; width: 100%; }
   table.cards tr { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; }
+  /* the day header is a divider between cards, not a card itself */
+  table.cards tr.daysep { border: 0; padding: 0; margin: 16px 0 8px; }
+  table.cards tr.daysep > td { background: transparent; border-bottom: 0; padding: 0 2px; }
   table.cards tr:last-child { margin-bottom: 0; }
   table.cards td { border: 0; padding: 2px 0; text-align: left; }
   /* label:value on one line, value pushed to the right so a card reads as a tidy key/value list
@@ -441,9 +478,16 @@ details.foldcard[open] > summary::after { transform: rotate(180deg); }
      instead of four buttons touching each other with ragged edges */
   td .rowacts { display: flex; flex-direction: column; align-items: stretch; gap: 6px; min-width: 92px; }
 
-  /* tab rows (Expenses/Income/Budgets/Credits, auth screen) wrap instead of cramming */
-  .tabs { flex-wrap: wrap; }
-  .tabs button { flex: 1 1 40%; min-height: 40px; }
+  /* Tab rows stay on ONE line and scroll sideways: wrapping five money tabs cost three rows
+     (132px) of screen before any content appeared. Scrollbar hidden — the cut-off tab at the
+     edge is the affordance. */
+  .tabs {
+    flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none;
+    -webkit-overflow-scrolling: touch; scroll-snap-type: x proximity;
+    margin-left: -14px; margin-right: -14px; padding: 0 14px; /* let it bleed to the screen edge */
+  }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tabs button { flex: 0 0 auto; min-height: 40px; padding: 8px 16px; scroll-snap-align: start; }
 
   .card { padding: 14px; border-radius: 10px; }
   details.entity > summary { padding: 12px 14px; }

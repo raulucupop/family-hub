@@ -102,7 +102,7 @@ const RO = {
   'Family settings': 'Setări familie', 'Currency': 'Monedă', 'Send invite': 'Trimite invitația', 'Role': 'Rol', 'no login': 'fără cont',
   // alerts
   'Alerts': 'Alerte', 'Mark all as read': 'Marchează toate ca citite', 'Browser notifications': 'Notificări în browser',
-  'Remind me in 7 days': 'Amintește-mi peste 7 zile', 'Handled': 'Rezolvat', 'Hidden for 7 days': 'Ascunsă 7 zile',
+  'Handled': 'Rezolvat', 'Hidden for 7 days': 'Ascunsă 7 zile',
   'Alert hidden — it comes back if the deadline is renewed': 'Alertă ascunsă — reapare când reînnoiești termenul',
   // lists
   'Lists': 'Liste', 'Buy wishlist': 'De cumpărat', 'Travel wishlist': 'Călătorii', 'Grocery list': 'Cumpărături',
@@ -279,6 +279,9 @@ const RO = {
   'Open': 'Deschis', 'Fixed': 'Rezolvat', 'Mark fixed': 'Marchează rezolvat',
   'No maintenance requests yet.': 'Nicio cerere de reparație încă.', 'Nothing reported by the tenant.': 'Nimic raportat de chiriaș.',
   'Request sent — the owner has been notified': 'Cerere trimisă — proprietarul a fost anunțat',
+  'Snooze 7 days': 'Amână 7 zile',
+  'More details': 'Mai multe detalii', 'Fewer details': 'Mai puține detalii',
+  'Expiring soon': 'Expiră curând',
   'Reopened': 'Redeschis', 'Not fixed — reopen': 'Nu e reparat — redeschide',
   'What is still not fixed?': 'Ce nu e reparat încă?',
   'Reopened — the owner has been notified': 'Redeschis — proprietarul a fost anunțat',
@@ -671,6 +674,12 @@ function addBox(title, inner, forceOpen) {
     <div class="addbody">${inner}</div></details>`;
 }
 function daysClass(d) { return d < 0 ? 'late' : d <= 14 ? 'warn' : ''; }
+// an alert's item key is "kind:ref:YYYY-MM-DD" for dated things (and "maintenance:3:open" for the
+// undated ones) — pull the days-left out of it so the alert list can show the same urgency colours
+function alertDays(item) {
+  const d = String(item || '').split(':')[2];
+  return /^\d{4}-\d{2}-\d{2}$/.test(d) ? Math.ceil((new Date(d) - new Date(today())) / 86400000) : null;
+}
 // budget bar colour: green under, amber once you're near the limit (>=80%), red over it
 function budgetClass(spent, limit) { return limit > 0 && spent > limit ? 'over' : limit > 0 && spent >= limit * 0.8 ? 'near' : ''; }
 // a tiny inline-SVG trend line for the KPI cards; '' when there isn't enough history to be a line
@@ -688,6 +697,14 @@ function remClass(r) { return r.auto_pay ? '' : daysClass(r.days_left); }
 function daysLabel(d) {
   if (LANG === 'ro') return d < 0 ? `întârziat ${-d}z` : d === 0 ? 'azi' : `în ${d}z`;
   return d < 0 ? `${-d}d overdue` : d === 0 ? 'today' : `in ${d}d`;
+}
+// heading for a day group in the expense list: today/yesterday read faster than a date
+function dayLabel(iso) {
+  const days = Math.round((new Date(today()) - new Date(iso)) / 86400000);
+  if (days === 0) return LANG === 'ro' ? 'Azi' : 'Today';
+  if (days === 1) return LANG === 'ro' ? 'Ieri' : 'Yesterday';
+  return new Date(iso + 'T00:00:00Z').toLocaleDateString(LANG === 'ro' ? 'ro-RO' : 'en-GB',
+    { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' });
 }
 
 /* ---------- router ---------- */
@@ -1558,9 +1575,23 @@ async function moneyExpenses(body, f = {}) {
     `<button class="catpill${flt.cat === c ? ' on' : ''}" data-catjump="${esc(c)}" style="--cat:${catColor(c)}" aria-pressed="${flt.cat === c}"><span class="catdot"></span>${esc(tr(c))}<b>${money(amt)}</b><span class="muted">${Math.round((amt / scopeTotal) * 100)}%</span></button>`).join('')}</div>` : '';
   const reload = (patch) => moneyExpenses(body, { ...flt, ...patch });
   body.innerHTML = `
-    ${canWrite() ? addBox('Add expense', `<form id="expform" class="formgrid">
-      ${expenseFormFields(members, properties, vehicles)}
-      <button class="btn">Add expense</button></form>`, EXP_FORM_OPEN) : ''}
+    ${canWrite() ? `<div class="card quickadd"><form id="expform">
+      <div class="qrow">
+        <input name="amount" type="number" step="0.01" min="0.01" required inputmode="decimal"
+          class="qamt" placeholder="0,00" aria-label="${tr('Amount')} (${cur()})">
+        <select name="category" class="qcat" aria-label="${tr('Category')}">
+          ${CATEGORIES.map((c) => `<option value="${c}" ${LAST_EXP_CAT === c ? 'selected' : ''}>${c}</option>`).join('')}</select>
+        <button class="btn qgo">${tr('Add')}</button>
+      </div>
+      <button type="button" class="btn ghost small qmore-btn" data-more aria-expanded="false">${tr('More details')}</button>
+      <div class="formgrid qmore" hidden>
+        <div><label>Date</label><input name="date" type="date" value="${today()}" required></div>
+        <div><label>Person</label><select name="user_id">${members.map((m) => `<option value="${m.id}" ${m.id === ME.id ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}</select></div>
+        ${properties.length || vehicles.length ? `<div><label>Link to (optional)</label><select name="link"><option value="">Nothing</option>
+          ${properties.map((p) => `<option value="property:${p.id}">⌂ ${esc(p.name)}</option>`).join('')}
+          ${vehicles.map((v) => `<option value="vehicle:${v.id}">⛟ ${esc(v.name)}</option>`).join('')}</select></div>` : ''}
+        <div><label>Note</label><input name="note" placeholder="optional"></div>
+      </div></form></div>` : ''}
     <details class="card addbox" style="margin-top:16px"><summary><span class="plus" aria-hidden="true">+</span> Recurring expenses</summary><div class="addbody">
       <p class="muted" style="margin-top:0">Fixed monthly costs that aren't bills — logged automatically every month on the chosen day.</p>
       ${recurring.length ? `<table><tbody>${recurring.map((r) => `<tr style="${r.active ? '' : 'opacity:.55'}">
@@ -1590,7 +1621,13 @@ async function moneyExpenses(body, f = {}) {
       </div>
       ${subtotals}
       ${rows.length ? `<table class="cards"><thead><tr><th>${tr('Date')}</th><th>${tr('Category')}</th><th>${tr('By')}</th><th>${tr('Note')}</th><th class="right">${tr('Amount')}</th><th></th></tr></thead><tbody>
-        ${rows.map((e) => { const link = e.property_name ? `⌂ ${esc(e.property_name)}` : e.vehicle_name ? `⛟ ${esc(e.vehicle_name)}` : ''; return `<tr>
+        ${rows.map((e, i) => { const link = e.property_name ? `⌂ ${esc(e.property_name)}` : e.vehicle_name ? `⛟ ${esc(e.vehicle_name)}` : '';
+          // a light header each time the date changes, with that day's total — the rows arrive in
+          // date order, so this just breaks a long month into scannable days
+          const sep = (i === 0 || rows[i - 1].date !== e.date)
+            ? `<tr class="daysep"><td colspan="6"><div class="daysep-in"><span>${dayLabel(e.date)}</span><span class="amount">${money(rows.filter((r) => r.date === e.date).reduce((s, r) => s + r.amount, 0))}</span></div></td></tr>`
+            : '';
+          return `${sep}<tr>
           <td data-label="${tr('Date')}">${fdate(e.date)}</td>
           <td data-label="${tr('Category')}"><span class="catcell"><span class="catdot" style="--cat:${catColor(e.category)}"></span>${esc(e.category)}</span></td>
           <td data-label="${tr('By')}">${whoChip(mname[e.user_id])}</td>
@@ -1621,6 +1658,13 @@ async function moneyExpenses(body, f = {}) {
       FOCUS_AMOUNT = true;               // ...with the cursor already in Amount
       toast('Expense added'); reload();
     } catch (err) { toast(err.message); }
+  });
+  // the rarely-needed fields (date, person, link, note) stay folded until asked for
+  body.querySelector('[data-more]')?.addEventListener('click', (e) => {
+    const more = body.querySelector('.qmore');
+    more.hidden = !more.hidden;
+    e.target.setAttribute('aria-expanded', String(!more.hidden));
+    e.target.textContent = more.hidden ? tr('More details') : tr('Fewer details');
   });
   // one-shot: only jump into Amount right after an add or the floating +, never on a filter reload
   if (FOCUS_AMOUNT) { FOCUS_AMOUNT = false; $('#expform')?.querySelector('[name=amount]')?.focus(); }
@@ -2254,7 +2298,7 @@ async function renderEntityDocs(box, kind, item, slots, refresh) {
       ${docs.map((d) => {
         const slotLabel = (slots.find(([v]) => v === d.slot) || [])[1];
         let exp = '<span class="muted">—</span>';
-        if (d.expiry_date) { const days = Math.ceil((new Date(d.expiry_date) - new Date(t)) / 86400000); exp = `<span class="${days < 0 ? 'badge late' : days <= 30 ? 'badge unpaid' : ''}">${fdate(d.expiry_date)}</span>`; }
+        if (d.expiry_date) { const days = Math.ceil((new Date(d.expiry_date) - new Date(t)) / 86400000); exp = `<span class="${days < 0 ? 'badge late' : days <= 14 ? 'badge unpaid' : ''}">${fdate(d.expiry_date)}</span>`; }
         return `<tr><td><b>${esc(d.name)}</b>${d.number ? ` <span class="muted">${esc(d.number)}</span>` : ''}</td>
           <td>${d.slot ? esc(slotLabel || d.slot) : '<span class="muted">—</span>'}</td><td>${exp}</td>
           <td>${d.attachment ? `<a href="/api/documents/${d.id}/attachment" target="_blank">view</a>` : canWrite() ? `<label class="btn ghost small" style="display:inline-block">attach<input type="file" data-docattach="${d.id}" accept=".pdf,image/*" hidden></label>` : '—'}</td>
@@ -2604,7 +2648,13 @@ async function viewActe(el) {
     ...vehicles.map((v) => ['vehicle:' + v.id, tr('Vehicle') + ': ' + v.name]),
     ...properties.map((p) => ['property:' + p.id, tr('Property') + ': ' + p.name])];
   const belongsTo = (d) => d.person_name ? `${tr('Person')}: ${esc(d.person_name)}` : d.vehicle_name ? `${tr('Vehicle')}: ${esc(d.vehicle_name)}` : d.property_name ? `${tr('Property')}: ${esc(d.property_name)}` : tr('Family');
+  // what's about to lapse, up front — the same question the vehicle and property pages answer
+  const soon = docs.filter((d) => d.expiry_date)
+    .map((d) => ({ d, days: Math.ceil((new Date(d.expiry_date) - new Date(t)) / 86400000) }))
+    .filter((x) => x.days <= 60).sort((a, b) => a.days - b.days);
   el.innerHTML = `<div class="pagehead"><div><h1>Acte</h1><p>ID cards, passports, certificates, talon auto, contracts — linked to a person, vehicle or property, with expiry reminders and scans.</p></div></div>
+    ${soon.length ? `<div class="card" style="margin-bottom:16px"><h3 style="margin-top:0">${tr('Expiring soon')}</h3>
+      <div class="dchips">${soon.map(({ d, days }) => `<span class="dchip ${daysClass(days)}">${esc(d.name)} <b>${daysLabel(days)}</b> <span class="dchip-d">${fdate(d.expiry_date)}</span></span>`).join('')}</div></div>` : ''}
     ${canWrite() ? addBox('Add document', `<form id="docform" class="formgrid">
       <div><label>Name</label><input name="name" placeholder="Carte de identitate, Pasaport…" required></div>
       <div><label>Series / number</label><input name="number" placeholder="optional"></div>
@@ -2619,7 +2669,7 @@ async function viewActe(el) {
           let exp = '<span class="muted">—</span>';
           if (d.expiry_date) {
             const days = Math.ceil((new Date(d.expiry_date) - new Date(t)) / 86400000);
-            exp = `<span class="${days < 0 ? 'badge late' : days <= 30 ? 'badge unpaid' : ''}">${fdate(d.expiry_date)} · ${daysLabel(days)}</span>`;
+            exp = `<span class="${days < 0 ? 'badge late' : days <= 14 ? 'badge unpaid' : ''}">${fdate(d.expiry_date)} · ${daysLabel(days)}</span>`;
           }
           return `<tr>
             <td><b>${esc(d.name)}</b>${d.number ? ` <span class="muted">${esc(d.number)}</span>` : ''}${d.notes ? `<br><span class="muted">${esc(d.notes)}</span>` : ''}</td>
@@ -2897,14 +2947,18 @@ async function viewAlerts(el) {
           : `<button class="btn ${enabled ? 'ghost' : ''} small" id="togglenotif">${enabled ? 'Turn off' : 'Turn on'}</button>`}
       </div></div>
     <div class="card" style="margin-top:16px">
-      ${data.items.length ? `<table><tbody>${data.items.map((n) => `
-        <tr style="${n.read ? 'opacity:.55' : ''}"><td style="width:20px">${n.read ? '' : '<span class="dot"></span>'}</td>
+      ${data.items.length ? `<table class="alerts"><tbody>${data.items.map((n) => {
+        // the item key carries the deadline (kind:ref:YYYY-MM-DD), so the row can carry the same
+        // amber/red urgency the dashboard and the entity chips use. Undated kinds stay neutral.
+        const d = alertDays(n.item);
+        return `<tr class="alertrow ${d === null ? '' : daysClass(d)}" style="${n.read ? 'opacity:.55' : ''}"><td style="width:20px">${n.read ? '' : '<span class="dot"></span>'}</td>
         <td><b>${esc(n.title)}</b><br><span class="muted">${esc(n.body || '')}</span>
           ${n.item ? `<div class="snoozerow">
-            <button class="btn ghost tiny" data-snooze="${esc(n.item)}">Remind me in 7 days</button>
+            <button class="btn ghost tiny" data-snooze="${esc(n.item)}">Snooze 7 days</button>
             <button class="btn ghost tiny" data-handled="${esc(n.item)}">Handled</button>
           </div>` : ''}</td>
-        <td class="right muted" style="white-space:nowrap">${new Date(n.created_at + 'Z').toLocaleDateString('ro-RO')}</td></tr>`).join('')}
+        <td class="right muted" style="white-space:nowrap">${new Date(n.created_at + 'Z').toLocaleDateString('ro-RO')}</td></tr>`;
+      }).join('')}
       </tbody></table>` : `<div class="empty"><b>No alerts yet</b>They appear here as your bills and deadlines get close.</div>`}
     </div>`;
   // Quieting is per person: it hides the alert for you, the rest of the family still sees it.
@@ -3236,12 +3290,15 @@ new MutationObserver((muts) => {
 // A detail row — the inline edit form or an opened payment history — always travels with the data
 // row above it. They are the full-width `<td colspan>` rows, whether currently shown or hidden;
 // testing for `hidden` alone let an OPEN history panel sort itself away from its bill.
-const isDetailRow = (tr) => tr.hidden || (tr.cells.length === 1 && tr.cells[0].hasAttribute('colspan'));
+const isDetailRow = (tr) => !tr.classList.contains('daysep')
+  && (tr.hidden || (tr.cells.length === 1 && tr.cells[0].hasAttribute('colspan')));
 app.addEventListener('click', (e) => {
   const th = e.target.closest('th[data-sortable]');
   if (!th) return;
   const table = th.closest('table'); const tbody = table?.tBodies[0];
   if (!tbody) return;
+  // day headers only mean something in date order — sorting by amount or category retires them
+  tbody.querySelectorAll('tr.daysep').forEach((r) => r.remove());
   const idx = [...th.parentNode.children].indexOf(th);
   const dir = th.dataset.sort === 'asc' ? 'desc' : 'asc';
   table.querySelectorAll('th').forEach((h) => { delete h.dataset.sort; h.removeAttribute('aria-sort'); });
