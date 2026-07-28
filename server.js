@@ -456,7 +456,11 @@ function validateExpense(b, fid) {
   }
   const propId = num(b.property_id), vehId = num(b.vehicle_id);
   if (propId != null && vehId != null) return 'Link the expense to a property or a vehicle, not both';
-  if (propId != null && !db.prepare('SELECT id FROM properties WHERE id = ? AND family_id = ?').get(propId, fid)) return 'Linked property not found';
+  const prop = propId != null ? db.prepare('SELECT id, managed FROM properties WHERE id = ? AND family_id = ?').get(propId, fid) : null;
+  if (propId != null && !prop) return 'Linked property not found';
+  // a household expense cannot be attached to a property we only administer — that is exactly the
+  // mixing the managed flag exists to prevent. Log it on the property itself instead.
+  if (prop?.managed) return 'That property is managed, not owned — log the cost on the property';
   if (vehId != null && !db.prepare('SELECT id FROM vehicles WHERE id = ? AND family_id = ?').get(vehId, fid)) return 'Linked vehicle not found';
   return null;
 }
@@ -722,10 +726,14 @@ crud({
 });
 crud({
   route: 'properties', table: 'properties',
-  fields: ['name', 'address', 'insurance_expiry', 'insurance2_expiry', 'property_tax_due', 'mortgage_lender', 'mortgage_payment', 'mortgage_due_day', 'owner_id', 'rent_amount', 'rent_due_day', 'reading_day', 'reading_utilities', 'payment_link', 'notes'],
+  fields: ['name', 'address', 'insurance_expiry', 'insurance2_expiry', 'property_tax_due', 'mortgage_lender', 'mortgage_payment', 'mortgage_due_day', 'owner_id', 'rent_amount', 'rent_due_day', 'reading_day', 'reading_utilities', 'payment_link', 'managed', 'notes'],
   orderBy: 'name',
   validate: (b, req) => {
     if (!b.name) return 'Property name is required';
+    // crud() writes every field, so an omitted `managed` would insert NULL into a NOT NULL column.
+    // Normalising here (validate receives the real body on create) keeps it a plain 0/1.
+    if (b.managed != null && b.managed !== '' && ![0, 1, '0', '1', true, false].includes(b.managed)) return 'Managed must be 0 or 1';
+    b.managed = b.managed == null || b.managed === '' ? 0 : (Number(b.managed) ? 1 : 0);
     if (num(b.owner_id) != null && !db.prepare('SELECT id FROM users WHERE id = ? AND family_id = ?').get(num(b.owner_id), req.user.family_id)) {
       return 'Owner must be a member of the family';
     }
@@ -894,9 +902,10 @@ function validateCredit(b, fid) {
   if (num(b.user_id) != null && !db.prepare('SELECT id FROM users WHERE id = ? AND family_id = ?').get(num(b.user_id), fid)) {
     return 'Holder must be a member of the family';
   }
-  if (num(b.property_id) != null && !db.prepare('SELECT id FROM properties WHERE id = ? AND family_id = ?').get(num(b.property_id), fid)) {
-    return 'Linked property not found';
-  }
+  const cProp = num(b.property_id) != null ? db.prepare('SELECT id, managed FROM properties WHERE id = ? AND family_id = ?').get(num(b.property_id), fid) : null;
+  if (num(b.property_id) != null && !cProp) return 'Linked property not found';
+  // the monthly instalment posts as a household expense — not for a property we merely administer
+  if (cProp?.managed) return 'That property is managed, not owned — a household credit cannot sit on it';
   return null;
 }
 const CREDIT_SELECT = `
@@ -980,7 +989,10 @@ const BILL_SELECT = `
 function validateBillLinks(b, fid) {
   if (num(b.owner_id) != null && !db.prepare('SELECT id FROM users WHERE id = ? AND family_id = ?').get(num(b.owner_id), fid)) return 'Owner must be a member of the family';
   if (num(b.property_id) != null && num(b.vehicle_id) != null) return 'Link the bill to a property or a vehicle, not both';
-  if (num(b.property_id) != null && !db.prepare('SELECT id FROM properties WHERE id = ? AND family_id = ?').get(num(b.property_id), fid)) return 'Linked property not found';
+  const bProp = num(b.property_id) != null ? db.prepare('SELECT id, managed FROM properties WHERE id = ? AND family_id = ?').get(num(b.property_id), fid) : null;
+  if (num(b.property_id) != null && !bProp) return 'Linked property not found';
+  // paying a bill logs a household expense, so a managed property must not be on the other end of it
+  if (bProp?.managed) return 'That property is managed, not owned — log the cost on the property';
   if (num(b.vehicle_id) != null && !db.prepare('SELECT id FROM vehicles WHERE id = ? AND family_id = ?').get(num(b.vehicle_id), fid)) return 'Linked vehicle not found';
   if (b.expense_category != null && b.expense_category !== '' && !EXPENSE_CATEGORIES.includes(String(b.expense_category))) return 'Unknown expense category';
   return null;
@@ -1314,6 +1326,9 @@ app.post('/api/properties/:pid/records', auth, canWrite, (req, res) => {
         // bill the tenant instead of counting it as a family expense
         db.prepare('INSERT INTO tenant_charges (family_id, property_id, type, title, amount, due_date, note) VALUES (?,?,?,?,?,?,?)')
           .run(prop.family_id, prop.id, 'invoice', `${b.type}${b.note ? ' — ' + b.note : ''}`.slice(0, 120), Number(b.amount), b.date, str(b.note));
+      } else if (prop.managed) {
+        // a property we administer but do not own: the cost belongs to that property's books, not
+        // to this household's. No expenses row, so it never reaches the budget, KPIs or charts.
       } else {
         attributedUser = (num(b.attribute) != null && db.prepare('SELECT id FROM users WHERE id = ? AND family_id = ?').get(num(b.attribute), prop.family_id))
           ? num(b.attribute) : (prop.owner_id || null);

@@ -208,6 +208,8 @@ CREATE TABLE IF NOT EXISTS properties (
   rent_due_day INTEGER,        -- day of month rent is due (1-31; clamped to the last day in shorter months)
   tenant_invite_code TEXT,     -- code a tenant uses to register
   payment_link TEXT,           -- e.g. revolut.me link the tenant pays to (amount gets appended)
+  managed INTEGER NOT NULL DEFAULT 0, -- 1 = we administer it but don't own it: its costs and rent
+                                      -- stay on the property and never enter the family's own books
   notes TEXT
 );
 
@@ -484,6 +486,7 @@ if (!propCols.includes('owner_id')) db.exec('ALTER TABLE properties ADD COLUMN o
 if (!propCols.includes('rent_amount')) db.exec('ALTER TABLE properties ADD COLUMN rent_amount REAL');
 if (!propCols.includes('rent_due_day')) db.exec('ALTER TABLE properties ADD COLUMN rent_due_day INTEGER');
 if (!propCols.includes('tenant_invite_code')) db.exec('ALTER TABLE properties ADD COLUMN tenant_invite_code TEXT');
+if (!propCols.includes('managed')) db.exec('ALTER TABLE properties ADD COLUMN managed INTEGER NOT NULL DEFAULT 0');
 
 // users: older schemas lack the 'tenant' role or force NOT NULL email/password
 // (children added by the admin have neither) — rebuild once, keeping ids

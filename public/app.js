@@ -6,6 +6,10 @@ const app = $('#app');
 let ME = null, FAMILY = null;
 const CATEGORIES = ['Groceries', 'Utilities', 'Transportation', 'Entertainment', 'Healthcare', 'Education', 'Taxes', 'Credit', 'Subscriptions', 'Other'];
 const BILL_CATS = { electricity: 'Electricity', gas: 'Gas', internet: 'Internet', mobile: 'Mobile', water: 'Water', subscription: 'Subscription', property_tax: 'Property tax', other: 'Other' };
+// Only properties we own can be attached to household money (an expense, a bill, a credit): a
+// managed one keeps its own books. The server refuses those links; leaving them out of the pickers
+// means nobody has to discover that by hitting an error.
+const ownProps = (list) => (list || []).filter((p) => !p.managed);
 // one stable colour per category, keyed by position in CATEGORIES, so a category reads as the same
 // colour everywhere — the dashboard donut and the expense-list dots. Two palettes: the donut/dots
 // pick the theme-matched one at render time. (Same values the donut already used.)
@@ -229,6 +233,12 @@ const RO = {
   'Meter reading day (1-31)': 'Ziua citirii contoarelor (1-31)', 'Meters to read monthly': 'Contoare de citit lunar',
   '— none —': '— niciunul —', 'Electricity + gas': 'Electricitate + gaz', 'Electricity + gas + water': 'Electricitate + gaz + apă',
   'Payment link (Revolut.me)': 'Link de plată (Revolut.me)', 'Mortgage': 'Ipotecă', 'on day': 'în ziua',
+  // properties we administer for someone else
+  'Ownership': 'Deținere', 'Ours': 'A noastră', 'Managed for someone else': 'Administrată pentru altcineva',
+  'managed': 'administrată', 'not owned by us': 'nu e a noastră',
+  'The property (not our money)': 'Proprietatea (nu banii noștri)',
+  'This property is managed, not ours: its costs and rent stay here and never touch the household budget. "Tenant" still bills the tenant.':
+    'Proprietatea e administrată, nu e a noastră: costurile și chiria rămân aici și nu intră în bugetul casei. „Chiriaș” îi facturează în continuare chiriașului.',
   'Maintenance': 'Întreținere', 'Renovation': 'Renovare', 'Utility': 'Utilitate', 'Rent (income)': 'Chirie (venit)', 'Other income': 'Alt venit',
   'Cost paid by': 'Cost plătit de', 'Owner / family': 'Proprietar / familie', 'Tenant — bill to': 'Chiriaș — facturează pe',
   'Costs (maintenance, utility…) are also logged as an expense for the chosen person; "Tenant" bills the tenant instead.':
@@ -1542,7 +1552,7 @@ function expenseFormFields(members, properties, vehicles, e = {}) {
     <div><label>Amount (${cur()})</label><input name="amount" type="number" step="0.01" min="0.01" value="${e.amount ?? ''}" required></div>
     <div><label>Person</label><select name="user_id">${members.map((m) => `<option value="${m.id}" ${String(e.user_id ?? ME.id) === String(m.id) ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}</select></div>
     ${properties.length || vehicles.length ? `<div><label>Link to (optional)</label><select name="link"><option value="">Nothing</option>
-      ${properties.map((p) => `<option value="property:${p.id}" ${link === `property:${p.id}` ? 'selected' : ''}>⌂ ${esc(p.name)}</option>`).join('')}
+      ${ownProps(properties).map((p) => `<option value="property:${p.id}" ${link === `property:${p.id}` ? 'selected' : ''}>⌂ ${esc(p.name)}</option>`).join('')}
       ${vehicles.map((v) => `<option value="vehicle:${v.id}" ${link === `vehicle:${v.id}` ? 'selected' : ''}>⛟ ${esc(v.name)}</option>`).join('')}</select></div>` : ''}
     <div><label>Note</label><input name="note" placeholder="optional" value="${esc(e.note || '')}"></div>`;
 }
@@ -1596,7 +1606,7 @@ async function moneyExpenses(body, f = {}) {
         <div><label>Date</label><input name="date" type="date" value="${today()}" required></div>
         <div><label>Person</label><select name="user_id">${members.map((m) => `<option value="${m.id}" ${m.id === ME.id ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}</select></div>
         ${properties.length || vehicles.length ? `<div><label>Link to (optional)</label><select name="link"><option value="">Nothing</option>
-          ${properties.map((p) => `<option value="property:${p.id}">⌂ ${esc(p.name)}</option>`).join('')}
+          ${ownProps(properties).map((p) => `<option value="property:${p.id}">⌂ ${esc(p.name)}</option>`).join('')}
           ${vehicles.map((v) => `<option value="vehicle:${v.id}">⛟ ${esc(v.name)}</option>`).join('')}</select></div>` : ''}
         <div><label>Note</label><input name="note" placeholder="optional"></div>
       </div></form></div>`) : ''}
@@ -1614,7 +1624,7 @@ async function moneyExpenses(body, f = {}) {
         <div><label>Day of month</label><input name="day" type="number" min="1" max="31" value="1" required></div>
         <div><label>Person</label><select name="user_id">${members.map((m) => `<option value="${m.id}" ${m.id === ME.id ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}</select></div>
         ${properties.length || vehicles.length ? `<div><label>Link to (optional)</label><select name="link"><option value="">Nothing</option>
-          ${properties.map((p) => `<option value="property:${p.id}">⌂ ${esc(p.name)}</option>`).join('')}
+          ${ownProps(properties).map((p) => `<option value="property:${p.id}">⌂ ${esc(p.name)}</option>`).join('')}
           ${vehicles.map((v) => `<option value="vehicle:${v.id}">⛟ ${esc(v.name)}</option>`).join('')}</select></div>` : ''}
         <button class="btn small">Add recurring</button></form>` : ''}
     </div></details>
@@ -1870,7 +1880,7 @@ async function moneyCredits(body) {
       <div><label>Holder</label><select name="user_id"><option value="">Whole family</option>
         ${members.map((m) => `<option value="${m.id}">${esc(m.name)}</option>`).join('')}</select></div>
       <div><label>Linked property</label><select name="property_id"><option value="">None</option>
-        ${properties.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select></div>
+        ${ownProps(properties).map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select></div>
       <button class="btn">Add credit</button></form>
       <p class="muted" id="credpreview" style="margin:10px 0 0"></p></div>` : ''}
     <div id="credlist" style="margin-top:16px">${credits.length ? '' : `<div class="card empty"><b>No credits yet</b>Add a loan above — the monthly payment is calculated from the dobândă, and anticipated payments show how much interest you save.</div>`}</div>`;
@@ -1904,7 +1914,7 @@ function creditFormFields(members, properties, c = {}) {
     <div><label>Commission (${cur()}/mo, fixed)</label><input name="commission" type="number" step="0.01" min="0" value="${c.commission ?? 0}"></div>
     <div><label>Start date</label><input name="start_date" type="date" value="${c.start_date || today()}" required></div>
     <div><label>Holder</label><select name="user_id"><option value="">Whole family</option>${members.map((m) => `<option value="${m.id}" ${String(c.user_id) === String(m.id) ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}</select></div>
-    <div><label>Linked property</label><select name="property_id"><option value="">None</option>${properties.map((p) => `<option value="${p.id}" ${String(c.property_id) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></div>`;
+    <div><label>Linked property</label><select name="property_id"><option value="">None</option>${ownProps(properties).map((p) => `<option value="${p.id}" ${String(c.property_id) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></div>`;
 }
 function creditCard(c, members, properties, refresh) {
   const wrap = document.createElement('details');
@@ -2067,7 +2077,7 @@ function billFormFields(members, properties, vehicles, b = {}) {
       ${CATEGORIES.map((c) => `<option value="${c}" ${b.expense_category === c ? 'selected' : ''}>${c}</option>`).join('')}</select></div>
     <div><label>Responsible person</label><select name="owner_id"><option value="">Whole family</option>${members.map((m) => `<option value="${m.id}" ${String(b.owner_id) === String(m.id) ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}</select></div>
     <div><label>Link to (optional)</label><select name="link"><option value="">Nothing</option>
-      ${properties.map((p) => `<option value="property:${p.id}" ${link === `property:${p.id}` ? 'selected' : ''}>⌂ ${esc(p.name)}</option>`).join('')}
+      ${ownProps(properties).map((p) => `<option value="property:${p.id}" ${link === `property:${p.id}` ? 'selected' : ''}>⌂ ${esc(p.name)}</option>`).join('')}
       ${vehicles.map((v) => `<option value="vehicle:${v.id}" ${link === `vehicle:${v.id}` ? 'selected' : ''}>⛟ ${esc(v.name)}</option>`).join('')}</select></div>
     <div style="align-self:center"><label style="display:inline-flex;align-items:center;gap:6px;font-size:13px"><input type="checkbox" name="auto_pay" value="1" ${b.auto_pay ? 'checked' : ''} style="width:auto"> Auto-paid subscription</label></div>`;
 }
@@ -2219,6 +2229,9 @@ async function viewVehicles(el) {
 
 /* ---------- properties ---------- */
 const P_DEADLINES = [['insurance_expiry', 'Insurance (PAD)'], ['insurance2_expiry', 'Additional insurance'], ['property_tax_due', 'Property tax']];
+// a managed property is administered for someone else: same tenants, rent and invoices, but its
+// money is its own and never lands in the household's expenses, income, budgets or charts
+const MANAGED_OPTS = [['0', 'Ours'], ['1', 'Managed for someone else']];
 async function viewProperties(el) {
   const [props, members] = await Promise.all([api('/properties'), api('/family/members')]);
   const tenantInfo = await Promise.all(props.map((p) => api(`/properties/${p.id}/tenant`).catch(() => ({ tenants: [] }))));
@@ -2234,28 +2247,37 @@ async function viewProperties(el) {
       ['mortgage_lender', 'Mortgage lender', 'text', 'optional'], ['mortgage_payment', `Monthly payment (${cur()})`, 'number', ''], ['mortgage_due_day', 'Payment day of month', 'number', '15'],
       ['rent_amount', `Rent (${cur()}/mo, if rented out)`, 'number', ''], ['rent_due_day', 'Rent due day (1-31)', 'number', '1'],
       ['payment_link', 'Payment link (Revolut.me)', 'text', 'https://revolut.me/...'],
+      ['managed', 'Ownership', 'select', MANAGED_OPTS],
     ]) : ''}
     <div id="proplist" style="margin-top:16px">${props.length ? '' : `<div class="card empty"><b>No properties yet</b>Add your home above to track its deadlines and costs.</div>`}</div>`;
   bindEntityForm('propform', '/properties', () => viewProperties(el));
   const list = $('#proplist');
   for (const p of props) {
     const tenants = tenantsByProp[p.id] || [];
-    // who a cost record is attributed to: owner by default, any member, or (if rented) bill the tenant
-    const attributeOpts = [['', p.owner_id ? `${tr('Owner')} (${esc(mname[p.owner_id] || '')})` : tr('Owner / family')],
-      ...members.map((m) => [m.id, m.name]),
-      ...(tenants.length ? [['tenant', `${tr('Tenant — bill to')} ${esc(tenants[0].name)}`]] : [])];
+    // who a cost record is attributed to: owner by default, any member, or (if rented) bill the tenant.
+    // On a managed property there is no "family member pays" option — the cost stays on the property.
+    const attributeOpts = p.managed
+      ? [['', tr('The property (not our money)')],
+        ...(tenants.length ? [['tenant', `${tr('Tenant — bill to')} ${esc(tenants[0].name)}`]] : [])]
+      : [['', p.owner_id ? `${tr('Owner')} (${esc(mname[p.owner_id] || '')})` : tr('Owner / family')],
+        ...members.map((m) => [m.id, m.name]),
+        ...(tenants.length ? [['tenant', `${tr('Tenant — bill to')} ${esc(tenants[0].name)}`]] : [])];
     list.appendChild(entityCard(p, {
-      icon: '⌂', subtitle: [p.address, `${tr('Owner')}: ${mname[p.owner_id] || tr('whole family')}`, p.mortgage_lender ? `${tr('Mortgage')}: ${p.mortgage_lender}, ${money(p.mortgage_payment)} ${tr('on day')} ${p.mortgage_due_day ?? '—'}` : null].filter(Boolean).join(' · '),
+      icon: '⌂', badge: p.managed ? tr('managed') : '',
+      subtitle: [p.address, p.managed ? tr('not owned by us') : `${tr('Owner')}: ${mname[p.owner_id] || tr('whole family')}`, p.mortgage_lender ? `${tr('Mortgage')}: ${p.mortgage_lender}, ${money(p.mortgage_payment)} ${tr('on day')} ${p.mortgage_due_day ?? '—'}` : null].filter(Boolean).join(' · '),
       deadlines: P_DEADLINES, route: 'properties',
       // rent + meter schedule live in the always-visible Tenant panel below (renderTenantBox), not
       // here — a second editor would let a stray save wipe the per-meter reading days
-      editExtra: [['owner_id', 'Owner', 'select', ownerOpts], ['payment_link', 'Payment link (Revolut.me)', 'text']],
+      editExtra: [['owner_id', 'Owner', 'select', ownerOpts], ['payment_link', 'Payment link (Revolut.me)', 'text'],
+        ['managed', 'Ownership', 'select', MANAGED_OPTS]],
       extra: (box, it) => { const d1 = document.createElement('div'), d2 = document.createElement('div'); box.append(d1, d2); renderTenantBox(d1, it); renderEntityDocs(d2, 'property', it, pSlots, () => viewProperties(el)); },
       recordTypes: { maintenance: 'Maintenance', renovation: 'Renovation', utility: 'Utility', rent: 'Rent (income)', other_income: 'Other income', other: 'Other' },
       incomeTypes: ['rent', 'other_income'],
       recordFields: [['date', 'Date', 'date'], ['amount', `Amount (${cur()})`, 'number'], ['note', 'Note', 'text']],
       recordExtra: [['attribute', 'Cost paid by', 'select', attributeOpts]],
-      recordExtraNote: 'Costs (maintenance, utility…) are also logged as an expense for the chosen person; "Tenant" bills the tenant instead.',
+      recordExtraNote: p.managed
+        ? tr('This property is managed, not ours: its costs and rent stay here and never touch the household budget. "Tenant" still bills the tenant.')
+        : 'Costs (maintenance, utility…) are also logged as an expense for the chosen person; "Tenant" bills the tenant instead.',
       showRecordUser: true,
       refresh: () => viewProperties(el),
     }));
@@ -2563,7 +2585,7 @@ function entityCard(item, cfg) {
       // relative countdown up front (matches the dashboard), exact date kept alongside
       return `<span class="dchip ${daysClass(days)}">${esc(tr(l))} <b>${daysLabel(days)}</b> <span class="dchip-d">${fdate(item[k])}</span></span>`;
     }).join('');
-  wrap.innerHTML = `<summary><span>${cfg.icon ? `<span class="entity-ic" aria-hidden="true">${cfg.icon}</span>` : ''}<b>${esc(item.name)}</b> <span class="muted">${esc(cfg.subtitle || '')}</span>
+  wrap.innerHTML = `<summary><span>${cfg.icon ? `<span class="entity-ic" aria-hidden="true">${cfg.icon}</span>` : ''}<b>${esc(item.name)}</b>${cfg.badge ? ` <span class="badge role">${esc(cfg.badge)}</span>` : ''} <span class="muted">${esc(cfg.subtitle || '')}</span>
       ${chips ? `<span class="dchips">${chips}</span>` : ''}</span>
     ${canWrite() ? `<span class="row"><button class="btn ghost small" data-edit>Edit</button><button class="btn danger small" data-del>Delete</button></span>` : ''}</summary>
     <div class="body">
