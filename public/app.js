@@ -973,7 +973,7 @@ const REVOLUT_MARK = `<svg class="rmark" viewBox="0 0 24 24" width="15" height="
 // with only the four areas that apply to them.
 const TENANT_NAV = [
   ['dashboard', '⌂', 'Dashboard'],
-  ['invoices', '₤', 'Invoices'],
+  ['invoices', '€', 'Invoices'],
   ['maintenance', '⚒', 'Maintenance'],
   ['account', '⚙', 'Settings'],
 ];
@@ -1204,6 +1204,9 @@ function dashSkeleton() {
    category is most out of step with its usual self. Whole sentences per language — the RO
    dictionary matches exact strings, so a sentence glued from translated words would not survive.
    Only shown for the current month, and only once enough days have passed to mean anything. */
+// Categories that arrive as a single fixed charge rather than day-by-day spending, so they must be
+// kept out of the run-rate when forecasting the month (see dashInsight).
+const PROJECTION_FIXED = new Set(['Credit']);
 function dashInsight(stats, suggest, months) {
   if (months !== 1) return '';
   const ro = LANG === 'ro';
@@ -1212,7 +1215,14 @@ function dashInsight(stats, suggest, months) {
   const inMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0)).getUTCDate();
   const bits = [];
   if (day >= 4 && stats.spent > 0 && day < inMonth) {
-    const projected = (stats.spent / day) * inMonth;
+    // A credit instalment is one fixed posting for the month, not a daily habit. Left inside the
+    // run-rate it gets multiplied across every remaining day — pay 1.005 on the 10th and the
+    // forecast behaves as if you paid it daily. So: hold the one-off amounts aside, project only
+    // what actually varies day to day, then add the fixed part back once.
+    const oneOff = (stats.byCategory || [])
+      .filter((c) => PROJECTION_FIXED.has(c.category)).reduce((s, c) => s + c.total, 0);
+    const variable = Math.max(0, stats.spent - oneOff);
+    const projected = oneOff + (variable / day) * inMonth;
     const monthName = now.toLocaleDateString(ro ? 'ro-RO' : 'en-GB', { month: 'long', timeZone: 'UTC' });
     bits.push(ro
       ? `În ritmul ăsta, ${monthName} se închide pe la <b class="amount">${money(projected)}</b>.`

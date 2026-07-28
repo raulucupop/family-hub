@@ -446,7 +446,7 @@ app.get('/api/expenses', auth, (req, res) => {
   `).all(req.user.family_id));
 });
 // shared by create and edit: returns an error string, or the cleaned fields
-function validateExpense(b, fid) {
+function validateExpense(b, fid, prevPropId = null) {
   if (!b.category) return 'Category is required';
   if (!EXPENSE_CATEGORIES.includes(String(b.category))) return 'Unknown category';
   if (!okAmount(b.amount)) return 'Amount must be greater than 0';
@@ -458,9 +458,11 @@ function validateExpense(b, fid) {
   if (propId != null && vehId != null) return 'Link the expense to a property or a vehicle, not both';
   const prop = propId != null ? db.prepare('SELECT id, managed FROM properties WHERE id = ? AND family_id = ?').get(propId, fid) : null;
   if (propId != null && !prop) return 'Linked property not found';
-  // a household expense cannot be attached to a property we only administer — that is exactly the
-  // mixing the managed flag exists to prevent. Log it on the property itself instead.
-  if (prop?.managed) return 'That property is managed, not owned — log the cost on the property';
+  // A household expense cannot be attached to a property we only administer — that is the mixing
+  // the managed flag exists to prevent. Only block *making* that link though: a property flipped to
+  // managed later would otherwise freeze every expense already pointing at it, so you could not
+  // even correct its amount. `prevPropId` is the link as stored, and an unchanged one is left be.
+  if (prop?.managed && propId !== prevPropId) return 'That property is managed, not owned — log the cost on the property';
   if (vehId != null && !db.prepare('SELECT id FROM vehicles WHERE id = ? AND family_id = ?').get(vehId, fid)) return 'Linked vehicle not found';
   return null;
 }
@@ -514,7 +516,7 @@ app.put('/api/expenses/:id', auth, canWrite, (req, res) => {
   const row = db.prepare('SELECT * FROM expenses WHERE id = ? AND family_id = ?').get(req.params.id, req.user.family_id);
   if (!row) return res.status(404).json({ error: 'Not found' });
   const b = { ...row, ...req.body };
-  const err = validateExpense(b, req.user.family_id);
+  const err = validateExpense(b, req.user.family_id, num(row.property_id));
   if (err) return res.status(400).json({ error: err });
   const uid = num(b.user_id) ?? req.user.id;
   db.transaction(() => {
@@ -892,7 +894,7 @@ function autoLogCreditExpenses() {
     })();
   }
 }
-function validateCredit(b, fid) {
+function validateCredit(b, fid, prevPropId = null) {
   if (!b.name) return 'Credit name is required';
   if (!okAmount(b.principal)) return 'Principal must be greater than 0';
   if (!(Number(b.interest_rate) >= 0)) return 'Dobanda (interest %) must be 0 or more';
@@ -904,8 +906,9 @@ function validateCredit(b, fid) {
   }
   const cProp = num(b.property_id) != null ? db.prepare('SELECT id, managed FROM properties WHERE id = ? AND family_id = ?').get(num(b.property_id), fid) : null;
   if (num(b.property_id) != null && !cProp) return 'Linked property not found';
-  // the monthly instalment posts as a household expense — not for a property we merely administer
-  if (cProp?.managed) return 'That property is managed, not owned — a household credit cannot sit on it';
+  // the monthly instalment posts as a household expense — not for a property we merely administer.
+  // As above, only a newly made link is refused; one already on the credit stays editable.
+  if (cProp?.managed && num(b.property_id) !== prevPropId) return 'That property is managed, not owned — a household credit cannot sit on it';
   return null;
 }
 const CREDIT_SELECT = `
@@ -935,7 +938,7 @@ app.put('/api/credits/:id', auth, canWrite, (req, res) => {
   const row = db.prepare('SELECT * FROM credits WHERE id = ? AND family_id = ?').get(req.params.id, req.user.family_id);
   if (!row) return res.status(404).json({ error: 'Not found' });
   const b = { ...row, ...req.body };
-  const err = validateCredit(b, req.user.family_id);
+  const err = validateCredit(b, req.user.family_id, num(row.property_id));
   if (err) return res.status(400).json({ error: err });
   db.prepare('UPDATE credits SET name=?, lender=?, principal=?, interest_rate=?, term_months=?, start_date=?, commission=?, user_id=?, property_id=?, notes=? WHERE id=?')
     .run(str(b.name), str(b.lender), Number(b.principal), Number(b.interest_rate), Math.round(Number(b.term_months)), b.start_date,
@@ -986,13 +989,14 @@ const BILL_SELECT = `
   LEFT JOIN properties p ON p.id = b.property_id
   LEFT JOIN vehicles v ON v.id = b.vehicle_id
 `;
-function validateBillLinks(b, fid) {
+function validateBillLinks(b, fid, prevPropId = null) {
   if (num(b.owner_id) != null && !db.prepare('SELECT id FROM users WHERE id = ? AND family_id = ?').get(num(b.owner_id), fid)) return 'Owner must be a member of the family';
   if (num(b.property_id) != null && num(b.vehicle_id) != null) return 'Link the bill to a property or a vehicle, not both';
   const bProp = num(b.property_id) != null ? db.prepare('SELECT id, managed FROM properties WHERE id = ? AND family_id = ?').get(num(b.property_id), fid) : null;
   if (num(b.property_id) != null && !bProp) return 'Linked property not found';
-  // paying a bill logs a household expense, so a managed property must not be on the other end of it
-  if (bProp?.managed) return 'That property is managed, not owned — log the cost on the property';
+  // paying a bill logs a household expense, so a managed property must not be on the other end of
+  // it — but only refuse a link being made, never freeze a bill that already carried one
+  if (bProp?.managed && num(b.property_id) !== prevPropId) return 'That property is managed, not owned — log the cost on the property';
   if (num(b.vehicle_id) != null && !db.prepare('SELECT id FROM vehicles WHERE id = ? AND family_id = ?').get(num(b.vehicle_id), fid)) return 'Linked vehicle not found';
   if (b.expense_category != null && b.expense_category !== '' && !EXPENSE_CATEGORIES.includes(String(b.expense_category))) return 'Unknown expense category';
   return null;
@@ -1058,7 +1062,7 @@ app.put('/api/bills/:id', auth, canWrite, (req, res) => {
   if (!row) return res.status(404).json({ error: 'Not found' });
   const b = { ...row, ...req.body };
   if (!b.name || !b.category || !isDate(b.due_date)) return res.status(400).json({ error: 'Name, category and due date are required' });
-  const err = validateBillLinks(b, req.user.family_id);
+  const err = validateBillLinks(b, req.user.family_id, num(row.property_id));
   if (err) return res.status(400).json({ error: err });
   db.prepare(`
     UPDATE bills SET name=?, provider=?, category=?, expense_category=?, amount=?, due_date=?, recur_months=?, recur_days=?, status=?, auto_pay=?, owner_id=?, property_id=?, vehicle_id=?, notes=? WHERE id=?
