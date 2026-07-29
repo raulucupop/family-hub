@@ -235,6 +235,12 @@ const RO = {
   'Payment link (Revolut.me)': 'Link de plată (Revolut.me)', 'Mortgage': 'Ipotecă', 'on day': 'în ziua',
   // properties we administer for someone else
   'Property & things': 'Proprietăți și bunuri', 'Household': 'Gospodărie',
+  // one rental at a glance
+  'Open dashboard': 'Deschide panoul', 'Full panel': 'Panoul complet', 'Outstanding': 'De încasat',
+  'This property': 'Această proprietate', 'This property (not our money)': 'Această proprietate (nu banii noștri)',
+  'Money in this property': 'Bani în această proprietate', 'Nothing recorded yet.': 'Nimic înregistrat încă.',
+  'Property not found': 'Proprietatea nu a fost găsită', 'Unpaid': 'Neplătite',
+  'Deadlines': 'Termene', 'records': 'înregistrări', 'No mortgage recorded': 'Fără credit ipotecar',
   'Ownership': 'Deținere', 'Ours': 'A noastră', 'Managed for someone else': 'Administrată pentru altcineva',
   'managed': 'administrată', 'not owned by us': 'nu e a noastră',
   'The property (not our money)': 'Proprietatea (nu banii noștri)',
@@ -725,7 +731,7 @@ function dayLabel(iso) {
 }
 
 /* ---------- router ---------- */
-const routes = { dashboard: viewDashboard, money: viewMoney, bills: viewBills, search: viewSearch, vehicles: viewVehicles, properties: viewProperties, tenants: viewTenants, acte: viewActe, lists: viewLists, import: viewImport, alerts: viewAlerts, family: viewFamily, settings: viewSettings };
+const routes = { dashboard: viewDashboard, money: viewMoney, bills: viewBills, search: viewSearch, vehicles: viewVehicles, properties: viewProperties, tenants: viewTenants, property: viewProperty, acte: viewActe, lists: viewLists, import: viewImport, alerts: viewAlerts, family: viewFamily, settings: viewSettings };
 // Page changes cross-fade where the browser supports it; plain render elsewhere.
 //
 // The cross-fade is decoration — the render is the point — so nothing about the transition may be
@@ -815,7 +821,9 @@ function render() {
   if (!ME) return renderAuth();
   applyTheme(); applyLang();
   if (ME.role === 'tenant') return renderTenantPortal();
-  const page = (location.hash || '#dashboard').slice(1);
+  // "#property/7" — a page plus one argument, so a single property's dashboard is a real place you
+  // can link to, land on, and leave with the back button
+  const [page, arg] = (location.hash || '#dashboard').slice(1).split('/');
   if (page !== 'money') EXP_FORM_OPEN = false; // leaving Money → next visit shows data first, not a form
   const fn = routes[page] || viewDashboard;
   app.innerHTML = shell(page);
@@ -830,7 +838,7 @@ function render() {
     EXP_FORM_OPEN = true; FOCUS_AMOUNT = true; PENDING_MONEY_TAB = 'expenses';
     if (page === 'money') viewMoney($('#page'), 'expenses'); else location.hash = '#money';
   });
-  runView(fn, $('#page'), RENDER_SEQ);
+  runView((el) => fn(el, arg), $('#page'), RENDER_SEQ);
   pollNotifications();
 }
 // error boundary around a page render: one failed fetch shouldn't leave a blank/broken page.
@@ -891,9 +899,20 @@ function shell(active) {
     <div class="sheet" id="moresheet" hidden>
       <div class="sheetbg" data-close></div>
       <div class="sheetbody">
-        <div class="sheetgrid">
-          ${NAV.filter(([k]) => !inTabs(k)).map(([k, ic, l]) => `<a class="sheetlink ${k === active ? 'active' : ''}" href="#${k}"><span class="ic" aria-hidden="true">${ic}</span>${l}</a>`).join('')}
-        </div>
+        ${(() => {
+          // Group headings carry the same shape as links ([null, title]) so this list has to read
+          // them as headings too — mapped blindly they rendered as a link labelled "undefined".
+          // A heading is only emitted once something under it survives the bottom-bar filter.
+          let pending = null, out = '', open = false;
+          for (const [k, ic, l] of NAV) {
+            if (k === null) { if (open) { out += '</div>'; open = false; } pending = ic; continue; }
+            if (inTabs(k)) continue;
+            if (pending) { out += `<div class="sheetgroup">${tr(pending)}</div><div class="sheetgrid">`; pending = null; open = true; }
+            else if (!open) { out += '<div class="sheetgrid">'; open = true; }
+            out += `<a class="sheetlink ${k === active ? 'active' : ''}" href="#${k}"><span class="ic" aria-hidden="true">${ic}</span>${l}</a>`;
+          }
+          return out + (open ? '</div>' : '');
+        })()}
         <button class="btn ghost" style="width:100%;margin-top:12px" data-logout>↩ Sign out</button>
       </div>
     </div>
@@ -2321,6 +2340,129 @@ async function viewProperties(el) {
     }));
   }
 }
+/* ---------- one property at a glance (#property/<id>) ----------
+   Every property asks the same few questions: what has it cost, what has it earned, and what is
+   coming up on it. A let one adds the tenant's side — is this month's rent in, what is owed, what
+   is the tenant waiting on me for — and those blocks simply don't render when nobody rents it.
+   For a managed property the money figure is the whole point, since it is deliberately absent
+   from the household totals. Reachable from Proprietăți and from Chiriași. */
+async function viewProperty(el, id) {
+  const pid = Number(id);
+  const [props, tinfo, charges, records, meters, maint] = await Promise.all([
+    api('/properties'), api(`/properties/${pid}/tenant`), api(`/properties/${pid}/charges`),
+    api(`/properties/${pid}/records`), api(`/properties/${pid}/meter-requests`), api(`/properties/${pid}/maintenance`)]);
+  const p = props.find((x) => x.id === pid);
+  if (!p) { el.innerHTML = `<div class="empty"><b>${tr('Property not found')}</b></div>`; return; }
+  const t = today();
+  const period = t.slice(0, 7);
+  const ro = LANG === 'ro';
+
+  const unpaid = charges.filter((c) => c.status !== 'paid');
+  const owed = unpaid.reduce((s, c) => s + Number(c.amount || 0), 0);
+  const rent = charges.find((c) => c.type === 'rent' && String(c.period || c.due_date).startsWith(period));
+  const rentLate = rent && rent.status !== 'paid' && rent.due_date < t
+    ? Math.round((new Date(t) - new Date(rent.due_date)) / 86400000) : 0;
+  const rentState = !rent ? { cls: '', txt: ro ? 'Nicio chirie luna aceasta' : 'No rent this month' }
+    : rent.status === 'paid' ? { cls: 'paid', txt: ro ? 'Încasată' : 'Received' }
+    : rent.status === 'pending' ? { cls: 'role', txt: ro ? 'Marcată de chiriaș' : 'Marked by tenant' }
+    : rentLate ? { cls: 'late', txt: `${ro ? 'Întârziată' : 'Overdue'} ${rentLate}${ro ? 'z' : 'd'}` }
+    : { cls: 'unpaid', txt: ro ? 'Neplătită' : 'Unpaid' };
+
+  const isIncome = (r) => ['rent', 'other_income'].includes(r.type);
+  const income = records.filter(isIncome).reduce((s, r) => s + Number(r.amount || 0), 0);
+  const costs = records.filter((r) => !isIncome(r)).reduce((s, r) => s + Number(r.amount || 0), 0);
+  const openMaint = maint.filter((m) => m.status !== 'done');
+  const waitingMeters = meters.filter((m) => m.status !== 'done');
+  const let_ = (tinfo.tenants?.length || 0) > 0; // is anyone actually renting it
+
+  // deadlines that are set on this property, as the same countdown chips used everywhere else
+  const chips = P_DEADLINES.filter(([k]) => p[k]).map(([k, l]) => {
+    const days = Math.ceil((new Date(p[k]) - new Date(t)) / 86400000);
+    return `<span class="dchip ${daysClass(days)}">${esc(tr(l))} <b>${daysLabel(days)}</b> <span class="dchip-d">${fdate(p[k])}</span></span>`;
+  }).join('');
+
+  el.innerHTML = `<div class="pagehead"><div>
+      <h1>${esc(p.name)}${p.managed ? ` <span class="badge role">${tr('managed')}</span>` : ''}</h1>
+      <p>${esc(p.address || '')}${let_ ? `${p.address ? ' · ' : ''}${tr('Tenant')}: ${esc(tinfo.tenants.map((x) => x.name).join(', '))}` : ''}</p></div>
+      <a class="btn ghost small" href="#${let_ ? 'tenants' : 'properties'}">${tr('Full panel')} →</a></div>
+
+    <section class="kpi">
+      ${let_ ? `<div class="card"><div class="label">${tr('Rent this month')}</div>
+        <div class="value">${rent ? money(rent.amount) : '—'}</div>
+        <div style="margin-top:6px"><span class="badge ${rentState.cls}">${rentState.txt}</span></div></div>
+      <div class="card"><div class="label">${tr('Outstanding')}</div>
+        <div class="value ${owed > 0 ? 'neg' : ''}">${money(owed)}</div>
+        <div class="muted" style="font-size:12.5px">${unpaid.length} ${tr(unpaid.length === 1 ? 'unpaid charge' : 'unpaid charges')}</div></div>`
+      // not let: the mortgage is the number that matters month to month
+      : `<div class="card"><div class="label">${tr('Spent')}</div>
+        <div class="value">${money(costs)}</div>
+        <div class="muted" style="font-size:12.5px">${records.filter((r) => !isIncome(r)).length} ${tr('records')}</div></div>
+      <div class="card"><div class="label">${tr('Mortgage')}</div>
+        <div class="value">${p.mortgage_payment ? money(p.mortgage_payment) : '—'}</div>
+        <div class="muted" style="font-size:12.5px">${p.mortgage_lender ? `${esc(p.mortgage_lender)} · ${tr('on day')} ${p.mortgage_due_day ?? '—'}` : tr('No mortgage recorded')}</div></div>`}
+      <div class="card"><div class="label">${p.managed ? tr('This property (not our money)') : tr('This property')}</div>
+        <div class="value ${income - costs < 0 ? 'neg' : ''}">${money(income - costs)}</div>
+        <div class="muted" style="font-size:12.5px">${tr('Income')} ${money(income)} · ${tr('Spent')} ${money(costs)}</div></div>
+    </section>
+
+    ${chips ? `<section class="card" style="margin-top:18px"><h3 style="margin-top:0">${tr('Deadlines')}</h3>
+      <div class="dchips">${chips}</div></section>` : ''}
+
+    ${(() => {
+      const jobs = [];
+      if (unpaid.length) jobs.push(`${unpaid.length} ${tr(unpaid.length === 1 ? 'unpaid charge' : 'unpaid charges')}`);
+      if (waitingMeters.length) jobs.push(`${waitingMeters.length} ${tr(waitingMeters.length === 1 ? 'meter reading' : 'meter readings')}`);
+      if (!jobs.length) return '';
+      return `<section class="card" style="margin-top:18px"><div class="row" style="justify-content:space-between;flex-wrap:wrap;gap:10px">
+        <span><b>${tr('Waiting on the tenant:')}</b> ${jobs.join(' · ')}</span>
+        ${canWrite() && tinfo.tenants?.length ? `<button class="btn small" data-remind>${tr('Send reminder')}</button>` : ''}</div></section>`;
+    })()}
+
+    ${openMaint.length ? `<section class="card" style="margin-top:18px">
+      <h3 style="margin-top:0">${tr('Open maintenance')} · ${openMaint.length}</h3>
+      ${openMaint.map((m) => `<div class="row" style="justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px solid var(--line)">
+        <span><b>${esc(m.title)}</b>${m.reopened_at ? ` <span class="badge late">↻ ${tr('Reopened')}</span>` : ''}
+          <span class="muted">· ${esc(m.reported_by || '')} · ${fdate(m.created_at?.slice(0, 10))}</span></span>
+        ${canWrite() ? `<button class="btn ghost small" data-fix="${m.id}">${tr('Mark fixed')}</button>` : ''}</div>`).join('')}
+    </section>` : ''}
+
+    ${unpaid.length ? `<section class="card" style="margin-top:18px">
+      <h3 style="margin-top:0">${tr('Unpaid')}</h3>
+      <table class="cards"><thead><tr><th>${tr('Due')}</th><th>${tr('What')}</th><th class="right">${tr('Amount')}</th><th>${tr('Status')}</th><th></th></tr></thead><tbody>
+      ${unpaid.map((c) => { const late = c.status === 'unpaid' && c.due_date < t; return `<tr>
+        <td data-label="${tr('Due')}">${fdate(c.due_date)}${late ? ` <span class="badge late">${tr('overdue')}</span>` : ''}</td>
+        <td data-label="${tr('What')}"><b>${esc(c.title)}</b></td>
+        <td class="right amount" data-label="${tr('Amount')}">${money(c.amount)}</td>
+        <td data-label="${tr('Status')}">${c.status === 'pending' ? `<span class="badge role">${tr('pending — tenant marked paid')}</span>` : `<span class="badge unpaid">${tr('unpaid')}</span>`}</td>
+        <td class="right">${canWrite() ? `<button class="btn small" data-confirm="${c.id}">${tr('Confirm paid')}</button>` : ''}</td></tr>`; }).join('')}
+      </tbody></table></section>` : ''}
+
+    <section class="card" style="margin-top:18px">
+      <h3 style="margin-top:0">${tr('Money in this property')}</h3>
+      ${records.length ? `<table class="cards"><thead><tr><th>${tr('Date')}</th><th>${tr('Type')}</th><th>${tr('Note')}</th><th class="right">${tr('Amount')}</th></tr></thead><tbody>
+      ${records.slice(0, 12).map((r) => `<tr>
+        <td data-label="${tr('Date')}">${fdate(r.date)}</td>
+        <td data-label="${tr('Type')}">${tr(({ maintenance: 'Maintenance', renovation: 'Renovation', utility: 'Utility', rent: 'Rent (income)', other_income: 'Other income', other: 'Other' })[r.type] || r.type)}</td>
+        <td data-label="${tr('Note')}">${esc(r.note || '')}</td>
+        <td class="right amount" data-label="${tr('Amount')}" style="color:${isIncome(r) ? 'var(--ok)' : 'inherit'}">${isIncome(r) ? '+' : ''}${money(r.amount)}</td></tr>`).join('')}
+      </tbody></table>` : `<p class="muted" style="margin-bottom:0">${tr('Nothing recorded yet.')}</p>`}
+    </section>`;
+
+  const reload = () => viewProperty(el, id);
+  el.querySelector('[data-remind]')?.addEventListener('click', async (e) => {
+    try { await api(`/properties/${pid}/tenant/remind`, { method: 'POST' }); flashSent(e.target); toast(tr('Reminder sent to the tenant'), 'success'); }
+    catch (err) { toast(err.message, 'error'); }
+  });
+  el.querySelectorAll('[data-confirm]').forEach((b) => (b.onclick = async () => {
+    try { await api(`/properties/${pid}/charges/${b.dataset.confirm}/confirm`, { method: 'POST' }); toast(tr('Payment confirmed'), 'success'); reload(); }
+    catch (err) { toast(err.message, 'error'); }
+  }));
+  el.querySelectorAll('[data-fix]').forEach((b) => (b.onclick = async () => {
+    try { await api(`/properties/${pid}/maintenance/${b.dataset.fix}/resolve`, { method: 'POST' }); reload(); }
+    catch (err) { toast(err.message, 'error'); }
+  }));
+}
+
 /* ---------- tenants: every rented property's tenant admin in one place ---------- */
 async function viewTenants(el) {
   const props = await api('/properties');
@@ -2405,7 +2547,9 @@ async function renderTenantBox(box, p) {
     api(`/properties/${p.id}/tenant`), api(`/properties/${p.id}/charges`), api(`/properties/${p.id}/meter-requests`),
     api(`/properties/${p.id}/maintenance`)]);
   const t = today();
-  box.innerHTML = `<h3 style="margin-top:16px">Tenant & rent</h3>
+  box.innerHTML = `<div class="row" style="justify-content:space-between;align-items:center;gap:10px;margin-top:16px">
+      <h3 style="margin:0">Tenant & rent</h3>
+      <a class="btn small" href="#property/${p.id}">${tr('Open dashboard')} →</a></div>
     <p class="muted">${p.rent_amount ? `${tr('Rent:')} <b>${money(p.rent_amount)}</b> ${tr('/ month, due day')} ${p.rent_due_day || 1} — ${tr('the rent charge is generated automatically once a tenant has joined.')}` : tr('No rent set yet — set it here and the monthly rent charge generates itself.')}</p>
     ${canWrite() ? `<form data-rentform class="row" style="flex-wrap:wrap;align-items:flex-end;gap:8px">
       <div><label>${tr('Rent')} (${cur()})</label><input name="rent_amount" type="number" step="0.01" min="0" value="${p.rent_amount ?? ''}" style="max-width:130px"></div>
