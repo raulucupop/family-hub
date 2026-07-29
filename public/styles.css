@@ -392,7 +392,9 @@ details.foldcard[open] > summary::after { transform: rotate(180deg); }
   }
   .brand { margin: 0; font-size: 1.02rem; flex-shrink: 0; }
   .brand small { display: none; }
-  .sidebar .navlink, .whoami, .sidebar .spacer { display: none; } /* nav lives in the tab bar now */
+  /* nav lives in the tab bar now — the group headings go with their links, or they strand
+     themselves next to the brand as three words labelling nothing */
+  .sidebar .navlink, .sidebar .navgroup, .whoami, .sidebar .spacer { display: none; }
 
   .tabbar {
     display: flex; position: fixed; bottom: 0; left: 0; right: 0; z-index: 45;

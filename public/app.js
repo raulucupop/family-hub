@@ -2320,7 +2320,10 @@ async function viewProperties(el) {
         ...members.map((m) => [m.id, m.name]),
         ...(tenants.length ? [['tenant', `${tr('Tenant — bill to')} ${esc(tenants[0].name)}`]] : [])];
     list.appendChild(entityCard(p, {
+      // every property gets its dashboard from the row itself — owner-occupied ones had it buried
+      // in the tenant panel, which is both hidden until you expand and the wrong place to look
       icon: '⌂', badge: p.managed ? tr('managed') : '',
+      headLink: `#property/${p.id}`, headLinkLabel: tr('Dashboard'),
       subtitle: [p.address, p.managed ? tr('not owned by us') : `${tr('Owner')}: ${mname[p.owner_id] || tr('whole family')}`, p.mortgage_lender ? `${tr('Mortgage')}: ${p.mortgage_lender}, ${money(p.mortgage_payment)} ${tr('on day')} ${p.mortgage_due_day ?? '—'}` : null].filter(Boolean).join(' · '),
       deadlines: P_DEADLINES, route: 'properties',
       // rent + meter schedule live in the always-visible Tenant panel below (renderTenantBox), not
@@ -2482,8 +2485,10 @@ async function viewTenants(el) {
     card.className = 'entity';
     card.open = rows.length === 1;
     card.innerHTML = `<summary>
-      <span><b>${esc(p.name)}</b>${p.address ? ` <span class="muted">${esc(p.address)}</span>` : ''}</span>
-      <span class="muted">${status}</span></summary><div class="body"></div>`;
+      <span><b>${esc(p.name)}</b>${p.managed ? ` <span class="badge role">${tr('managed')}</span>` : ''}${p.address ? ` <span class="muted">${esc(p.address)}</span>` : ''}</span>
+      <span class="row"><span class="muted">${status}</span>
+        <a class="btn small" data-nav href="#property/${p.id}">${tr('Dashboard')} →</a></span></summary><div class="body"></div>`;
+    card.querySelector('[data-nav]').addEventListener('click', (e) => e.stopPropagation());
     list.appendChild(card);
     // reuse the exact panel from the property card: code, tenants, invoices, meters, maintenance
     renderTenantBox(card.querySelector('.body'), p);
@@ -2547,9 +2552,7 @@ async function renderTenantBox(box, p) {
     api(`/properties/${p.id}/tenant`), api(`/properties/${p.id}/charges`), api(`/properties/${p.id}/meter-requests`),
     api(`/properties/${p.id}/maintenance`)]);
   const t = today();
-  box.innerHTML = `<div class="row" style="justify-content:space-between;align-items:center;gap:10px;margin-top:16px">
-      <h3 style="margin:0">Tenant & rent</h3>
-      <a class="btn small" href="#property/${p.id}">${tr('Open dashboard')} →</a></div>
+  box.innerHTML = `<h3 style="margin-top:16px">Tenant & rent</h3>
     <p class="muted">${p.rent_amount ? `${tr('Rent:')} <b>${money(p.rent_amount)}</b> ${tr('/ month, due day')} ${p.rent_due_day || 1} — ${tr('the rent charge is generated automatically once a tenant has joined.')}` : tr('No rent set yet — set it here and the monthly rent charge generates itself.')}</p>
     ${canWrite() ? `<form data-rentform class="row" style="flex-wrap:wrap;align-items:flex-end;gap:8px">
       <div><label>${tr('Rent')} (${cur()})</label><input name="rent_amount" type="number" step="0.01" min="0" value="${p.rent_amount ?? ''}" style="max-width:130px"></div>
@@ -2769,7 +2772,8 @@ function entityCard(item, cfg) {
     }).join('');
   wrap.innerHTML = `<summary><span>${cfg.icon ? `<span class="entity-ic" aria-hidden="true">${cfg.icon}</span>` : ''}<b>${esc(item.name)}</b>${cfg.badge ? ` <span class="badge role">${esc(cfg.badge)}</span>` : ''} <span class="muted">${esc(cfg.subtitle || '')}</span>
       ${chips ? `<span class="dchips">${chips}</span>` : ''}</span>
-    ${canWrite() ? `<span class="row"><button class="btn ghost small" data-edit>Edit</button><button class="btn danger small" data-del>Delete</button></span>` : ''}</summary>
+    <span class="row">${cfg.headLink ? `<a class="btn small" data-nav href="${cfg.headLink}">${esc(cfg.headLinkLabel || '')} →</a>` : ''}
+    ${canWrite() ? `<button class="btn ghost small" data-edit>Edit</button><button class="btn danger small" data-del>Delete</button>` : ''}</span></summary>
     <div class="body">
       <div data-editbox hidden style="margin-bottom:12px"></div>
       <div class="deadgrid">${dl}</div>
@@ -2826,6 +2830,8 @@ function entityCard(item, cfg) {
     if (!confirm(`${tr('Delete')} „${item.name}” ${tr('and all its history?')}`)) return;
     await api(`/${cfg.route}/${item.id}`, { method: 'DELETE' }); cfg.refresh();
   });
+  // a link inside <summary> would otherwise expand the card on its way out
+  wrap.querySelector('[data-nav]')?.addEventListener('click', (e) => e.stopPropagation());
   wrap.querySelector('[data-edit]')?.addEventListener('click', (e) => {
     e.preventDefault(); wrap.open = true;
     const box = wrap.querySelector('[data-editbox]');
