@@ -773,6 +773,35 @@ app.delete('/api/budgets/:id', auth, canWrite, (req, res) => {
 // whole window (not by the months that happened to have spending) keeps a once-a-quarter category
 // from being budgeted as if it were monthly. Feeds both the "start my budgets" button and the
 // dashboard's "this category is above its usual" line.
+// Money this month is already committed to but which has not posted as an expense yet: the credit
+// instalment due on the 28th, the auto-paid subscription, the recurring cost logged on its day.
+// The month forecast needs these — projecting only from a daily run-rate reads low early in the
+// month, when most of the fixed charges are still ahead of you. Computed here rather than in the
+// browser so it uses the same scheduling rules that will actually post them.
+app.get('/api/upcoming-month', auth, (req, res) => {
+  const fid = req.user.family_id;
+  const today = new Date().toISOString().slice(0, 10);
+  const period = today.slice(0, 7);
+  const monthEnd = monthDate(period, 31);
+  const items = [];
+
+  for (const c of db.prepare('SELECT * FROM credits WHERE family_id = ?').all(fid)) {
+    if (c.auto_expense_period === period) continue; // already posted this month
+    const stats = creditStats(c, db.prepare('SELECT * FROM credit_payments WHERE credit_id = ?').all(c.id));
+    if (!(stats.months_left > 0) && stats.balance <= 0.005) continue; // paid off
+    const date = monthDate(period, Number(String(c.start_date).slice(8, 10)) || 1);
+    items.push({ kind: 'credit', label: c.name, amount: Math.round((stats.monthly_payment + (Number(c.commission) || 0)) * 100) / 100, date });
+  }
+  for (const b of db.prepare("SELECT * FROM bills WHERE family_id = ? AND auto_pay = 1 AND status = 'unpaid' AND amount > 0 AND due_date > ? AND due_date <= ?").all(fid, today, monthEnd)) {
+    items.push({ kind: 'bill', label: b.name, amount: Number(b.amount), date: b.due_date });
+  }
+  for (const r of db.prepare('SELECT * FROM recurring_expenses WHERE family_id = ? AND active = 1').all(fid)) {
+    if (r.last_period === period) continue; // already logged this month
+    items.push({ kind: 'recurring', label: r.note || r.category, amount: Number(r.amount), date: monthDate(period, r.day) });
+  }
+  items.sort((a, b) => a.date.localeCompare(b.date));
+  res.json({ total: Math.round(items.reduce((s, i) => s + i.amount, 0) * 100) / 100, items });
+});
 const BUDGET_BASIS_MONTHS = 3;
 app.get('/api/budgets/suggest', auth, (req, res) => {
   const n = BUDGET_BASIS_MONTHS;
@@ -2527,6 +2556,24 @@ function tarFiles(dir, names) {
   parts.push(Buffer.alloc(1024)); // two zero blocks terminate the archive
   return Buffer.concat(parts);
 }
+// The same consistent snapshot the weekly mail takes, but on demand and straight down the wire —
+// an off-site copy without going through cPanel. Admin only: the file is the whole database.
+app.get('/api/backup', auth, (req, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admins only' });
+  const tmp = path.join(DATA_DIR, `backup-dl-${crypto.randomBytes(6).toString('hex')}.db`);
+  try {
+    db.exec(`VACUUM INTO '${tmp.replace(/\\/g, '/').replace(/'/g, "''")}'`);
+    const gz = require('zlib').gzipSync(fs.readFileSync(tmp));
+    res.setHeader('Content-Type', 'application/gzip');
+    res.setHeader('Content-Disposition', `attachment; filename="familyhub-${new Date().toISOString().slice(0, 10)}.db.gz"`);
+    res.send(gz);
+  } catch (err) {
+    console.error('backup download:', err.message);
+    res.status(500).json({ error: 'Could not build the backup' });
+  } finally {
+    try { fs.unlinkSync(tmp); } catch {} // the snapshot is a temp file whatever happened
+  }
+});
 async function runWeeklyBackup() {
   if (!process.env.MAIL_FROM) return;
   const fams = db.prepare('SELECT id FROM families').all();

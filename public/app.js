@@ -195,6 +195,20 @@ const RO = {
   'Add a loan above — the monthly payment is calculated from the dobândă, and anticipated payments show how much interest you save.':
     'Adaugă un credit mai sus — rata lunară e calculată din dobândă, iar plățile anticipate arată câtă dobândă economisești.',
   'Monthly total': 'Total lunar', 'principal': 'principal', 'interest': 'dobândă', 'com.': 'com.',
+  // debt overview
+  'Debt': 'Datorii', 'No debt': 'Nicio datorie', 'Owed today': 'Datorat azi', 'Every month': 'În fiecare lună',
+  'Debt-free': 'Fără datorii din', 'loan': 'credit', 'loans': 'credite', 'Loans': 'Credite', 'Credit': 'Credit',
+  'instalments + commission': 'rate + comision', 'Interest': 'Dobândă', 'Total cost of borrowing': 'Costul total al împrumutului',
+  'paid so far': 'plătită până acum', 'still to pay': 'rămasă de plătit',
+  'Nothing outstanding — add a loan under Credits and it is summarised here.': 'Nimic de plată — adaugă un credit la Credite și apare rezumat aici.',
+  // year in review
+  'Year': 'An', 'Monthly average': 'Media lunară',
+  'months with spending': 'luni cu cheltuieli', 'month with spending': 'lună cu cheltuieli',
+  'Month by month': 'Lună de lună', 'What moved': 'Ce s-a schimbat', 'Change': 'Diferență', 'Biggest expenses': 'Cele mai mari cheltuieli',
+  // backup
+  'Backup': 'Copie de siguranță', 'Download backup': 'Descarcă copia', 'Backup downloaded': 'Copie descărcată',
+  'A compressed copy of the whole database, taken cleanly while the app keeps running. Scans and invoices are not in it — those live in the uploads folder.':
+    'O copie comprimată a întregii baze de date, făcută curat în timp ce aplicația rulează. Scanările și facturile nu sunt incluse — ele stau în folderul uploads.',
   '1 month in advance (principal + 1%)': 'O lună în avans (principal + 1%)', 'Balance today': 'Sold azi', 'Payoff': 'Achitare', 'mo left': 'luni rămase',
   'cleared!': 'achitat integral!', 'on schedule': 'conform planului', 'in advance': 'în avans',
   'What if you paid extra every month?': 'Dar dacă ai plăti în plus în fiecare lună?',
@@ -1251,7 +1265,7 @@ function dashSkeleton() {
 // Categories that arrive as a single fixed charge rather than day-by-day spending, so they must be
 // kept out of the run-rate when forecasting the month (see dashInsight).
 const PROJECTION_FIXED = new Set(['Credit']);
-function dashInsight(stats, suggest, months) {
+function dashInsight(stats, suggest, months, upcoming) {
   if (months !== 1) return '';
   const ro = LANG === 'ro';
   const now = new Date();
@@ -1266,11 +1280,15 @@ function dashInsight(stats, suggest, months) {
     const oneOff = (stats.byCategory || [])
       .filter((c) => PROJECTION_FIXED.has(c.category)).reduce((s, c) => s + c.total, 0);
     const variable = Math.max(0, stats.spent - oneOff);
-    const projected = oneOff + (variable / day) * inMonth;
+    // ...and the fixed charges still ahead of you this month (instalments, auto-paid bills,
+    // recurring costs) are added at face value: they are committed, and they are not daily habits
+    // either. Without them the forecast read low all month and only came true on the last day.
+    const committed = Number(upcoming?.total) || 0;
+    const projected = oneOff + committed + (variable / day) * inMonth;
     const monthName = now.toLocaleDateString(ro ? 'ro-RO' : 'en-GB', { month: 'long', timeZone: 'UTC' });
     bits.push(ro
-      ? `În ritmul ăsta, ${monthName} se închide pe la <b class="amount">${money(projected)}</b>.`
-      : `At this pace, ${monthName} closes around <b class="amount">${money(projected)}</b>.`);
+      ? `În ritmul ăsta, ${monthName} se închide pe la <b class="amount">${money(projected)}</b>${committed > 0 ? ` (include <b class="amount">${money(committed)}</b> deja programați)` : ''}.`
+      : `At this pace, ${monthName} closes around <b class="amount">${money(projected)}</b>${committed > 0 ? ` (including <b class="amount">${money(committed)}</b> already scheduled)` : ''}.`);
     if (stats.income > 0) {
       const diff = stats.income - projected;
       bits.push(diff >= 0
@@ -1313,11 +1331,13 @@ async function viewDashboard(el) {
   const userQ = DASH_VIEW === 'all' ? '' : `&user=${DASH_VIEW}`;
   // the KPI tiles follow the period selector, but a trend chart of ONE bar teaches nothing —
   // so the history chart always pulls a rolling 12 months, whatever the tiles are showing
-  const [reminders, stats, trend12, budgets, rent, savings, suggest] = await Promise.all([
+  const [reminders, stats, trend12, budgets, rent, savings, suggest, upcoming] = await Promise.all([
     api(`/reminders?days=60${userQ}`), api(`/stats?months=${DASH_MONTHS}${userQ}`),
     DASH_MONTHS >= 12 ? null : api(`/stats?months=12${userQ}`).catch(() => null), api('/budgets'),
     api('/rent-status').catch(() => []), api('/savings').catch(() => ({ goals: [] })),
     api('/budgets/suggest').catch(() => null),
+    // charges committed but not yet posted; a whole-family, single-month idea, so only fetched then
+    (DASH_MONTHS === 1 && DASH_VIEW === 'all') ? api('/upcoming-month').catch(() => null) : null,
   ]);
   const trendStats = trend12 || stats;
   // monthly series behind each KPI, for the sparklines under the numbers
@@ -1357,7 +1377,7 @@ async function viewDashboard(el) {
       <a class="card clickcard" href="#money" data-tab="expenses"><div class="label">${tr('Spent')} · ${esc(tr(periodLabel))}</div><div class="value" data-cu="${stats.spent}">${money(stats.spent)}</div>${deltaHtml(stats.spent, stats.prev?.spent, 'up-bad')}<span class="spark-neg">${sparkline(spendSeries)}</span></a>
       <div class="card"><div class="label">Left over</div><div class="value ${net < 0 ? 'neg' : ''}" data-cu="${net}">${money(net)}</div>${deltaHtml(net, (stats.prev?.income ?? 0) - (stats.prev?.spent ?? 0), 'up-good')}<span class="spark-pos">${sparkline(netSeries)}</span></div>
     </section>
-    ${dashInsight(stats, suggest, DASH_MONTHS)}
+    ${dashInsight(stats, suggest, DASH_MONTHS, upcoming)}
     ${rentHtml(rent)}
     <section class="grid2" style="margin-top:18px">
       <div class="card"><h3>${tr('Spending by category')} · ${esc(tr(periodLabel))}</h3><div class="chartbox"><canvas id="catChart"></canvas></div></div>
@@ -1581,7 +1601,7 @@ async function viewMoney(el, tab) {
   el.innerHTML = `<div class="pagehead"><div><h1>Budget & expenses</h1><p>Track what comes in, what goes out, and set monthly limits.</p></div>
     <a class="btn ghost small" href="/api/export/expenses.csv">Export expenses (CSV)</a></div>
     <div class="tabs" style="max-width:680px">
-      ${[['expenses', 'Expenses'], ['income', 'Income'], ['budgets', 'Budgets'], ['credits', 'Credits'], ['savings', 'Savings']].map(([t, l]) => `<button data-t="${t}" class="${t === tab ? 'active' : ''}">${l}</button>`).join('')}
+      ${[['expenses', 'Expenses'], ['income', 'Income'], ['budgets', 'Budgets'], ['credits', 'Credits'], ['savings', 'Savings'], ['debt', 'Debt'], ['year', 'Year']].map(([t, l]) => `<button data-t="${t}" class="${t === tab ? 'active' : ''}">${tr(l)}</button>`).join('')}
     </div><div id="moneybody">Loading…</div>`;
   el.querySelectorAll('.tabs button').forEach((b) => (b.onclick = () => viewMoney(el, b.dataset.t)));
   const body = $('#moneybody');
@@ -1589,7 +1609,138 @@ async function viewMoney(el, tab) {
   if (tab === 'income') return moneyIncome(body);
   if (tab === 'credits') return moneyCredits(body);
   if (tab === 'savings') return moneySavings(body);
+  if (tab === 'debt') return moneyDebt(body);
+  if (tab === 'year') return moneyYear(body);
   return moneyBudgets(body);
+}
+/* ---------- debt overview ----------
+   Each credit card already shows its own progress, but nothing ever added them up: what the
+   household owes today, what it pays every month, and — the number worth seeing — when it is
+   finally clear. creditStats hands us base_total_interest (what the loan costs run to term) and
+   total_interest (what it costs given the overpayments actually made), so their difference is
+   exactly the interest those overpayments have saved. That was already computed and never shown. */
+async function moneyDebt(body) {
+  const credits = await api('/credits');
+  const live = credits.filter((c) => Number(c.months_left) > 0 || Number(c.balance) > 0.005);
+  if (!live.length) {
+    body.innerHTML = `<div class="card empty"><b>${tr('No debt')}</b>${tr('Nothing outstanding — add a loan under Credits and it is summarised here.')}</div>`;
+    return;
+  }
+  const owed = live.reduce((s, c) => s + Number(c.balance || 0), 0);
+  const perMonth = live.reduce((s, c) => s + Number(c.monthly_total || 0), 0);
+  const totalInterest = credits.reduce((s, c) => s + Number(c.total_interest || 0), 0);
+  const saved = credits.reduce((s, c) => s + Number(c.interest_saved || 0), 0);
+  // Interest still ahead of you is what the remaining instalments add up to beyond the remaining
+  // principal; what's behind you is the rest. Derived rather than stored, but from real figures.
+  const interestLeft = live.reduce((s, c) =>
+    s + Math.max(0, (Number(c.monthly_payment || 0) * Math.round(Number(c.months_left) || 0)) - Number(c.balance || 0)), 0);
+  const paidInterest = Math.max(0, totalInterest - interestLeft);
+  const maxLeft = Math.max(...live.map((c) => Math.round(Number(c.months_left) || 0)));
+  const free = new Date(); free.setUTCDate(1); free.setUTCMonth(free.getUTCMonth() + maxLeft);
+  const freeLabel = free.toLocaleDateString(LANG === 'ro' ? 'ro-RO' : 'en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+
+  body.innerHTML = `
+    <section class="kpi">
+      <div class="card"><div class="label">${tr('Owed today')}</div><div class="value neg">${money(owed)}</div>
+        <div class="muted" style="font-size:12.5px">${live.length} ${tr(live.length === 1 ? 'loan' : 'loans')}</div></div>
+      <div class="card"><div class="label">${tr('Every month')}</div><div class="value">${money(perMonth)}</div>
+        <div class="muted" style="font-size:12.5px">${tr('instalments + commission')}</div></div>
+      <div class="card"><div class="label">${tr('Debt-free')}</div><div class="value" style="font-size:20px">${esc(freeLabel)}</div>
+        <div class="muted" style="font-size:12.5px">${maxLeft} ${tr('mo left')}</div></div>
+    </section>
+
+    ${saved > 0.5 ? `<section class="card insight" style="margin-top:18px"><span class="insight-ic" aria-hidden="true">◆</span>
+      <p>${LANG === 'ro'
+        ? `Plățile anticipate ți-au economisit <b class="amount" style="color:var(--ok)">${money(saved)}</b> din dobândă.`
+        : `Your overpayments have saved <b class="amount" style="color:var(--ok)">${money(saved)}</b> of interest.`}</p></section>` : ''}
+
+    <section class="card" style="margin-top:18px">
+      <h3 style="margin-top:0">${tr('Interest')}</h3>
+      <div class="row" style="justify-content:space-between"><span>${tr('Total cost of borrowing')}</span>
+        <span class="amount">${money(totalInterest)}</span></div>
+      <div class="bar" style="margin-top:8px"><i style="width:${totalInterest > 0 ? Math.min(100, (paidInterest / totalInterest) * 100) : 0}%"></i></div>
+      <div class="row" style="justify-content:space-between;margin-top:4px">
+        <span class="muted" style="font-size:12.5px">${tr('paid so far')} ${money(paidInterest)}</span>
+        <span class="muted" style="font-size:12.5px">${tr('still to pay')} ${money(Math.max(0, totalInterest - paidInterest))}</span></div>
+    </section>
+
+    <section class="card" style="margin-top:18px">
+      <h3 style="margin-top:0">${tr('Loans')}</h3>
+      <table class="cards"><thead><tr><th>${tr('Credit')}</th><th class="right">${tr('Balance today')}</th><th class="right">${tr('Monthly total')}</th><th class="right">${tr('mo left')}</th></tr></thead><tbody>
+      ${live.slice().sort((a, b) => Number(b.balance) - Number(a.balance)).map((c) => `<tr>
+        <td data-label="${tr('Credit')}"><b>${esc(c.name)}</b>${c.lender ? ` <span class="muted">· ${esc(c.lender)}</span>` : ''}</td>
+        <td class="right amount" data-label="${tr('Balance today')}">${money(c.balance)}</td>
+        <td class="right amount" data-label="${tr('Monthly total')}">${money(Number(c.monthly_payment || 0) + (Number(c.commission) || 0))}</td>
+        <td class="right" data-label="${tr('mo left')}">${Math.round(Number(c.months_left) || 0)}</td></tr>`).join('')}
+      </tbody></table>
+    </section>`;
+}
+/* ---------- year in review ----------
+   The dashboard answers "how is this month going"; this answers "how was the year". Same stats
+   endpoint, twelve months of it, plus the year before for comparison — the point is which
+   categories moved, not just what the total was. */
+async function moneyYear(body) {
+  const now = new Date();
+  const yr = now.getUTCFullYear();
+  const [cur, prev, all] = await Promise.all([
+    api('/stats?months=12'), api('/stats?months=24').catch(() => null), api('/expenses'),
+  ]);
+  const inYear = (d, y) => String(d).startsWith(String(y));
+  const thisYear = all.filter((e) => inYear(e.date, yr));
+  const lastYear = all.filter((e) => inYear(e.date, yr - 1));
+  const sum = (rows) => rows.reduce((s, e) => s + Number(e.amount || 0), 0);
+  const byCat = (rows) => rows.reduce((m, e) => ((m[e.category] = (m[e.category] || 0) + Number(e.amount || 0)), m), {});
+  const curCat = byCat(thisYear), prevCat = byCat(lastYear);
+  const spentY = sum(thisYear), spentPrev = sum(lastYear);
+
+  // month-by-month bars, drawn from the same numbers rather than a chart library
+  const months = Array.from({ length: 12 }, (_, i) => `${yr}-${String(i + 1).padStart(2, '0')}`);
+  const perMonth = months.map((m) => thisYear.filter((e) => e.date.startsWith(m)).reduce((s, e) => s + Number(e.amount || 0), 0));
+  const peak = Math.max(...perMonth, 1);
+
+  const moves = Object.keys({ ...curCat, ...prevCat })
+    .map((c) => ({ c, now: curCat[c] || 0, then: prevCat[c] || 0, diff: (curCat[c] || 0) - (prevCat[c] || 0) }))
+    .filter((x) => Math.abs(x.diff) >= 50 && x.then > 0)
+    .sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff)).slice(0, 6);
+  const biggest = thisYear.slice().sort((a, b) => Number(b.amount) - Number(a.amount)).slice(0, 8);
+
+  body.innerHTML = `
+    <section class="kpi">
+      <div class="card"><div class="label">${tr('Spent')} · ${yr}</div><div class="value">${money(spentY)}</div>
+        ${spentPrev > 0 ? `<div class="muted" style="font-size:12.5px">${spentPrev > 0 ? `${spentY >= spentPrev ? '▲' : '▼'} ${Math.abs(Math.round(((spentY - spentPrev) / spentPrev) * 100))}% ${tr('vs')} ${yr - 1}` : ''}</div>` : ''}</div>
+      <div class="card"><div class="label">${tr('Monthly average')}</div>
+        <div class="value">${money(spentY / Math.max(1, perMonth.filter((v) => v > 0).length))}</div>
+        <div class="muted" style="font-size:12.5px">${(() => { const n = perMonth.filter((v) => v > 0).length;
+          return `${n} ${tr(n === 1 ? 'month with spending' : 'months with spending')}`; })()}</div></div>
+      <div class="card"><div class="label">${yr - 1}</div><div class="value">${money(spentPrev)}</div>
+        <div class="muted" style="font-size:12.5px">${lastYear.length} ${tr('records')}</div></div>
+    </section>
+
+    <section class="card" style="margin-top:18px"><h3 style="margin-top:0">${tr('Month by month')} · ${yr}</h3>
+      <div class="yearbars">${months.map((m, i) => `
+        <div class="yearbar" title="${m} · ${money(perMonth[i])}">
+          <div class="yb-track"><div class="yb-fill" style="height:${(perMonth[i] / peak) * 100}%"></div></div>
+          <div class="yb-label">${new Date(m + '-01T00:00:00Z').toLocaleDateString(LANG === 'ro' ? 'ro-RO' : 'en-GB', { month: 'short', timeZone: 'UTC' })}</div>
+        </div>`).join('')}</div>
+    </section>
+
+    ${moves.length ? `<section class="card" style="margin-top:18px"><h3 style="margin-top:0">${tr('What moved')} · ${yr} ${tr('vs')} ${yr - 1}</h3>
+      <table class="cards"><thead><tr><th>${tr('Category')}</th><th class="right">${yr - 1}</th><th class="right">${yr}</th><th class="right">${tr('Change')}</th></tr></thead><tbody>
+      ${moves.map((x) => `<tr>
+        <td data-label="${tr('Category')}"><span class="catcell"><span class="catdot" style="--cat:${catColor(x.c)}"></span>${esc(tr(x.c))}</span></td>
+        <td class="right amount" data-label="${yr - 1}">${money(x.then)}</td>
+        <td class="right amount" data-label="${yr}">${money(x.now)}</td>
+        <td class="right amount" data-label="${tr('Change')}" style="color:${x.diff > 0 ? 'var(--red)' : 'var(--ok)'}">${x.diff > 0 ? '+' : ''}${money(x.diff)}</td></tr>`).join('')}
+      </tbody></table></section>` : ''}
+
+    ${biggest.length ? `<section class="card" style="margin-top:18px"><h3 style="margin-top:0">${tr('Biggest expenses')} · ${yr}</h3>
+      <table class="cards"><thead><tr><th>${tr('Date')}</th><th>${tr('Category')}</th><th>${tr('Note')}</th><th class="right">${tr('Amount')}</th></tr></thead><tbody>
+      ${biggest.map((e) => `<tr>
+        <td data-label="${tr('Date')}">${fdate(e.date)}</td>
+        <td data-label="${tr('Category')}"><span class="catcell"><span class="catdot" style="--cat:${catColor(e.category)}"></span>${esc(tr(e.category))}</span></td>
+        <td data-label="${tr('Note')}">${esc(e.note || '')}</td>
+        <td class="right amount" data-label="${tr('Amount')}">${money(e.amount)}</td></tr>`).join('')}
+      </tbody></table></section>` : ''}`;
 }
 function whoFilter(id, members, who) {
   return `<select id="${id}" style="width:160px">
@@ -1856,6 +2007,31 @@ async function moneyBudgets(body, month = thisMonth()) {
 }
 
 /* ---------- savings / economy account & goals ---------- */
+// "At this pace, March 2027." A goal with a target but no sense of when you reach it is just a
+// number; the honest way to date it is the rate you have actually saved into it, so the estimate
+// only appears once there is enough history to mean something (two deposits, spanning a month).
+function goalEta(g, entries) {
+  if (g.done || g.saved >= g.target) return '';
+  const mine = (entries || []).filter((e) => String(e.goal_id) === String(g.id) && e.kind === 'deposit');
+  if (mine.length < 2) return '';
+  const sorted = mine.slice().sort((a, b) => new Date(a.date) - new Date(b.date));
+  const months = (new Date(sorted[sorted.length - 1].date) - new Date(sorted[0].date)) / (30.44 * 86400000);
+  if (months < 1) return ''; // a fortnight of history says nothing about next year
+  // The window starts AT the first deposit, so only what came after it accumulated during the
+  // window. Counting it too would divide three deposits by two months and overstate the pace by half.
+  const inWindow = sorted.slice(1).reduce((s, e) => s + Number(e.amount || 0), 0);
+  const perMonth = inWindow / months;
+  if (!(perMonth > 0)) return '';
+  const need = Math.ceil((g.target - g.saved) / perMonth);
+  if (!Number.isFinite(need) || need > 600) return ''; // beyond 50 years it is not a forecast
+  const when = new Date();
+  when.setUTCDate(1);
+  when.setUTCMonth(when.getUTCMonth() + need);
+  const label = when.toLocaleDateString(LANG === 'ro' ? 'ro-RO' : 'en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+  return LANG === 'ro'
+    ? `La ritmul ăsta (${money(perMonth)}/lună), ajungi acolo în <b>${label}</b>.`
+    : `At this pace (${money(perMonth)}/mo), you get there in <b>${label}</b>.`;
+}
 async function moneySavings(body) {
   const [data, members] = await Promise.all([api('/savings'), api('/family/members')]);
   const openGoals = data.goals.filter((g) => !g.done);
@@ -1869,6 +2045,7 @@ async function moneySavings(body) {
       ${data.goals.length ? data.goals.map((g) => {
         const pct = Math.min(100, Math.max(0, (g.saved / g.target) * 100));
         const reached = g.saved >= g.target;
+        const eta = goalEta(g, data.entries);
         return `<div style="margin-bottom:14px;${g.done ? 'opacity:.55' : ''}">
           <div class="row" style="justify-content:space-between;flex-wrap:wrap">
             <span><b style="${g.done ? 'text-decoration:line-through' : ''}">${esc(g.title)}</b> <span class="muted">${g.user_name ? '· ' + esc(g.user_name) : '· family'}</span>
@@ -1877,6 +2054,7 @@ async function moneySavings(body) {
               ${canWrite() ? `<button class="btn ghost small" data-gtog="${g.id}">${g.done ? 'Reopen' : 'Mark done'}</button>
               <button class="btn danger small" data-gdel="${g.id}">✕</button>` : ''}</span></div>
           <div class="bar"><i style="width:${pct}%;${reached ? '' : ''}"></i></div>
+          ${eta ? `<div class="muted" style="font-size:12.5px;margin-top:4px">${eta}</div>` : ''}
         </div>`;
       }).join('') : `<p class="muted">No goals yet — set one below and tag deposits to it.</p>`}
       ${canWrite() ? `<form id="goalform" class="formgrid" style="margin-top:10px">
@@ -3320,7 +3498,10 @@ async function viewSettings(el) {
         <div style="margin-top:6px"><b>${esc(k.name)}</b></div>
         <div class="row" style="justify-content:center;margin-top:4px">
           <label class="btn ghost small" style="display:inline-block">Upload<input type="file" data-avatar="${k.id}" accept="image/*" hidden></label>
-          ${k.avatar ? `<button class="btn danger small" data-avadel="${k.id}">✕</button>` : ''}</div></div>`).join('')}</div></div>` : ''}`;
+          ${k.avatar ? `<button class="btn danger small" data-avadel="${k.id}">✕</button>` : ''}</div></div>`).join('')}</div></div>` : ''}
+    ${ME.role === 'admin' ? `<div class="card" style="margin-top:16px"><h3>${tr('Backup')}</h3>
+      <p class="muted" style="margin-top:0">${tr('A compressed copy of the whole database, taken cleanly while the app keeps running. Scans and invoices are not in it — those live in the uploads folder.')}</p>
+      <button class="btn small" id="dlbackup">${tr('Download backup')}</button></div>` : ''}`;
   el.querySelectorAll('[data-theme]').forEach((b) => (b.onclick = async () => {
     try { const u = await api('/settings', { method: 'POST', body: { theme: b.dataset.theme } }); ME = { ...ME, ...u }; applyTheme(); render(); }
     catch (err) { toast(err.message); }
@@ -3337,6 +3518,23 @@ async function viewSettings(el) {
     const body = { notif_muted: muted, quiet_start: qs === '' || qe === '' ? null : Number(qs), quiet_end: qs === '' || qe === '' ? null : Number(qe) };
     try { const u = await api('/settings', { method: 'POST', body }); ME = { ...ME, ...u }; toast('Saved'); pollNotifications(); }
     catch (err) { toast(err.message); }
+  });
+  $('#dlbackup')?.addEventListener('click', async (e) => {
+    const btn = e.target;
+    btn.disabled = true;
+    try {
+      // fetched rather than linked so a failure surfaces as a toast instead of a page full of JSON
+      const r = await fetch('/api/backup', { credentials: 'same-origin' });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Request failed');
+      const blob = await r.blob();
+      const a = Object.assign(document.createElement('a'), {
+        href: URL.createObjectURL(blob),
+        download: `familyhub-${today()}.db.gz`,
+      });
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+      toast(tr('Backup downloaded'), 'success');
+    } catch (err) { toast(err.message, 'error'); } finally { btn.disabled = false; }
   });
   $('#pwbtn')?.addEventListener('click', () => passwordChangeModal());
   $('#nameform')?.addEventListener('submit', async (e) => {
