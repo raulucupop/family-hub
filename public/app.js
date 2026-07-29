@@ -234,6 +234,7 @@ const RO = {
   '— none —': '— niciunul —', 'Electricity + gas': 'Electricitate + gaz', 'Electricity + gas + water': 'Electricitate + gaz + apă',
   'Payment link (Revolut.me)': 'Link de plată (Revolut.me)', 'Mortgage': 'Ipotecă', 'on day': 'în ziua',
   // properties we administer for someone else
+  'Property & things': 'Proprietăți și bunuri', 'Household': 'Gospodărie',
   'Ownership': 'Deținere', 'Ours': 'A noastră', 'Managed for someone else': 'Administrată pentru altcineva',
   'managed': 'administrată', 'not owned by us': 'nu e a noastră',
   'The property (not our money)': 'Proprietatea (nu banii noștri)',
@@ -378,6 +379,10 @@ function applyLang() {
   LANG = (ME && ME.lang) || deviceLang();
   if (ME && ME.lang) localStorage.setItem('fh_lang', ME.lang); // the sign-in screen matches next time
   document.documentElement.lang = LANG;
+  // the browser tab and the app were speaking different languages
+  document.title = LANG === 'ro'
+    ? 'Family Hub — buget, facturi și termene'
+    : 'Family Hub — household finance & assets';
 }
 // tr(): translate a string when building templates in JS (for text assembled with interpolation)
 const tr = (s) => (LANG === 'ro' && RO[s]) || s;
@@ -721,10 +726,23 @@ function dayLabel(iso) {
 
 /* ---------- router ---------- */
 const routes = { dashboard: viewDashboard, money: viewMoney, bills: viewBills, search: viewSearch, vehicles: viewVehicles, properties: viewProperties, tenants: viewTenants, acte: viewActe, lists: viewLists, import: viewImport, alerts: viewAlerts, family: viewFamily, settings: viewSettings };
-// page changes cross-fade where the browser supports it; plain render elsewhere
+// Page changes cross-fade where the browser supports it; plain render elsewhere.
+//
+// The cross-fade is decoration — the render is the point — so nothing about the transition may be
+// allowed to swallow it. startViewTransition() throws InvalidStateError whenever the document is
+// not active (a hidden or background tab, some automation harnesses), and because that throw was
+// uncaught the callback never ran: the hash changed, the old page stayed on screen, and navigating
+// by the sidebar looked dead while loading the same URL directly worked fine.
 window.addEventListener('hashchange', () => {
-  if (document.startViewTransition && !matchMedia('(prefers-reduced-motion: reduce)').matches) document.startViewTransition(render);
-  else render();
+  if (!document.startViewTransition || matchMedia('(prefers-reduced-motion: reduce)').matches) return render();
+  let t;
+  try { t = document.startViewTransition(render); } catch { return render(); } // no animation, but never no page
+  // a transition that is skipped or interrupted rejects these; that is normal, not an error.
+  // `ready` is the one that actually carries the InvalidStateError — miss it and it surfaces as
+  // an unhandled rejection on every navigation even though the page itself rendered fine.
+  t?.ready?.catch(() => {});
+  t?.updateCallbackDone?.catch(() => {});
+  t?.finished?.catch(() => {});
 });
 
 /* ---------- site notifications: polling, badge, browser notifications ---------- */
@@ -835,11 +853,16 @@ function runView(fn, el, seq = RENDER_SEQ) {
   try { ret = fn(el); } catch (err) { report(err); return; } // synchronous throw
   if (ret && typeof ret.catch === 'function') ret.catch(report); // async rejection
 }
+// Thirteen flat links read as one long undifferentiated list; grouped, the sidebar answers "where
+// would that live?" at a glance. `null` starts a new group under the given heading.
 const NAV = [
-  ['dashboard', '⌂', 'Dashboard'], ['money', '€', 'Budget & expenses'], ['bills', '☰', 'Bills'],
-  ['search', '⌕', 'Search'],
-  ['vehicles', '⛟', 'Vehicles'], ['properties', '⌂', 'Properties'], ['tenants', '⚷', 'Tenants'], ['acte', '❏', 'Acte'], ['lists', '☑', 'Lists'],
-  ['import', '⇪', 'Bank import'], ['alerts', '◉', 'Alerts'], ['family', '☺', 'Family'], ['settings', '⚙', 'Settings'],
+  ['dashboard', '⌂', 'Dashboard'], ['search', '⌕', 'Search'],
+  [null, 'Money'],
+  ['money', '€', 'Budget & expenses'], ['bills', '☰', 'Bills'], ['import', '⇪', 'Bank import'],
+  [null, 'Property & things'],
+  ['properties', '⌂', 'Properties'], ['tenants', '⚷', 'Tenants'], ['vehicles', '⛟', 'Vehicles'], ['acte', '❏', 'Acte'],
+  [null, 'Household'],
+  ['lists', '☑', 'Lists'], ['alerts', '◉', 'Alerts'], ['family', '☺', 'Family'], ['settings', '⚙', 'Settings'],
 ];
 // the four that earn a permanent spot on a phone; everything else lives behind "More".
 // Alerts is here on purpose: its badge used to sit ~680px off-screen in the old scrolling strip,
@@ -851,7 +874,9 @@ function shell(active) {
   return `<div class="shell">
     <nav class="sidebar">
       <div class="brand">Family Hub<small>${esc(FAMILY.name)}</small></div>
-      ${NAV.map(([k, ic, l]) => `<a class="navlink ${k === active ? 'active' : ''}" href="#${k}"><span aria-hidden="true">${ic}</span>${l}${k === 'alerts' ? badgeHtml() : ''}</a>`).join('')}
+      ${NAV.map(([k, ic, l]) => k === null
+        ? `<div class="navgroup">${tr(ic)}</div>`
+        : `<a class="navlink ${k === active ? 'active' : ''}" href="#${k}"><span aria-hidden="true">${ic}</span>${l}${k === 'alerts' ? badgeHtml() : ''}</a>`).join('')}
       <div class="spacer"></div>
       <a class="whoami row" href="#settings" style="text-decoration:none;color:inherit;gap:8px">${avatarHtml(ME)}<span><b>${esc(ME.name)}</b>${tr(ME.role)} · ${esc(ME.email || '')}</span></a>
       <button class="navlink" data-logout>↩ Sign out</button>
@@ -1605,8 +1630,11 @@ async function moneyExpenses(body, f = {}) {
       // desktop: one wide row is enough for amount + category, the rest folds away
       : `<div class="card quickadd"><form id="expform">
       <div class="qrow">
-        <input name="amount" type="number" step="0.01" min="0.01" required inputmode="decimal"
-          class="qamt" placeholder="0,00" aria-label="${tr('Amount')} (${cur()})">
+        <span class="qamt-wrap">
+          <input name="amount" type="number" step="0.01" min="0.01" required inputmode="decimal"
+            class="qamt" placeholder="0,00" aria-label="${tr('Amount')} (${cur()})">
+          <span class="qcur" aria-hidden="true">${cur()}</span>
+        </span>
         <select name="category" class="qcat" aria-label="${tr('Category')}">
           ${CATEGORIES.map((c) => `<option value="${c}" ${LAST_EXP_CAT === c ? 'selected' : ''}>${c}</option>`).join('')}</select>
         <button class="btn qgo">${tr('Add')}</button>

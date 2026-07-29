@@ -64,6 +64,11 @@ label { display: block; font-size: 12.5px; font-weight: 600; color: var(--ink-so
 }
 .navlink:hover { background: rgba(255,255,255,.08); color: #fff; }
 .navlink.active { background: var(--accent); color: #fff; }
+/* section heading: turns thirteen flat links into three answerable clusters */
+.navgroup {
+  font-size: 10.5px; text-transform: uppercase; letter-spacing: .1em; font-weight: 700;
+  color: #8ea39c; padding: 0 10px; margin: 14px 0 4px;
+}
 .sidebar .spacer { flex: 1; }
 .whoami { font-size: 12.5px; color: #9fb3ac; padding: 8px 10px; border-top: 1px solid rgba(255,255,255,.12); }
 .whoami b { color: #fff; display: block; }
@@ -79,10 +84,16 @@ label { display: block; font-size: 12.5px; font-weight: 600; color: var(--ink-so
 .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 
 /* signature: due ribbon — ticket stubs */
-.ribbon { display: flex; gap: 12px; overflow-x: auto; padding: 4px 2px 10px; scrollbar-width: thin; }
+/* Deadlines reflow into as many columns as fit — as a non-shrinking flex row they scrolled
+   sideways even on a wide desktop, hiding whatever came after the third card. The phone keeps
+   the swipe strip (see the narrow breakpoint), where sideways is the natural gesture. */
+.ribbon {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(178px, 1fr));
+  gap: 12px; padding: 4px 2px 10px;
+}
 .stub {
-  min-width: 168px; background: var(--card); border: 1px solid var(--line); border-radius: 10px;
-  padding: 10px 12px 10px 16px; position: relative; flex-shrink: 0;
+  min-width: 0; background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+  padding: 10px 12px 10px 16px; position: relative;
 }
 .stub::before {
   content: ""; position: absolute; left: 6px; top: 8px; bottom: 8px;
@@ -107,7 +118,9 @@ label { display: block; font-size: 12.5px; font-weight: 600; color: var(--ink-so
 .amount, .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
 .kpi { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
 .kpi .card { padding: 14px 18px; }
-.kpi .label { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--ink-soft); font-weight: 600; }
+/* Contrast here already passes AA (about 7:1), but 12px all-caps with wide tracking is hard work
+   to read whatever the ratio — so: a little larger, a little tighter, a little darker. */
+.kpi .label { font-size: 12.5px; text-transform: uppercase; letter-spacing: .03em; color: var(--ink); opacity: .72; font-weight: 600; }
 .kpi .value { font-family: var(--mono); font-size: 24px; margin-top: 4px; }
 .kpi .value.neg { color: var(--red); }
 /* mini trend line under a KPI number; colour comes from the wrapper (currentColor in the SVG) */
@@ -118,7 +131,7 @@ label { display: block; font-size: 12.5px; font-weight: 600; color: var(--ink-so
 
 /* tables */
 table { width: 100%; border-collapse: collapse; font-size: 14px; }
-th { text-align: left; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--ink-soft); padding: 8px 10px; border-bottom: 1px solid var(--line); }
+th { text-align: left; font-size: 12.5px; text-transform: uppercase; letter-spacing: .02em; font-weight: 600; color: var(--ink); opacity: .7; padding: 8px 10px; border-bottom: 1px solid var(--line); }
 td { padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
 tr:last-child td { border-bottom: 0; }
 td.right, th.right { text-align: right; }
@@ -137,8 +150,18 @@ td.right, th.right { text-align: right; }
 /* quick-add: the amount is what you came to type, so it leads and is always visible */
 .card.quickadd { padding: 12px 14px; }
 .quickadd .qrow { display: flex; gap: 8px; align-items: stretch; }
+/* An empty right-aligned box with a grey "0,00" in it reads as a disabled field. The currency
+   adornment and a firmer border say "type here" without needing a label above. */
+.quickadd .qamt-wrap { position: relative; flex: 1 1 40%; min-width: 0; display: flex; }
 .quickadd .qamt {
-  flex: 1 1 40%; min-width: 0; font-family: var(--mono); font-size: 19px; font-weight: 600; text-align: right;
+  width: 100%; min-width: 0; font-family: var(--mono); font-size: 19px; font-weight: 600;
+  text-align: right; padding-right: 52px; border-color: var(--ink-soft);
+}
+.quickadd .qamt::placeholder { color: var(--ink-soft); opacity: .55; }
+.quickadd .qamt:focus { border-color: var(--accent); }
+.quickadd .qcur {
+  position: absolute; right: 12px; top: 50%; transform: translateY(-50%); pointer-events: none;
+  font-family: var(--mono); font-size: 13px; color: var(--ink-soft);
 }
 .quickadd .qcat { flex: 1 1 40%; min-width: 0; }
 .quickadd .qgo { flex: 0 0 auto; white-space: nowrap; }
@@ -147,6 +170,9 @@ td.right, th.right { text-align: right; }
 /* .qmore is a .formgrid, whose display:grid would otherwise beat the [hidden] attribute */
 .quickadd .qmore[hidden] { display: none; }
 @media (max-width: 860px) {
+  /* on a phone the deadlines go back to a swipeable strip — sideways is the natural gesture there */
+  .ribbon { display: flex; overflow-x: auto; scrollbar-width: thin; }
+  .ribbon .stub { min-width: 168px; flex-shrink: 0; }
   /* the amount takes its own full-width line to type into; category + Add share the next one */
   .quickadd .qrow { flex-wrap: wrap; }
   .quickadd .qamt { flex: 1 1 100%; font-size: 22px; min-height: 46px; }
