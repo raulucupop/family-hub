@@ -762,6 +762,21 @@ function daysLabel(d) {
   if (LANG === 'ro') return d < 0 ? `întârziat ${-d}z` : d === 0 ? 'azi' : `în ${d}z`;
   return d < 0 ? `${-d}d overdue` : d === 0 ? 'today' : `in ${d}d`;
 }
+// Where a "Coming up" card takes you. Seeing that the vignette is due in 5 days and then having to
+// work out for yourself which page it lives on is the wrong way round — the card is the deadline,
+// so it should be the way to it. Property deadlines land on that property's own dashboard rather
+// than the list, and an unpaid charge lands where you confirm the payment.
+function reminderHref(r) {
+  switch (r.kind) {
+    case 'bill': return '#bills';
+    case 'rca': case 'casco': case 'vignette': case 'itp': case 'road_tax': return '#vehicles';
+    case 'property_insurance': case 'property_tax': return r.ref_id ? `#property/${r.ref_id}` : '#properties';
+    case 'tenant_unpaid': return r.property_id ? `#property/${r.property_id}` : '#tenants';
+    case 'document': return '#acte';
+    case 'birthday': return '#family';
+    default: return '';
+  }
+}
 // heading for a day group in the expense list: today/yesterday read faster than a date
 function dayLabel(iso) {
   const days = Math.round((new Date(today()) - new Date(iso)) / 86400000);
@@ -1392,11 +1407,12 @@ async function viewDashboard(el) {
     <section>
       <h2>Coming up — next 60 days${scopeNote}</h2>
       ${reminders.length ? `<div class="ribbon">${reminders.map((r) => `
-        <div class="stub ${remClass(r)}">
+        ${(() => { const href = reminderHref(r); const T = href ? 'a' : 'div';
+          return `<${T} class="stub ${remClass(r)}"${href ? ` href="${href}"` : ''}>
           <div class="days">${daysLabel(r.days_left)}</div>
           <div class="what">${esc(r.label)}</div>
           <div class="who">${esc(r.entity || '')} · ${fdate(r.date)}${r.amount ? ` · <span class="amount">${money(r.amount)}</span>` : ''}</div>
-        </div>`).join('')}</div>`
+        </${T}>`; })()}`).join('')}</div>`
       : `<div class="card empty"><b>Nothing due soon</b>${DASH_VIEW === 'all' ? 'Add bills, vehicle or property deadlines and they will line up here.' : 'Nothing assigned to this person is coming up.'}</div>`}
     </section>
     <section class="kpi" style="margin-top:18px">

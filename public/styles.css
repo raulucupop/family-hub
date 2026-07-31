@@ -106,6 +106,11 @@ label { display: block; font-size: 12.5px; font-weight: 600; color: var(--ink-so
   content: ""; position: absolute; left: 6px; top: 8px; bottom: 8px;
   border-left: 2px dashed var(--line);
 }
+/* a deadline card that leads somewhere is a link, but must not look like blue underlined text */
+a.stub { display: block; text-decoration: none; color: inherit; cursor: pointer; }
+a.stub:hover { border-color: var(--accent); }
+a.stub.warn:hover { border-color: var(--amber); }
+a.stub.late:hover { border-color: var(--red); }
 .stub .days { font-family: var(--mono); font-size: 20px; font-weight: 500; }
 .stub .what { font-weight: 600; font-size: 13.5px; margin-top: 2px; }
 .stub .who { font-size: 12px; color: var(--ink-soft); }

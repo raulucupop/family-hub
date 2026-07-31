@@ -1998,7 +1998,9 @@ function collectReminders(fid, horizon, scopeUserId = null) {
     JOIN properties p ON p.id = c.property_id
     WHERE c.family_id = ? AND c.status = 'unpaid' AND c.due_date < ?
   `).all(fid, todayISO)) {
-    push('tenant_unpaid', `${c.title} — unpaid by tenant`, c.property_name, c.due_date, c.id, c.owner_id, { amount: c.amount });
+    // property_id travels too: ref_id is the charge, but the useful place to land is the property's
+    // own dashboard, which is where you confirm the payment
+    push('tenant_unpaid', `${c.title} — unpaid by tenant`, c.property_name, c.due_date, c.id, c.owner_id, { amount: c.amount, property_id: c.property_id });
   }
   // birthdays repeat yearly; show the next upcoming one. Family-wide (owner null) so everyone is reminded.
   for (const u of db.prepare("SELECT id, name, birthday FROM users WHERE family_id = ? AND role != 'tenant' AND birthday IS NOT NULL AND birthday != ''").all(fid)) {
