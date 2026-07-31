@@ -100,12 +100,18 @@ function setAuthCookie(res, token) {
 // fe/fi are the forgot-password limits: unlike login these count every request, not just
 // failures — the endpoint's only work is sending an email, and 3 reset mails per address per
 // window is plenty for a human while stopping anyone from flooding an inbox.
-const LOGIN_LIMITS = { em: 8, ip: 30, fe: 3, fi: 10 }; // allowance inside the window, by key type
+// rc/re: registration. A join code is only 32 bits and lives until someone rotates it, so an
+// unthrottled register endpoint is a slow but real way to guess your way into a family — and the
+// e-mail-already-exists answer tells a stranger which addresses have accounts. The IP allowance is
+// loose on purpose: a household shares one address, and 20 tries per 10 minutes still leaves
+// guessing a 32-bit code somewhere north of a million years.
+const LOGIN_LIMITS = { em: 8, ip: 30, fe: 3, fi: 10, rc: 20, re: 6 }; // allowance inside the window, by key type
 const LOGIN_WINDOW = 10 * 60 * 1000;    // ...before the lock kicks in
 const LOGIN_LOCK = 10 * 60 * 1000;      // how long the lock lasts
 const loginFails = new Map(); // key -> { n, first, until }
 const loginKeys = (req, email) => [`ip:${req.ip}`, `em:${email}`];
 const forgotKeys = (req, email) => [`fi:${req.ip}`, `fe:${email}`]; // separate keys: reset requests never lock the login
+const registerKeys = (req, email) => [`rc:${req.ip}`, `re:${email}`]; // ...and neither do sign-ups
 function loginLockedFor(keys) {
   const now = Date.now();
   let until = 0;
@@ -195,15 +201,20 @@ function addMonths(dateStr, months) {
 }
 
 // ---------- auth ----------
-app.post('/api/auth/register', (req, res) => {
+app.post('/api/auth/register', async (req, res) => {
   const { familyName, name, email, password, inviteCode: code, tenantCode } = req.body || {};
   if (!name || !email || !password) return res.status(400).json({ error: 'Name, email and password are required' });
   if (String(password).length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
   const emailNorm = String(email).trim().toLowerCase();
+  // Throttled before the account lookup, so this cannot be used to walk a list of addresses and
+  // learn which ones exist, nor to grind through join codes.
+  const keys = registerKeys(req, emailNorm);
+  const lockedFor = loginLockedFor(keys);
+  if (lockedFor) return res.status(429).json({ error: `Too many attempts — try again in ${lockedFor} minute${lockedFor === 1 ? '' : 's'}` });
+  loginFailed(keys); // every attempt counts; a successful one clears it at the end
   if (db.prepare('SELECT id FROM users WHERE email = ?').get(emailNorm)) {
     return res.status(409).json({ error: 'An account with this email already exists' });
   }
-  const hash = bcrypt.hashSync(String(password), 10);
   let familyId, role, tenantPropertyId = null;
   // one register code: a family invite joins as adult, a landlord's tenant code joins as tenant
   const anyCode = str(req.body.code) || str(code) || str(tenantCode);
@@ -230,9 +241,14 @@ app.post('/api/auth/register', (req, res) => {
     familyId = info.lastInsertRowid;
     role = 'admin';
   }
+  // Hash only now that the request is known good, and async: bcrypt is deliberately slow, so
+  // hashing before validating let a stranger spend ~200ms of this single-threaded process per
+  // request on nothing — and hashSync blocks the loop, freezing the app for everyone else.
+  const hash = await bcrypt.hash(String(password), 10);
   const info = db.prepare('INSERT INTO users (family_id, name, email, password_hash, role, tenant_property_id) VALUES (?,?,?,?,?,?)')
     .run(familyId, String(name).trim(), emailNorm, hash, role, tenantPropertyId);
   const user = db.prepare('SELECT id, family_id, name, email, role, token_version FROM users WHERE id = ?').get(info.lastInsertRowid);
+  loginSucceeded(keys); // a real sign-up clears the allowance it just consumed
   setAuthCookie(res, signToken(user));
   res.json({ user });
 });
@@ -292,7 +308,7 @@ app.post('/api/auth/forgot', async (req, res) => {
   // same answer whether the email exists or not
   res.json({ ok: true });
 });
-app.post('/api/auth/reset', (req, res) => {
+app.post('/api/auth/reset', async (req, res) => {
   const { token, password } = req.body || {};
   if (String(password || '').length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
   const hash = crypto.createHash('sha256').update(String(token || '')).digest('hex');
@@ -300,8 +316,9 @@ app.post('/api/auth/reset', (req, res) => {
   if (!row) return res.status(400).json({ error: 'This reset link is invalid or expired — request a new one' });
   // bump token_version: whoever prompted this reset (a thief with a stolen cookie, an old
   // shared laptop) is signed out everywhere. The person resetting gets a fresh token below.
+  const newHash = await bcrypt.hash(String(password), 10); // async: never block the loop on bcrypt
   db.prepare('UPDATE users SET password_hash = ?, token_version = token_version + 1 WHERE id = ?')
-    .run(bcrypt.hashSync(String(password), 10), row.user_id);
+    .run(newHash, row.user_id);
   db.prepare('UPDATE password_resets SET used = 1 WHERE id = ?').run(row.id);
   // any other pending reset links for this account are void now too
   db.prepare('UPDATE password_resets SET used = 1 WHERE user_id = ? AND used = 0').run(row.user_id);
@@ -321,8 +338,9 @@ app.post('/api/auth/change-password', auth, async (req, res) => {
   if (!(await bcrypt.compare(String(current || ''), row.password_hash))) {
     return res.status(403).json({ error: 'Your current password is not right' });
   }
+  const nextHash = await bcrypt.hash(String(next), 10);
   db.prepare('UPDATE users SET password_hash = ?, token_version = token_version + 1 WHERE id = ?')
-    .run(bcrypt.hashSync(String(next), 10), req.user.id);
+    .run(nextHash, req.user.id);
   // everything else is signed out; keep *this* device signed in with a token on the new version
   const user = db.prepare('SELECT id, family_id, name, email, role, token_version FROM users WHERE id = ?').get(req.user.id);
   setAuthCookie(res, signToken(user));
@@ -1148,7 +1166,9 @@ const upload = multer({
   limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     const ok = ['.pdf', '.png', '.jpg', '.jpeg', '.webp'].includes(path.extname(file.originalname).toLowerCase());
-    cb(ok ? null : new Error('Only PDF or image files are allowed'), ok);
+    // status 400 marks this as the caller's mistake, so the handler tells them what was wrong
+    // instead of burying it under the generic "something went wrong" used for our own faults
+    cb(ok ? null : Object.assign(new Error('Only PDF or image files are allowed'), { status: 400 }), ok);
   },
 });
 app.post('/api/bills/:id/attachment', auth, canWrite, upload.single('file'), (req, res) => {
@@ -2848,8 +2868,15 @@ app.get('/api/export/expenses.csv', auth, (req, res) => {
 // SPA fallback
 app.get(/^\/(?!api\/).*/, (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
+// Client mistakes (malformed JSON, a file too large) get told what they did wrong; anything else
+// is ours, and its message could describe the database — "no such column: password_hash" is a free
+// schema lesson for whoever provoked it. Those are logged and answered generically.
 app.use((err, req, res, next) => {
-  res.status(400).json({ error: err.message || 'Something went wrong' });
+  const clientFault = err.type === 'entity.parse.failed' || err.type === 'entity.too.large'
+    || err instanceof multer.MulterError || err.status === 400 || err.statusCode === 400;
+  if (clientFault) return res.status(400).json({ error: err.message || 'Bad request' });
+  console.error('unhandled:', req.method, req.path, '-', err.message);
+  res.status(500).json({ error: 'Something went wrong' });
 });
 
 // One-time repair, safe to keep: mortgage payments auto-logged BEFORE credits carried their
