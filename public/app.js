@@ -6,6 +6,33 @@ const app = $('#app');
 let ME = null, FAMILY = null;
 const CATEGORIES = ['Groceries', 'Utilities', 'Transportation', 'Entertainment', 'Healthcare', 'Education', 'Taxes', 'Credit', 'Subscriptions', 'Other'];
 const BILL_CATS = { electricity: 'Electricity', gas: 'Gas', internet: 'Internet', mobile: 'Mobile', water: 'Water', subscription: 'Subscription', property_tax: 'Property tax', other: 'Other' };
+
+/* ---------- icons ----------
+   The navigation used whatever unicode character came closest (⌂ € ☰ ⌕ ⛟ ⚷ ❏ ☑ ⇪ ◉ ☺ ⚙), which
+   meant a dozen glyphs drawn by a dozen type designers at different weights, sizes and baselines —
+   ☺ and ⇪ in particular read as clip-art next to the rest. These are one family: same 24px box,
+   same stroke, inheriting colour, so they sit evenly and follow the theme. */
+const ICON = {
+  grid: '<rect x="3" y="3" width="7.5" height="7.5" rx="1.6"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.6"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1.6"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.6"/>',
+  search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.6-3.6"/>',
+  wallet: '<path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H18a1 1 0 0 1 1 1v1.5"/><rect x="3" y="7.5" width="18" height="12" rx="2.5"/><path d="M16.5 13.5h2.5"/>',
+  receipt: '<path d="M5 3.5h14v17l-2.3-1.6-2.35 1.6-2.35-1.6L9.65 20.5 7.3 18.9 5 20.5Z"/><path d="M8.5 8.5h7M8.5 12.5h7"/>',
+  upload: '<path d="M12 15.5V4m0 0L8 8m4-4 4 4"/><path d="M4 15v3.5A2.5 2.5 0 0 0 6.5 21h11a2.5 2.5 0 0 0 2.5-2.5V15"/>',
+  home: '<path d="m3 10.6 9-7.1 9 7.1"/><path d="M5.5 9.2V20.5h13V9.2"/><path d="M10 20.5v-5.5h4v5.5"/>',
+  key: '<circle cx="8" cy="8" r="4.5"/><path d="m11.5 11.5 8 8"/><path d="m17 17 2-2M14.5 14.5l2-2"/>',
+  car: '<path d="M4.5 16.5v2a1 1 0 0 1-1 1h-1a1 1 0 0 1-1-1v-2m19 0v2a1 1 0 0 1-1 1h-1a1 1 0 0 1-1-1v-2"/><path d="M2.5 16.5v-4l2-5A2 2 0 0 1 6.4 6.2h11.2a2 2 0 0 1 1.9 1.3l2 5v4Z"/><path d="M5.5 13h2m9 0h2"/>',
+  file: '<path d="M14 3.5H7a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8.5Z"/><path d="M14 3.5v5h5"/><path d="M8.5 13.5h7M8.5 17h4.5"/>',
+  checklist: '<path d="M9 6.5h11M9 12h11M9 17.5h11"/><path d="m3.5 6.2 1.2 1.2 2-2.2M3.5 11.7l1.2 1.2 2-2.2M3.5 17.2l1.2 1.2 2-2.2"/>',
+  bell: '<path d="M18 9a6 6 0 1 0-12 0c0 4.5-1.8 6-1.8 6h15.6S18 13.5 18 9Z"/><path d="M13.7 20a2 2 0 0 1-3.4 0"/>',
+  users: '<circle cx="9" cy="8" r="3.6"/><path d="M2.8 20a6.2 6.2 0 0 1 12.4 0"/><path d="M16.5 4.8a3.6 3.6 0 0 1 0 6.9M17.5 14.4A5.2 5.2 0 0 1 21.2 20"/>',
+  gear: '<circle cx="12" cy="12" r="3.2"/><path d="M19.2 14.4a1.6 1.6 0 0 0 .32 1.76l.06.06a1.94 1.94 0 1 1-2.74 2.74l-.06-.06a1.6 1.6 0 0 0-1.76-.32 1.6 1.6 0 0 0-.97 1.46v.17a1.94 1.94 0 1 1-3.88 0v-.09a1.6 1.6 0 0 0-1.05-1.46 1.6 1.6 0 0 0-1.76.32l-.06.06a1.94 1.94 0 1 1-2.74-2.74l.06-.06a1.6 1.6 0 0 0 .32-1.76 1.6 1.6 0 0 0-1.46-.97h-.17a1.94 1.94 0 1 1 0-3.88h.09a1.6 1.6 0 0 0 1.46-1.05 1.6 1.6 0 0 0-.32-1.76l-.06-.06a1.94 1.94 0 1 1 2.74-2.74l.06.06a1.6 1.6 0 0 0 1.76.32h.08a1.6 1.6 0 0 0 .97-1.46v-.17a1.94 1.94 0 1 1 3.88 0v.09a1.6 1.6 0 0 0 .97 1.46 1.6 1.6 0 0 0 1.76-.32l.06-.06a1.94 1.94 0 1 1 2.74 2.74l-.06.06a1.6 1.6 0 0 0-.32 1.76v.08a1.6 1.6 0 0 0 1.46.97h.17a1.94 1.94 0 1 1 0 3.88h-.09a1.6 1.6 0 0 0-1.46.97Z"/>',
+  wrench: '<path d="M14.4 6.6a3.9 3.9 0 0 0 5.1 5.1l-8 8a2.4 2.4 0 0 1-3.4-3.4Z"/><path d="M14.4 6.6 17 4a3.9 3.9 0 0 1 3 7.7"/>',
+  dots: '<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>',
+  logout: '<path d="M9.5 20.5H6a2 2 0 0 1-2-2v-13a2 2 0 0 1 2-2h3.5"/><path d="M15.5 16.5 20 12l-4.5-4.5"/><path d="M20 12H9"/>',
+};
+// 1.7 stroke reads crisply at the 18-20px these are used at, without going spindly on a phone
+const icon = (name, cls = 'ic') => `<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+  stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${ICON[name] || ''}</svg>`;
 // Only properties we own can be attached to household money (an expense, a bill, a credit): a
 // managed one keeps its own books. The server refuses those links; leaving them out of the pickers
 // means nobody has to discover that by hitting an error.
@@ -51,7 +78,7 @@ const RO = {
   'Log an expense': 'Înregistrează o cheltuială', 'Invite the family': 'Invită familia',
   'Dashboard': 'Panou', 'Budget & expenses': 'Buget și cheltuieli', 'Bills': 'Facturi', 'Vehicles': 'Vehicule',
   'Properties': 'Proprietăți', 'Acte': 'Acte', 'Bank import': 'Import bancar', 'Family': 'Familie', 'Settings': 'Setări',
-  '↩ Sign out': '↩ Deconectare', 'Sign out': 'Deconectare',
+  'Sign out': 'Deconectare', // the arrow became an icon, so the label is just the word now
   'Sign in': 'Autentificare', 'Register': 'Înregistrare', 'New family': 'Familie nouă', 'Tenant': 'Chiriaș',
   'Forgot password?': 'Ai uitat parola?', 'Back to sign in': 'Înapoi la autentificare', 'Send reset link': 'Trimite linkul de resetare',
   'Email': 'Email', 'Password': 'Parolă', 'Your name': 'Numele tău', 'Family name': 'Numele familiei', 'Invite code': 'Cod de invitație',
@@ -878,18 +905,18 @@ function runView(fn, el, seq = RENDER_SEQ) {
 // Thirteen flat links read as one long undifferentiated list; grouped, the sidebar answers "where
 // would that live?" at a glance. `null` starts a new group under the given heading.
 const NAV = [
-  ['dashboard', '⌂', 'Dashboard'], ['search', '⌕', 'Search'],
+  ['dashboard', 'grid', 'Dashboard'], ['search', 'search', 'Search'],
   [null, 'Money'],
-  ['money', '€', 'Budget & expenses'], ['bills', '☰', 'Bills'], ['import', '⇪', 'Bank import'],
+  ['money', 'wallet', 'Budget & expenses'], ['bills', 'receipt', 'Bills'], ['import', 'upload', 'Bank import'],
   [null, 'Property & things'],
-  ['properties', '⌂', 'Properties'], ['tenants', '⚷', 'Tenants'], ['vehicles', '⛟', 'Vehicles'], ['acte', '❏', 'Acte'],
+  ['properties', 'home', 'Properties'], ['tenants', 'key', 'Tenants'], ['vehicles', 'car', 'Vehicles'], ['acte', 'file', 'Acte'],
   [null, 'Household'],
-  ['lists', '☑', 'Lists'], ['alerts', '◉', 'Alerts'], ['family', '☺', 'Family'], ['settings', '⚙', 'Settings'],
+  ['lists', 'checklist', 'Lists'], ['alerts', 'bell', 'Alerts'], ['family', 'users', 'Family'], ['settings', 'gear', 'Settings'],
 ];
 // the four that earn a permanent spot on a phone; everything else lives behind "More".
 // Alerts is here on purpose: its badge used to sit ~680px off-screen in the old scrolling strip,
 // which made the whole alerts feature invisible on a phone.
-const TABS = [['dashboard', '⌂', 'Dashboard'], ['money', '€', 'Money'], ['bills', '☰', 'Bills'], ['alerts', '◉', 'Alerts']];
+const TABS = [['dashboard', 'grid', 'Dashboard'], ['money', 'wallet', 'Money'], ['bills', 'receipt', 'Bills'], ['alerts', 'bell', 'Alerts']];
 const badgeHtml = () => `<span class="notifbadge" ${NOTIF.unread ? '' : 'hidden'}>${NOTIF.unread}</span>`;
 function shell(active) {
   const inTabs = (k) => TABS.some(([t]) => t === k);
@@ -898,17 +925,17 @@ function shell(active) {
       <div class="brand">Family Hub<small>${esc(FAMILY.name)}</small></div>
       ${NAV.map(([k, ic, l]) => k === null
         ? `<div class="navgroup">${tr(ic)}</div>`
-        : `<a class="navlink ${k === active ? 'active' : ''}" href="#${k}"><span aria-hidden="true">${ic}</span>${l}${k === 'alerts' ? badgeHtml() : ''}</a>`).join('')}
+        : `<a class="navlink ${k === active ? 'active' : ''}" href="#${k}">${icon(ic)}<span>${l}</span>${k === 'alerts' ? badgeHtml() : ''}</a>`).join('')}
       <div class="spacer"></div>
       <a class="whoami row" href="#settings" style="text-decoration:none;color:inherit;gap:8px">${avatarHtml(ME)}<span><b>${esc(ME.name)}</b>${tr(ME.role)} · ${esc(ME.email || '')}</span></a>
-      <button class="navlink" data-logout>↩ Sign out</button>
+      <button class="navlink" data-logout>${icon('logout')}<span>Sign out</span></button>
     </nav>
     <main class="main" id="page"></main>
     ${canWrite() && active !== 'money' ? `<button class="fab" id="fab" aria-label="Add expense" title="Add expense">+</button>` : ''}
     <nav class="tabbar">
       ${TABS.map(([k, ic, l]) => `<a class="tab ${k === active ? 'active' : ''}" href="#${k}">
-        <span class="ic" aria-hidden="true">${ic}${k === 'alerts' ? badgeHtml() : ''}</span><span class="tl">${l}</span></a>`).join('')}
-      <button class="tab ${inTabs(active) ? '' : 'active'}" id="moretab"><span class="ic" aria-hidden="true">⋯</span><span class="tl">More</span></button>
+        <span class="ic">${icon(ic)}${k === 'alerts' ? badgeHtml() : ''}</span><span class="tl">${l}</span></a>`).join('')}
+      <button class="tab ${inTabs(active) ? '' : 'active'}" id="moretab"><span class="ic">${icon('dots')}</span><span class="tl">More</span></button>
     </nav>
     <div class="sheet" id="moresheet" hidden>
       <div class="sheetbg" data-close></div>
@@ -923,11 +950,11 @@ function shell(active) {
             if (inTabs(k)) continue;
             if (pending) { out += `<div class="sheetgroup">${tr(pending)}</div><div class="sheetgrid">`; pending = null; open = true; }
             else if (!open) { out += '<div class="sheetgrid">'; open = true; }
-            out += `<a class="sheetlink ${k === active ? 'active' : ''}" href="#${k}"><span class="ic" aria-hidden="true">${ic}</span>${l}</a>`;
+            out += `<a class="sheetlink ${k === active ? 'active' : ''}" href="#${k}"><span class="ic">${icon(ic)}</span>${l}</a>`;
           }
           return out + (open ? '</div>' : '');
         })()}
-        <button class="btn ghost" style="width:100%;margin-top:12px" data-logout>↩ Sign out</button>
+        <button class="btn ghost btn-ic" style="width:100%;margin-top:12px" data-logout>${icon('logout')}Sign out</button>
       </div>
     </div>
   </div>`;
@@ -1030,24 +1057,24 @@ const REVOLUT_MARK = `<svg class="rmark" viewBox="0 0 24 24" width="15" height="
 // the tenant gets a slimmed-down version of the same sidebar/tab-bar shell the family uses,
 // with only the four areas that apply to them.
 const TENANT_NAV = [
-  ['dashboard', '⌂', 'Dashboard'],
-  ['invoices', '€', 'Invoices'],
-  ['maintenance', '⚒', 'Maintenance'],
-  ['account', '⚙', 'Settings'],
+  ['dashboard', 'grid', 'Dashboard'],
+  ['invoices', 'wallet', 'Invoices'],
+  ['maintenance', 'wrench', 'Maintenance'],
+  ['account', 'gear', 'Settings'],
 ];
 function tenantShell(active, prop) {
   return `<div class="shell">
     <nav class="sidebar">
       <div class="brand">Family Hub<small>${tr('Tenant')} · ${esc(prop.name)}</small></div>
-      ${TENANT_NAV.map(([k, ic, l]) => `<a class="navlink ${k === active ? 'active' : ''}" href="#${k}"><span aria-hidden="true">${ic}</span>${tr(l)}</a>`).join('')}
+      ${TENANT_NAV.map(([k, ic, l]) => `<a class="navlink ${k === active ? 'active' : ''}" href="#${k}">${icon(ic)}<span>${tr(l)}</span></a>`).join('')}
       <div class="spacer"></div>
       <a class="whoami row" href="#account" style="text-decoration:none;color:inherit;gap:8px">${avatarHtml(ME)}<span><b>${esc(ME.name)}</b>${tr('Tenant')} · ${esc(ME.email || '')}</span></a>
-      <button class="navlink" data-logout>↩ Sign out</button>
+      <button class="navlink" data-logout>${icon('logout')}<span>Sign out</span></button>
     </nav>
     <main class="main" id="page"></main>
     <nav class="tabbar">
       ${TENANT_NAV.map(([k, ic, l]) => `<a class="tab ${k === active ? 'active' : ''}" href="#${k}">
-        <span class="ic" aria-hidden="true">${ic}</span><span class="tl">${tr(l)}</span></a>`).join('')}
+        <span class="ic">${icon(ic)}</span><span class="tl">${tr(l)}</span></a>`).join('')}
     </nav>
   </div>`;
 }
@@ -1219,7 +1246,7 @@ function tenantAccountView(el, data) {
     <div class="card" style="margin-top:16px"><h3 style="margin-top:0">Password</h3>
       <p class="muted" style="margin-top:0">Changing it signs you out on every other device.</p>
       <button class="btn small" id="tpwbtn">Change password</button></div>
-    <button class="btn ghost small" data-logout style="margin-top:16px">↩ Sign out</button>`;
+    <button class="btn ghost small btn-ic" data-logout style="margin-top:16px">${icon('logout')}Sign out</button>`;
   $('#tavatar').onchange = async () => {
     if (!$('#tavatar').files[0]) return;
     const fd = new FormData(); fd.append('file', $('#tavatar').files[0]);
@@ -2452,7 +2479,7 @@ async function viewVehicles(el) {
   const list = $('#vehlist');
   const vSlots = [['', 'Not a specific deadline'], ...V_DEADLINES.map(([k, l]) => [k, l])];
   for (const v of vehicles) list.appendChild(entityCard(v, {
-    icon: '⛟', subtitle: [v.plate, `${tr('Owner')}: ${mname[v.owner_id] || tr('whole family')}`].filter(Boolean).join(' · '),
+    icon: 'car', subtitle: [v.plate, `${tr('Owner')}: ${mname[v.owner_id] || tr('whole family')}`].filter(Boolean).join(' · '),
     deadlines: V_DEADLINES, route: 'vehicles',
     editExtra: [['owner_id', 'Owner', 'select', ownerOpts]],
     extra: (box, it) => renderEntityDocs(box, 'vehicle', it, vSlots, () => viewVehicles(el)),
@@ -2500,7 +2527,7 @@ async function viewProperties(el) {
     list.appendChild(entityCard(p, {
       // every property gets its dashboard from the row itself — owner-occupied ones had it buried
       // in the tenant panel, which is both hidden until you expand and the wrong place to look
-      icon: '⌂', badge: p.managed ? tr('managed') : '',
+      icon: 'home', badge: p.managed ? tr('managed') : '',
       headLink: `#property/${p.id}`, headLinkLabel: tr('Dashboard'),
       subtitle: [p.address, p.managed ? tr('not owned by us') : `${tr('Owner')}: ${mname[p.owner_id] || tr('whole family')}`, p.mortgage_lender ? `${tr('Mortgage')}: ${p.mortgage_lender}, ${money(p.mortgage_payment)} ${tr('on day')} ${p.mortgage_due_day ?? '—'}` : null].filter(Boolean).join(' · '),
       deadlines: P_DEADLINES, route: 'properties',

@@ -56,14 +56,21 @@ label { display: block; font-size: 12.5px; font-weight: 600; color: var(--ink-so
   background: var(--sidebar); color: #dfe8e5; padding: 20px 14px; display: flex; flex-direction: column; gap: 4px;
   position: sticky; top: 0; height: 100vh;
 }
-.brand { font-family: var(--display); font-weight: 700; font-size: 1.25rem; color: #fff; margin: 2px 8px 18px; letter-spacing: -.01em; }
-.brand small { display: block; font-family: var(--body); font-weight: 400; font-size: 11px; color: #9fb3ac; letter-spacing: .04em; text-transform: uppercase; }
+.brand { font-family: var(--display); font-weight: 700; font-size: 1.25rem; color: #fff; margin: 2px 8px 18px; letter-spacing: -.01em; line-height: 1.2; }
+.brand small {
+  display: block; font-family: var(--body); font-weight: 600; font-size: 10.5px; color: #8ea39c;
+  letter-spacing: .1em; text-transform: uppercase; margin-top: 3px;
+}
 .navlink {
   display: flex; gap: 10px; align-items: center; padding: 9px 10px; border-radius: 8px;
   color: #cfdad6; text-decoration: none; font-weight: 500; font-size: 14px; border: 0; background: none; text-align: left;
 }
 .navlink:hover { background: rgba(255,255,255,.08); color: #fff; }
 .navlink.active { background: var(--accent); color: #fff; }
+/* the icons draw themselves in the link's own colour, so they light up with it */
+.navlink .ic, .sheetlink .ic svg, .tabbar .tab .ic svg { flex: none; }
+.navlink > svg { width: 19px; height: 19px; flex: none; opacity: .85; }
+.navlink:hover > svg, .navlink.active > svg { opacity: 1; }
 /* section heading: turns thirteen flat links into three answerable clusters */
 .navgroup {
   font-size: 10.5px; text-transform: uppercase; letter-spacing: .1em; font-weight: 700;
@@ -143,6 +150,9 @@ td.right, th.right { text-align: right; }
 }
 .btn:hover { filter: brightness(1.08); }
 .btn.ghost { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+/* a button that leads with an icon keeps the two optically centred together */
+.btn-ic { display: inline-flex; align-items: center; justify-content: center; gap: 7px; }
+.btn-ic svg { width: 17px; height: 17px; flex: none; }
 .btn.small { padding: 5px 10px; font-size: 12.5px; }
 /* secondary, low-stakes actions that live *inside* a cell under the text it acts on */
 .btn.tiny { padding: 3px 9px; font-size: 12px; border-radius: 999px; min-height: 0; }
@@ -272,10 +282,30 @@ tr.daysep > td { background: var(--paper); padding: 6px 10px; border-bottom: 1px
 .barkey .k-adv { background: var(--amber); }
 
 /* auth screen */
-.authwrap { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
-.authcard { width: 100%; max-width: 400px; }
+/* The first screen anyone sees was a flat card marooned on flat grey. It now sits on a quiet
+   depth-of-field: a warm tint bleeding from the top-left, a cool one from the bottom-right, and
+   the card lifted off it. No images — two radial gradients and a shadow. */
+.authwrap {
+  min-height: 100vh; display: grid; place-items: center; padding: 24px; position: relative; overflow: hidden;
+  background:
+    radial-gradient(58rem 40rem at 12% -8%, color-mix(in srgb, var(--accent) 16%, transparent), transparent 62%),
+    radial-gradient(48rem 36rem at 105% 108%, color-mix(in srgb, var(--amber) 13%, transparent), transparent 60%),
+    var(--paper);
+}
+.authcard {
+  width: 100%; max-width: 400px;
+  box-shadow: 0 18px 48px rgba(28, 43, 51, .13), 0 2px 8px rgba(28, 43, 51, .06);
+  border-radius: 16px; padding: 26px 26px 22px;
+}
+:root[data-theme="dark"] .authcard { box-shadow: 0 18px 48px rgba(0, 0, 0, .5), 0 2px 8px rgba(0, 0, 0, .35); }
 .authcard .brandmark { font-family: var(--display); font-weight: 700; font-size: 1.9rem; letter-spacing: -.02em; }
 .authcard .brandmark span { color: var(--accent); }
+/* a hairline of brand colour along the top edge of the card */
+.authcard { position: relative; overflow: hidden; }
+.authcard::before {
+  content: ""; position: absolute; inset: 0 0 auto 0; height: 3px;
+  background: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 45%, var(--amber)));
+}
 .tabs { display: flex; gap: 6px; margin: 14px 0; }
 .tabs button { flex: 1; padding: 8px; border: 1px solid var(--line); background: var(--card); border-radius: 8px; font-weight: 600; color: var(--ink-soft); }
 .tabs button.active { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
@@ -424,7 +454,8 @@ details.foldcard[open] > summary::after { transform: rotate(180deg); }
     padding: 10px 2px 9px; min-height: 66px; border: 0; background: transparent;
     color: var(--ink-soft); text-decoration: none; font-size: 12.5px; font-weight: 600;
   }
-  .tabbar .tab .ic { font-size: 23px; line-height: 1; position: relative; }
+  .tabbar .tab .ic { display: flex; line-height: 1; position: relative; }
+  .tabbar .tab .ic svg { width: 23px; height: 23px; }
   .tabbar .tab.active { color: var(--accent); }
   .tabbar .tab .notifbadge { position: absolute; top: -6px; left: 12px; margin: 0; padding: 0 5px; font-size: 10px; }
 
@@ -447,7 +478,8 @@ details.foldcard[open] > summary::after { transform: rotate(180deg); }
     border: 1px solid var(--line); border-radius: 10px; text-decoration: none; color: var(--ink); font-size: 14px; font-weight: 600;
   }
   .sheet .sheetlink.active { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
-  .sheet .sheetlink .ic { font-size: 16px; }
+  .sheet .sheetlink .ic { display: flex; }
+  .sheet .sheetlink .ic svg { width: 18px; height: 18px; }
 
   /* clear the fixed tab bar at the bottom, and the rounded corners on the sides in landscape */
   .main {
@@ -566,6 +598,14 @@ details.foldcard[open] > summary::after { transform: rotate(180deg); }
   --shadow-md: 0 6px 18px rgba(0, 0, 0, .45);
   --shadow-lg: 0 14px 40px rgba(0, 0, 0, .55);
 }
+
+/* Cards sat flat on the page behind a 1px line, so everything carried identical weight and the
+   eye had nothing to climb. A whisper of elevation lifts them off the paper and lets the border
+   soften — enough to read as surfaces, not enough to become a drop-shadow showcase. */
+.card { box-shadow: 0 1px 2px rgba(28, 43, 51, .04), 0 1px 1px rgba(28, 43, 51, .03); }
+:root[data-theme="dark"] .card { box-shadow: 0 1px 2px rgba(0, 0, 0, .28); }
+/* the panels you act on — a KPI you click, an expandable entity — lift a little further */
+.kpi .card, details.entity { box-shadow: var(--shadow-sm); }
 
 @keyframes fh-fade-up { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: none; } }
 @keyframes fh-pop { from { opacity: 0; transform: scale(.96); } to { opacity: 1; transform: none; } }
