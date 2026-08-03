@@ -165,6 +165,19 @@ td.right, th.right { text-align: right; }
 /* guest list: the two answer buttons act as one control, and a declined row steps back */
 .rsvpset { display: inline-flex; gap: 6px; }
 tr.guest-no > td { opacity: .5; }
+/* head counts are editable in place — sized to the number, not to the column */
+.headin {
+  width: 4.6ch; min-width: 0; padding: 3px 6px; text-align: right;
+  font-family: var(--mono); font-size: 13.5px; background: transparent;
+  /* a faint resting outline: enough to say "you can change this", not so much that a dozen of
+     them turn a calm table into a form */
+  border-color: color-mix(in srgb, var(--line) 75%, transparent);
+}
+.headin:hover { border-color: var(--accent); background: var(--card); }
+.headin:focus { border-color: var(--accent); background: var(--card); }
+/* the spinner arrows steal what little width there is */
+.headin::-webkit-outer-spin-button, .headin::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.headin { -moz-appearance: textfield; appearance: textfield; }
 /* quick-add: the amount is what you came to type, so it leads and is always visible */
 .card.quickadd { padding: 12px 14px; }
 .quickadd .qrow { display: flex; gap: 8px; align-items: stretch; }

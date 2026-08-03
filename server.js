@@ -1957,6 +1957,23 @@ app.post('/api/lists/:id/rsvp', auth, canWrite, (req, res) => {
   db.prepare('UPDATE list_items SET rsvp = ? WHERE id = ?').run(next, row.id);
   res.json({ ok: true, rsvp: next });
 });
+// How many are actually coming, which is rarely how many you invited — a family of four answers
+// that only two can make it. Editable at any point, not just when they reply.
+app.post('/api/lists/:id/heads', auth, canWrite, (req, res) => {
+  const row = db.prepare('SELECT * FROM list_items WHERE id = ? AND family_id = ?').get(req.params.id, req.user.family_id);
+  if (!row) return res.status(404).json({ error: 'Not found' });
+  const headCount = (v, fallback) => {
+    if (v === undefined) return fallback;
+    if (v === '' || v === null) return null;
+    const n = Math.round(Number(v));
+    return Number.isFinite(n) && n >= 0 ? n : undefined; // undefined = reject
+  };
+  const adults = headCount(req.body?.adults, row.adults);
+  const kids = headCount(req.body?.kids, row.kids);
+  if (adults === undefined || kids === undefined) return res.status(400).json({ error: 'People must be 0 or more' });
+  db.prepare('UPDATE list_items SET adults = ?, kids = ? WHERE id = ?').run(adults, kids, row.id);
+  res.json({ ok: true, adults, kids });
+});
 // the gift a guest brought, recorded after the fact
 app.post('/api/lists/:id/gift', auth, canWrite, (req, res) => {
   const row = db.prepare('SELECT id FROM list_items WHERE id = ? AND family_id = ?').get(req.params.id, req.user.family_id);

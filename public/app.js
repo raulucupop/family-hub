@@ -3199,8 +3199,12 @@ function guestList(rows) {
       <th>${tr('Answer')}</th><th class="right">${tr('Gift')}</th><th></th></tr></thead><tbody>
     ${rows.map((r) => `<tr class="${r.rsvp === 'no' ? 'guest-no' : ''}">
       <td data-label="${tr('Invitation')}"><b>${esc(r.title)}</b>${r.note ? `<br><span class="muted">${esc(r.note)}</span>` : ''}</td>
-      <td class="right amount" data-label="${tr('Adults')}">${n(r.adults)}</td>
-      <td class="right amount" data-label="${tr('Children')}">${n(r.kids)}</td>
+      <td class="right amount" data-label="${tr('Adults')}">${canWrite()
+        ? `<input class="headin" type="number" min="0" step="1" value="${n(r.adults)}" data-heads="${r.id}" data-field="adults" aria-label="${tr('Adults')}">`
+        : n(r.adults)}</td>
+      <td class="right amount" data-label="${tr('Children')}">${canWrite()
+        ? `<input class="headin" type="number" min="0" step="1" value="${n(r.kids)}" data-heads="${r.id}" data-field="kids" aria-label="${tr('Children')}">`
+        : n(r.kids)}</td>
       <td data-label="${tr('Answer')}">${canWrite() ? cell(r) : (r.rsvp === 'yes' ? tr('Coming') : r.rsvp === 'no' ? tr('Declined') : '—')}</td>
       <td class="right amount" data-label="${tr('Gift')}">${canWrite()
         ? `<button class="btn ghost tiny" data-gift="${r.id}" data-cur="${n(r.amount)}">${n(r.amount) ? money(r.amount) : '+'}</button>`
@@ -3246,6 +3250,14 @@ async function viewLists(el, tab = 'buy') {
   });
   el.querySelectorAll('[data-tog]').forEach((c) => (c.onchange = async () => {
     await api(`/lists/${c.dataset.tog}/toggle`, { method: 'POST' }); viewLists(el, tab);
+  }));
+  // Saved on blur/commit rather than on every keystroke, and the whole list is only redrawn once
+  // the value has landed — re-rendering mid-edit would yank the field out from under the cursor.
+  el.querySelectorAll('[data-heads]').forEach((inp) => (inp.onchange = async () => {
+    try {
+      await api(`/lists/${inp.dataset.heads}/heads`, { method: 'POST', body: { [inp.dataset.field]: inp.value } });
+      viewLists(el, tab);
+    } catch (err) { toast(err.message, 'error'); viewLists(el, tab); }
   }));
   el.querySelectorAll('[data-rsvp]').forEach((b) => (b.onclick = async () => {
     try { await api(`/lists/${b.dataset.rsvp}/rsvp`, { method: 'POST', body: { rsvp: b.dataset.val } }); viewLists(el, tab); }
