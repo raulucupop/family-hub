@@ -1923,7 +1923,7 @@ function nextBirthday(bday) {
 }
 
 // ---------- family lists (wishlists, groceries, personal targets) ----------
-const LIST_KINDS = ['buy', 'travel', 'grocery', 'targets'];
+const LIST_KINDS = ['buy', 'travel', 'grocery', 'targets', 'baptism'];
 app.get('/api/lists', auth, (req, res) => {
   res.json(db.prepare(`
     SELECT l.*, u.name AS user_name FROM list_items l
@@ -1940,9 +1940,32 @@ app.post('/api/lists', auth, canWrite, (req, res) => {
     return res.status(400).json({ error: 'Person must be a member of the family' });
   }
   if (uid == null) uid = req.user.id;
-  const info = db.prepare('INSERT INTO list_items (family_id, list, title, note, amount, user_id) VALUES (?,?,?,?,?,?)')
-    .run(req.user.family_id, b.list, str(b.title), str(b.note), num(b.amount), uid);
+  // head counts only mean anything on a guest list, and a negative one never does
+  const headCount = (v) => { const n = Math.round(Number(v)); return Number.isFinite(n) && n >= 0 ? n : null; };
+  const info = db.prepare('INSERT INTO list_items (family_id, list, title, note, amount, user_id, adults, kids, rsvp) VALUES (?,?,?,?,?,?,?,?,?)')
+    .run(req.user.family_id, b.list, str(b.title), str(b.note), num(b.amount), uid,
+      headCount(b.adults), headCount(b.kids), ['yes', 'no'].includes(b.rsvp) ? b.rsvp : null);
   res.json(db.prepare('SELECT * FROM list_items WHERE id = ?').get(info.lastInsertRowid));
+});
+// A guest either answered or hasn't; sending the same answer again clears it, so a mis-tap is one
+// tap to undo rather than a dead end.
+app.post('/api/lists/:id/rsvp', auth, canWrite, (req, res) => {
+  const row = db.prepare('SELECT * FROM list_items WHERE id = ? AND family_id = ?').get(req.params.id, req.user.family_id);
+  if (!row) return res.status(404).json({ error: 'Not found' });
+  const want = ['yes', 'no'].includes(req.body?.rsvp) ? req.body.rsvp : null;
+  const next = row.rsvp === want ? null : want;
+  db.prepare('UPDATE list_items SET rsvp = ? WHERE id = ?').run(next, row.id);
+  res.json({ ok: true, rsvp: next });
+});
+// the gift a guest brought, recorded after the fact
+app.post('/api/lists/:id/gift', auth, canWrite, (req, res) => {
+  const row = db.prepare('SELECT id FROM list_items WHERE id = ? AND family_id = ?').get(req.params.id, req.user.family_id);
+  if (!row) return res.status(404).json({ error: 'Not found' });
+  const amount = req.body?.amount === '' || req.body?.amount == null ? null : num(req.body.amount);
+  if (amount != null && !(amount >= 0)) return res.status(400).json({ error: 'Gift must be 0 or more' });
+  db.prepare('UPDATE list_items SET amount = ?, note = COALESCE(?, note) WHERE id = ?')
+    .run(amount, req.body?.note !== undefined ? str(req.body.note) : null, row.id);
+  res.json({ ok: true });
 });
 app.post('/api/lists/:id/toggle', auth, canWrite, (req, res) => {
   const info = db.prepare('UPDATE list_items SET done = 1 - done WHERE id = ? AND family_id = ?').run(req.params.id, req.user.family_id);

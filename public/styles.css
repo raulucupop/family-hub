@@ -162,6 +162,9 @@ td.right, th.right { text-align: right; }
 /* secondary, low-stakes actions that live *inside* a cell under the text it acts on */
 .btn.tiny { padding: 3px 9px; font-size: 12px; border-radius: 999px; min-height: 0; }
 .snoozerow { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+/* guest list: the two answer buttons act as one control, and a declined row steps back */
+.rsvpset { display: inline-flex; gap: 6px; }
+tr.guest-no > td { opacity: .5; }
 /* quick-add: the amount is what you came to type, so it leads and is always visible */
 .card.quickadd { padding: 12px 14px; }
 .quickadd .qrow { display: flex; gap: 8px; align-items: stretch; }

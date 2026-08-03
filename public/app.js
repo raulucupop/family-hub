@@ -138,6 +138,13 @@ const RO = {
   // lists
   'Lists': 'Liste', 'Buy wishlist': 'De cumpărat', 'Travel wishlist': 'Călătorii', 'Grocery list': 'Cumpărături',
   'Personal targets': 'Obiective personale', 'Wishlists, groceries and personal goals for the whole family.': 'Liste de dorințe, cumpărături și obiective personale pentru toată familia.',
+  // christening guest list
+  'Christening guests': 'Invitații botez', 'Invitation': 'Invitație', 'Adults': 'Adulți', 'Children': 'Copii',
+  'adults': 'adulți', 'children': 'copii', 'Coming': 'Confirmat', 'Declined': 'Refuzat', 'declined': 'refuzați',
+  'Answer': 'Răspuns', 'Answers': 'Răspunsuri', 'Gift': 'Cadou', 'Gifts': 'Cadouri', 'recorded': 'înregistrate',
+  'No invitations yet': 'Nicio invitație încă', 'leave empty to clear': 'lasă gol ca să ștergi',
+  'No answer yet': 'Fără răspuns încă',
+  'Add the first family above — adults and children are counted for you.': 'Adaugă prima familie mai sus — adulții și copiii se numără automat.',
   'Item': 'Articol', 'Target': 'Obiectiv', 'Person': 'Persoană', 'Nothing here yet': 'Nimic aici încă',
   'Add the first item above.': 'Adaugă primul articol mai sus.',
   // auth extras
@@ -3155,7 +3162,52 @@ const LIST_DEFS = [
   ['travel', 'Travel wishlist', 'Roma, Maramureș…'],
   ['grocery', 'Grocery list', 'Lapte, pâine, ouă…'],
   ['targets', 'Personal targets', 'Learn to swim, read 12 books…'],
+  ['baptism', 'Christening guests', 'Familia Popescu, Nașii…'],
 ];
+/* ---------- christening guest list ----------
+   An invitation is not a checklist item: it covers a number of adults and children, it is either
+   answered or not, and afterwards it carries a gift. The counts are what you actually need — the
+   caterer wants heads, not names — so they are totalled at the top, and only confirmed guests are
+   counted there. Everything else on the Lists page stays a plain checklist. */
+function guestList(rows) {
+  if (!rows.length) {
+    return `<div class="empty" style="margin-top:10px"><b>${tr('No invitations yet')}</b>${tr('Add the first family above — adults and children are counted for you.')}</div>`;
+  }
+  const n = (v) => Number(v) || 0;
+  const yes = rows.filter((r) => r.rsvp === 'yes'), no = rows.filter((r) => r.rsvp === 'no');
+  const waiting = rows.filter((r) => !r.rsvp);
+  const sum = (list, f) => list.reduce((s, r) => s + n(r[f]), 0);
+  const goingA = sum(yes, 'adults'), goingK = sum(yes, 'kids');
+  const gifts = rows.reduce((s, r) => s + n(r.amount), 0);
+  const cell = (r) => `<span class="rsvpset">
+      <button class="btn ${r.rsvp === 'yes' ? '' : 'ghost'} tiny" data-rsvp="${r.id}" data-val="yes">${tr('Coming')}</button>
+      <button class="btn ${r.rsvp === 'no' ? 'danger' : 'ghost'} tiny" data-rsvp="${r.id}" data-val="no">${tr('Declined')}</button>
+    </span>`;
+  return `<section class="kpi" style="margin:14px 0 4px">
+      <div class="card"><div class="label">${tr('Coming')}</div>
+        <div class="value">${goingA + goingK}</div>
+        <div class="muted" style="font-size:12.5px">${goingA} ${tr(goingA === 1 ? 'adult' : 'adults')} · ${goingK} ${tr(goingK === 1 ? 'child' : 'children')}</div></div>
+      <div class="card"><div class="label">${tr('Answers')}</div>
+        <div class="value">${yes.length}/${rows.length}</div>
+        <div class="muted" style="font-size:12.5px">${no.length} ${tr('declined')} · ${waiting.length} ${tr('waiting')}</div></div>
+      <div class="card"><div class="label">${tr('Gifts')}</div>
+        <div class="value">${money(gifts)}</div>
+        <div class="muted" style="font-size:12.5px">${rows.filter((r) => n(r.amount) > 0).length} ${tr('recorded')}</div></div>
+    </section>
+    <table class="cards"><thead><tr>
+      <th>${tr('Invitation')}</th><th class="right">${tr('Adults')}</th><th class="right">${tr('Children')}</th>
+      <th>${tr('Answer')}</th><th class="right">${tr('Gift')}</th><th></th></tr></thead><tbody>
+    ${rows.map((r) => `<tr class="${r.rsvp === 'no' ? 'guest-no' : ''}">
+      <td data-label="${tr('Invitation')}"><b>${esc(r.title)}</b>${r.note ? `<br><span class="muted">${esc(r.note)}</span>` : ''}</td>
+      <td class="right amount" data-label="${tr('Adults')}">${n(r.adults)}</td>
+      <td class="right amount" data-label="${tr('Children')}">${n(r.kids)}</td>
+      <td data-label="${tr('Answer')}">${canWrite() ? cell(r) : (r.rsvp === 'yes' ? tr('Coming') : r.rsvp === 'no' ? tr('Declined') : '—')}</td>
+      <td class="right amount" data-label="${tr('Gift')}">${canWrite()
+        ? `<button class="btn ghost tiny" data-gift="${r.id}" data-cur="${n(r.amount)}">${n(r.amount) ? money(r.amount) : '+'}</button>`
+        : (n(r.amount) ? money(r.amount) : '')}</td>
+      <td class="right">${canWrite() ? `<button class="btn danger small" data-del="${r.id}">✕</button>` : ''}</td></tr>`).join('')}
+    </tbody></table>`;
+}
 async function viewLists(el, tab = 'buy') {
   const [items, members] = await Promise.all([api('/lists'), api('/family/members')]);
   const def = LIST_DEFS.find((d) => d[0] === tab);
@@ -3165,12 +3217,18 @@ async function viewLists(el, tab = 'buy') {
     <div class="tabs" style="max-width:680px">${LIST_DEFS.map(([k, l]) => `<button data-t="${k}" class="${k === tab ? 'active' : ''}">${l}</button>`).join('')}</div>
     <div class="card">
       ${canWrite() ? `<form id="listform" class="formgrid">
-        <div><label>${tab === 'targets' ? 'Target' : 'Item'}</label><input name="title" placeholder="${esc(def[2])}" required></div>
+        <div><label>${tab === 'baptism' ? tr('Invitation') : tab === 'targets' ? 'Target' : 'Item'}</label><input name="title" placeholder="${esc(def[2])}" required></div>
+        ${tab === 'baptism' ? `<div><label>${tr('Adults')}</label><input name="adults" type="number" min="0" step="1" value="2"></div>
+        <div><label>${tr('Children')}</label><input name="kids" type="number" min="0" step="1" value="0"></div>
+        <div><label>${tr('Answer')}</label><select name="rsvp">
+          <option value="">${tr('No answer yet')}</option>
+          <option value="yes">${tr('Coming')}</option>
+          <option value="no">${tr('Declined')}</option></select></div>` : ''}
         ${tab === 'buy' ? `<div><label>Est. price (${cur()})</label><input name="amount" type="number" step="0.01" min="0"></div>` : ''}
         ${tab === 'targets' ? `<div><label>Person</label><select name="user_id">${members.map((m) => `<option value="${m.id}" ${m.id === ME.id ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}</select></div>` : ''}
         <div><label>Note</label><input name="note" placeholder="optional"></div>
         <button class="btn">Add</button></form>` : ''}
-      ${rows.length ? `<p class="muted" style="margin:12px 0 4px">${openCount} ${tr('open')} · ${rows.length - openCount} ${tr('done')}</p>
+      ${tab === 'baptism' ? guestList(rows) : rows.length ? `<p class="muted" style="margin:12px 0 4px">${openCount} ${tr('open')} · ${rows.length - openCount} ${tr('done')}</p>
       <table><tbody>
         ${rows.map((i) => `<tr style="${i.done ? 'opacity:.55' : ''}">
           <td style="width:30px">${canWrite() ? `<input type="checkbox" data-tog="${i.id}" ${i.done ? 'checked' : ''} style="width:auto">` : (i.done ? '✓' : '')}</td>
@@ -3188,6 +3246,17 @@ async function viewLists(el, tab = 'buy') {
   });
   el.querySelectorAll('[data-tog]').forEach((c) => (c.onchange = async () => {
     await api(`/lists/${c.dataset.tog}/toggle`, { method: 'POST' }); viewLists(el, tab);
+  }));
+  el.querySelectorAll('[data-rsvp]').forEach((b) => (b.onclick = async () => {
+    try { await api(`/lists/${b.dataset.rsvp}/rsvp`, { method: 'POST', body: { rsvp: b.dataset.val } }); viewLists(el, tab); }
+    catch (err) { toast(err.message, 'error'); }
+  }));
+  el.querySelectorAll('[data-gift]').forEach((b) => (b.onclick = async () => {
+    const cur0 = Number(b.dataset.cur) || '';
+    const v = prompt(`${tr('Gift')} (${cur()}) — ${tr('leave empty to clear')}`, cur0 === '' ? '' : String(cur0));
+    if (v === null) return;
+    try { await api(`/lists/${b.dataset.gift}/gift`, { method: 'POST', body: { amount: v.trim() } }); viewLists(el, tab); }
+    catch (err) { toast(err.message, 'error'); }
   }));
   el.querySelectorAll('[data-del]').forEach((b) => (b.onclick = () => {
     const { hide, restore } = rowHide(b);

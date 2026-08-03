@@ -342,12 +342,15 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
 CREATE TABLE IF NOT EXISTS list_items (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   family_id INTEGER NOT NULL REFERENCES families(id) ON DELETE CASCADE,
-  list TEXT NOT NULL CHECK (list IN ('buy','travel','grocery','targets')),
-  title TEXT NOT NULL,
+  list TEXT NOT NULL CHECK (list IN ('buy','travel','grocery','targets','baptism')),
+  title TEXT NOT NULL,        -- the thing, or (guest lists) the invited family's name
   note TEXT,
-  amount REAL,                -- estimated price (buy wishlist)
+  amount REAL,                -- estimated price (buy wishlist), or the gift received (guest list)
   user_id INTEGER REFERENCES users(id) ON DELETE SET NULL, -- who added it / whose target
   done INTEGER NOT NULL DEFAULT 0,
+  adults INTEGER,             -- guest list: how many adults that invitation covers
+  kids INTEGER,               -- ...and how many children
+  rsvp TEXT,                  -- NULL = no answer yet, 'yes' = coming, 'no' = declined
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_list_items_family ON list_items(family_id);
@@ -455,6 +458,39 @@ if (!savCols.includes('goal_id')) db.exec('ALTER TABLE savings ADD COLUMN goal_i
 
 const tcCols = db.prepare('PRAGMA table_info(tenant_charges)').all().map((c) => c.name);
 if (!tcCols.includes('attachment')) db.exec('ALTER TABLE tenant_charges ADD COLUMN attachment TEXT');
+
+// The guest list needs head counts, an RSVP and a gift — and 'baptism' has to satisfy the `list`
+// CHECK constraint, which SQLite bakes into the table definition and no ALTER can widen. So the
+// table is rebuilt: new shape, rows copied across, old one dropped. Guarded on a column that only
+// the new shape has, so it runs exactly once.
+const liCols = db.prepare('PRAGMA table_info(list_items)').all().map((c) => c.name);
+if (!liCols.includes('adults')) {
+  db.pragma('foreign_keys = OFF'); // ...so the copy is not judged mid-flight
+  db.transaction(() => {
+    db.exec(`
+      CREATE TABLE list_items_rebuild (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        family_id INTEGER NOT NULL REFERENCES families(id) ON DELETE CASCADE,
+        list TEXT NOT NULL CHECK (list IN ('buy','travel','grocery','targets','baptism')),
+        title TEXT NOT NULL,
+        note TEXT,
+        amount REAL,
+        user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        done INTEGER NOT NULL DEFAULT 0,
+        adults INTEGER,
+        kids INTEGER,
+        rsvp TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      INSERT INTO list_items_rebuild (id, family_id, list, title, note, amount, user_id, done, created_at)
+        SELECT id, family_id, list, title, note, amount, user_id, done, created_at FROM list_items;
+      DROP TABLE list_items;
+      ALTER TABLE list_items_rebuild RENAME TO list_items;
+      CREATE INDEX IF NOT EXISTS idx_list_items_family ON list_items(family_id);
+    `);
+  })();
+  db.pragma('foreign_keys = ON');
+}
 
 const maintCols = db.prepare('PRAGMA table_info(maintenance_requests)').all().map((c) => c.name);
 if (!maintCols.includes('reopened_at')) db.exec('ALTER TABLE maintenance_requests ADD COLUMN reopened_at TEXT');
