@@ -131,9 +131,10 @@ CREATE TABLE IF NOT EXISTS credit_payments (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   credit_id INTEGER NOT NULL REFERENCES credits(id) ON DELETE CASCADE,
   family_id INTEGER NOT NULL REFERENCES families(id) ON DELETE CASCADE,
-  amount REAL NOT NULL,
+  amount REAL NOT NULL,       -- what the bank actually charged
   date TEXT NOT NULL,
-  paid_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+  paid_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  months INTEGER              -- instalments this payment bought, as the bank counted them
 );
 CREATE INDEX IF NOT EXISTS idx_credit_payments_credit ON credit_payments(credit_id);
 
@@ -350,6 +351,7 @@ CREATE TABLE IF NOT EXISTS list_items (
   done INTEGER NOT NULL DEFAULT 0,
   adults INTEGER,             -- guest list: how many adults that invitation covers
   kids INTEGER,               -- ...and how many children
+  seats INTEGER,              -- ...and how many come for a seat only, no menu (the venue bills these apart)
   rsvp TEXT,                  -- NULL = no answer yet, 'yes' = coming, 'no' = declined
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -491,6 +493,18 @@ if (!liCols.includes('adults')) {
   })();
   db.pragma('foreign_keys = ON');
 }
+
+// Some guests come to the party but take no menu — they only need a chair, which the venue bills
+// apart from the meals. Re-read the columns rather than reusing `liCols`: the rebuild above may
+// have just replaced the table, and that older shape has no `seats`.
+if (!db.prepare('PRAGMA table_info(list_items)').all().some((c) => c.name === 'seats')) {
+  db.exec('ALTER TABLE list_items ADD COLUMN seats INTEGER');
+}
+
+// an anticipated payment made at the bank counter knocks a known number of instalments off the
+// schedule; recording that alongside the sum keeps the history honest about what was bought
+const cpCols = db.prepare('PRAGMA table_info(credit_payments)').all().map((c) => c.name);
+if (!cpCols.includes('months')) db.exec('ALTER TABLE credit_payments ADD COLUMN months INTEGER');
 
 const maintCols = db.prepare('PRAGMA table_info(maintenance_requests)').all().map((c) => c.name);
 if (!maintCols.includes('reopened_at')) db.exec('ALTER TABLE maintenance_requests ADD COLUMN reopened_at TEXT');

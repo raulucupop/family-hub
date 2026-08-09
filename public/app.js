@@ -90,7 +90,7 @@ const RO = {
   'Add expense': 'Adaugă cheltuială', 'Add income': 'Adaugă venit', 'Date': 'Data', 'Category': 'Categorie', 'Amount': 'Sumă',
   'Note': 'Notă', 'optional': 'opțional', 'Source': 'Sursă', 'All categories': 'Toate categoriile', 'All time': 'Tot timpul',
   'Search note…': 'Caută notă…', 'Whole family': 'Toată familia', 'No matching expenses': 'Nicio cheltuială găsită',
-  'Adjust the filters or add one above.': 'Ajustează filtrele sau adaugă una mai sus.', 'By': 'De', 'Delete': 'Șterge',
+  'Adjust the filters or add one above.': 'Ajustează filtrele sau adaugă una mai sus.', 'By': 'De cine', 'Delete': 'Șterge',
   'Close': 'Închide', 'Retry': 'Reîncearcă', "Couldn't load this": 'Nu s-a putut încărca',
   'Charts are unavailable offline.': 'Graficele nu sunt disponibile offline.',
   'Income history': 'Istoric venituri', 'Monthly budgets': 'Bugete lunare', 'Save budgets': 'Salvează bugetele',
@@ -144,6 +144,7 @@ const RO = {
   'Answer': 'Răspuns', 'Answers': 'Răspunsuri', 'Gift': 'Cadou', 'Gifts': 'Cadouri', 'recorded': 'înregistrate',
   'No invitations yet': 'Nicio invitație încă', 'leave empty to clear': 'lasă gol ca să ștergi',
   'No answer yet': 'Fără răspuns încă',
+  'Seats': 'Scaun', 'Seats only, no menu': 'Doar scaun, fără meniu', 'seats only': 'doar scaun',
   'Add the first family above — adults and children are counted for you.': 'Adaugă prima familie mai sus — adulții și copiii se numără automat.',
   'Item': 'Articol', 'Target': 'Obiectiv', 'Person': 'Persoană', 'Nothing here yet': 'Nimic aici încă',
   'Add the first item above.': 'Adaugă primul articol mai sus.',
@@ -244,6 +245,9 @@ const RO = {
   'A compressed copy of the whole database, taken cleanly while the app keeps running. Scans and invoices are not in it — those live in the uploads folder.':
     'O copie comprimată a întregii baze de date, făcută curat în timp ce aplicația rulează. Scanările și facturile nu sunt incluse — ele stau în folderul uploads.',
   '1 month in advance (principal + 1%)': 'O lună în avans (principal + 1%)', 'Balance today': 'Sold azi', 'Payoff': 'Achitare', 'mo left': 'luni rămase',
+  // paying a number of instalments ahead, rather than typing a sum
+  'month': 'lună', 'Months paid off': 'Luni achitate în avans', 'Expected for': 'Estimat pentru',
+  'enter what the bank actually charged.': 'introdu cât ți-a cerut banca de fapt.',
   'cleared!': 'achitat integral!', 'on schedule': 'conform planului', 'in advance': 'în avans',
   'What if you paid extra every month?': 'Dar dacă ai plăti în plus în fiecare lună?',
   'Money saved (interest)': 'Bani economisiți (dobândă)', 'Total interest projected': 'Dobândă totală estimată', 'vs': 'vs', 'without': 'fără',
@@ -2255,8 +2259,10 @@ function creditCard(c, members, properties, refresh) {
       </div>` : ''}
       ${canWrite() ? `<form data-payform class="formgrid">
         <div><label>Date</label><input name="date" type="date" value="${today()}" required></div>
+        <div><label>${tr('Months paid off')}</label><input name="months" type="number" min="1" max="${Math.max(1, left)}" step="1" inputmode="numeric" placeholder="${tr('optional')}"></div>
         <div><label>Amount (${cur()})</label><input name="amount" type="number" step="0.01" min="0.01" required></div>
-        <button class="btn small">Add payment</button></form>` : ''}
+        <button class="btn small">Add payment</button></form>
+        <p data-advout class="muted" style="margin:6px 0 0;font-size:12.5px"></p>` : ''}
       <div data-pays class="muted">Loading…</div>
     </div>`;
   const loadPays = async () => {
@@ -2264,7 +2270,8 @@ function creditCard(c, members, properties, refresh) {
     const box = wrap.querySelector('[data-pays]');
     box.className = '';
     box.innerHTML = pays.length ? `<table><thead><tr><th>Date</th><th>By</th><th class="right">Amount</th><th></th></tr></thead><tbody>
-      ${pays.map((p) => `<tr><td>${fdate(p.date)}</td><td>${esc(p.paid_by_name || '')}</td><td class="right amount">${money(p.amount)}</td>
+      ${pays.map((p) => `<tr><td>${fdate(p.date)}</td><td>${esc(p.paid_by_name || '')}${
+        p.months ? ` <span class="badge role">−${p.months} ${tr(p.months === 1 ? 'month' : 'months')}</span>` : ''}</td><td class="right amount">${money(p.amount)}</td>
         <td class="right">${canWrite() ? `<button class="btn danger small" data-paydel="${p.id}">✕</button>` : ''}</td></tr>`).join('')}</tbody></table>`
       : `<p class="muted">No anticipated payments yet.</p>`;
     box.querySelectorAll('[data-paydel]').forEach((b) => (b.onclick = () => {
@@ -2304,6 +2311,29 @@ function creditCard(c, members, properties, refresh) {
     };
     wfInput.addEventListener('input', show);
     wrap.querySelectorAll('[data-wq]').forEach((b) => (b.onclick = () => { wfInput.value = b.dataset.wq; show(); }));
+  }
+  // You pay at the counter and the bank names the figure, so the amount recorded is always yours.
+  // Typing how many instalments it cleared shows what this app expects that to cost — handy for
+  // checking the paperwork, and it pre-fills the amount only while you have not typed one.
+  const monthsIn = wrap.querySelector('[data-payform] [name=months]');
+  if (monthsIn) {
+    const amountIn = wrap.querySelector('[data-payform] [name=amount]');
+    const out = wrap.querySelector('[data-advout]');
+    let seq = 0;
+    monthsIn.addEventListener('input', async () => {
+      const n = Math.round(Number(monthsIn.value));
+      if (!(n >= 1)) { out.textContent = ''; return; }
+      const mine = ++seq;
+      try {
+        const q = await api(`/credits/${c.id}/advance?months=${n}`);
+        if (mine !== seq) return; // a newer keystroke already asked
+        out.innerHTML = q.total > 0
+          ? `${tr('Expected for')} ${q.months} ${tr(q.months === 1 ? 'month' : 'months')}: <b class="amount">${money(q.total)}</b>
+             <span class="muted">(${money(q.principal)} ${tr('principal')} + 1%)</span> — ${tr('enter what the bank actually charged.')}`
+          : `<span class="muted">${tr('cleared!')}</span>`;
+        if (!amountIn.value && q.total > 0) amountIn.value = q.total.toFixed(2);
+      } catch { if (mine === seq) out.textContent = ''; }
+    });
   }
   wrap.addEventListener('toggle', () => { if (wrap.open && !wrap._loaded) { wrap._loaded = true; loadPays(); } });
   wrap.querySelector('[data-payform]')?.addEventListener('submit', async (e) => {
@@ -3177,7 +3207,7 @@ function guestList(rows) {
   const yes = rows.filter((r) => r.rsvp === 'yes'), no = rows.filter((r) => r.rsvp === 'no');
   const waiting = rows.filter((r) => !r.rsvp);
   const sum = (list, f) => list.reduce((s, r) => s + n(r[f]), 0);
-  const goingA = sum(yes, 'adults'), goingK = sum(yes, 'kids');
+  const goingA = sum(yes, 'adults'), goingK = sum(yes, 'kids'), goingS = sum(yes, 'seats');
   const gifts = rows.reduce((s, r) => s + n(r.amount), 0);
   const cell = (r) => `<span class="rsvpset">
       <button class="btn ${r.rsvp === 'yes' ? '' : 'ghost'} tiny" data-rsvp="${r.id}" data-val="yes">${tr('Coming')}</button>
@@ -3185,8 +3215,9 @@ function guestList(rows) {
     </span>`;
   return `<section class="kpi" style="margin:14px 0 4px">
       <div class="card"><div class="label">${tr('Coming')}</div>
-        <div class="value">${goingA + goingK}</div>
-        <div class="muted" style="font-size:12.5px">${goingA} ${tr(goingA === 1 ? 'adult' : 'adults')} · ${goingK} ${tr(goingK === 1 ? 'child' : 'children')}</div></div>
+        <div class="value">${goingA + goingK + goingS}</div>
+        <div class="muted" style="font-size:12.5px">${goingA} ${tr(goingA === 1 ? 'adult' : 'adults')} · ${goingK} ${tr(goingK === 1 ? 'child' : 'children')}${
+          goingS ? ` · ${goingS} ${tr('seats only')}` : ''}</div></div>
       <div class="card"><div class="label">${tr('Answers')}</div>
         <div class="value">${yes.length}/${rows.length}</div>
         <div class="muted" style="font-size:12.5px">${no.length} ${tr('declined')} · ${waiting.length} ${tr('waiting')}</div></div>
@@ -3196,6 +3227,7 @@ function guestList(rows) {
     </section>
     <table class="cards"><thead><tr>
       <th>${tr('Invitation')}</th><th class="right">${tr('Adults')}</th><th class="right">${tr('Children')}</th>
+      <th class="right">${tr('Seats')}</th>
       <th>${tr('Answer')}</th><th class="right">${tr('Gift')}</th><th></th></tr></thead><tbody>
     ${rows.map((r) => `<tr class="${r.rsvp === 'no' ? 'guest-no' : ''}">
       <td data-label="${tr('Invitation')}"><b>${esc(r.title)}</b>${r.note ? `<br><span class="muted">${esc(r.note)}</span>` : ''}</td>
@@ -3205,6 +3237,9 @@ function guestList(rows) {
       <td class="right amount" data-label="${tr('Children')}">${canWrite()
         ? `<input class="headin" type="number" min="0" step="1" value="${n(r.kids)}" data-heads="${r.id}" data-field="kids" aria-label="${tr('Children')}">`
         : n(r.kids)}</td>
+      <td class="right amount" data-label="${tr('Seats')}">${canWrite()
+        ? `<input class="headin" type="number" min="0" step="1" value="${n(r.seats)}" data-heads="${r.id}" data-field="seats" aria-label="${tr('Seats only, no menu')}">`
+        : n(r.seats)}</td>
       <td data-label="${tr('Answer')}">${canWrite() ? cell(r) : (r.rsvp === 'yes' ? tr('Coming') : r.rsvp === 'no' ? tr('Declined') : '—')}</td>
       <td class="right amount" data-label="${tr('Gift')}">${canWrite()
         ? `<button class="btn ghost tiny" data-gift="${r.id}" data-cur="${n(r.amount)}">${n(r.amount) ? money(r.amount) : '+'}</button>`
@@ -3224,6 +3259,7 @@ async function viewLists(el, tab = 'buy') {
         <div><label>${tab === 'baptism' ? tr('Invitation') : tab === 'targets' ? 'Target' : 'Item'}</label><input name="title" placeholder="${esc(def[2])}" required></div>
         ${tab === 'baptism' ? `<div><label>${tr('Adults')}</label><input name="adults" type="number" min="0" step="1" value="2"></div>
         <div><label>${tr('Children')}</label><input name="kids" type="number" min="0" step="1" value="0"></div>
+        <div><label>${tr('Seats only, no menu')}</label><input name="seats" type="number" min="0" step="1" value="0"></div>
         <div><label>${tr('Answer')}</label><select name="rsvp">
           <option value="">${tr('No answer yet')}</option>
           <option value="yes">${tr('Coming')}</option>

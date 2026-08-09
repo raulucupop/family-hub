@@ -1007,14 +1007,46 @@ app.get('/api/credits/:id/payments', auth, (req, res) => {
   `).all(req.params.id, req.user.family_id);
   res.json(rows);
 });
+// What it costs to clear the next N instalments early. Only the principal of those instalments is
+// owed — the interest is precisely what you avoid by paying now — plus the 1% early-repayment fee
+// Romanian lenders charge. Each month is peeled off a shrinking balance, so it is not simply N x
+// the first month: the further ahead you buy, the more of each instalment is principal.
+function advanceCost(credit, prepays, months) {
+  const stats = creditStats(credit, prepays);
+  const r = Number(credit.interest_rate) / 100 / 12;
+  const payment = stats.monthly_payment;
+  let bal = stats.balance, principal = 0, covered = 0;
+  for (let i = 0; i < months; i++) {
+    if (bal <= 0.005) break;
+    const interest = bal * r;
+    const part = Math.min(payment - interest, bal);
+    if (!(part > 0)) break; // instalment does not even cover the interest — nothing to prepay
+    principal += part; bal -= part; covered++;
+  }
+  const round = (n) => Math.round(n * 100) / 100;
+  return { months: covered, principal: round(principal), fee: round(principal * 0.01), total: round(principal * 1.01) };
+}
+app.get('/api/credits/:id/advance', auth, (req, res) => {
+  const credit = db.prepare('SELECT * FROM credits WHERE id = ? AND family_id = ?').get(req.params.id, req.user.family_id);
+  if (!credit) return res.status(404).json({ error: 'Not found' });
+  const months = Math.min(Math.max(Math.round(Number(req.query.months) || 1), 1), 600);
+  res.json(advanceCost(credit, db.prepare('SELECT * FROM credit_payments WHERE credit_id = ?').all(credit.id), months));
+});
 app.post('/api/credits/:id/payments', auth, canWrite, (req, res) => {
   const credit = db.prepare('SELECT * FROM credits WHERE id = ? AND family_id = ?').get(req.params.id, req.user.family_id);
   if (!credit) return res.status(404).json({ error: 'Not found' });
   const b = req.body || {};
   if (!okAmount(b.amount)) return res.status(400).json({ error: 'Amount must be greater than 0' });
   if (!isDate(b.date)) return res.status(400).json({ error: 'Date must be YYYY-MM-DD' });
-  db.prepare('INSERT INTO credit_payments (credit_id, family_id, amount, date, paid_by) VALUES (?,?,?,?,?)')
-    .run(credit.id, req.user.family_id, Number(b.amount), b.date, req.user.id);
+  // The sum is always the one the bank actually charged — the app's estimate is guidance, never a
+  // substitute for it. `months` is what the counter said that sum bought, recorded alongside.
+  let months = null;
+  if (b.months != null && b.months !== '') {
+    months = Math.round(Number(b.months));
+    if (!(months >= 1 && months <= 600)) return res.status(400).json({ error: 'Months must be between 1 and 600' });
+  }
+  db.prepare('INSERT INTO credit_payments (credit_id, family_id, amount, date, paid_by, months) VALUES (?,?,?,?,?,?)')
+    .run(credit.id, req.user.family_id, Number(b.amount), b.date, req.user.id, months);
   res.json({ ok: true });
 });
 app.delete('/api/credits/:id/payments/:pid', auth, canWrite, (req, res) => {
@@ -1942,9 +1974,9 @@ app.post('/api/lists', auth, canWrite, (req, res) => {
   if (uid == null) uid = req.user.id;
   // head counts only mean anything on a guest list, and a negative one never does
   const headCount = (v) => { const n = Math.round(Number(v)); return Number.isFinite(n) && n >= 0 ? n : null; };
-  const info = db.prepare('INSERT INTO list_items (family_id, list, title, note, amount, user_id, adults, kids, rsvp) VALUES (?,?,?,?,?,?,?,?,?)')
+  const info = db.prepare('INSERT INTO list_items (family_id, list, title, note, amount, user_id, adults, kids, seats, rsvp) VALUES (?,?,?,?,?,?,?,?,?,?)')
     .run(req.user.family_id, b.list, str(b.title), str(b.note), num(b.amount), uid,
-      headCount(b.adults), headCount(b.kids), ['yes', 'no'].includes(b.rsvp) ? b.rsvp : null);
+      headCount(b.adults), headCount(b.kids), headCount(b.seats), ['yes', 'no'].includes(b.rsvp) ? b.rsvp : null);
   res.json(db.prepare('SELECT * FROM list_items WHERE id = ?').get(info.lastInsertRowid));
 });
 // A guest either answered or hasn't; sending the same answer again clears it, so a mis-tap is one
@@ -1970,9 +2002,10 @@ app.post('/api/lists/:id/heads', auth, canWrite, (req, res) => {
   };
   const adults = headCount(req.body?.adults, row.adults);
   const kids = headCount(req.body?.kids, row.kids);
-  if (adults === undefined || kids === undefined) return res.status(400).json({ error: 'People must be 0 or more' });
-  db.prepare('UPDATE list_items SET adults = ?, kids = ? WHERE id = ?').run(adults, kids, row.id);
-  res.json({ ok: true, adults, kids });
+  const seats = headCount(req.body?.seats, row.seats);
+  if (adults === undefined || kids === undefined || seats === undefined) return res.status(400).json({ error: 'People must be 0 or more' });
+  db.prepare('UPDATE list_items SET adults = ?, kids = ?, seats = ? WHERE id = ?').run(adults, kids, seats, row.id);
+  res.json({ ok: true, adults, kids, seats });
 });
 // the gift a guest brought, recorded after the fact
 app.post('/api/lists/:id/gift', auth, canWrite, (req, res) => {
