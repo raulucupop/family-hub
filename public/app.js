@@ -903,6 +903,13 @@ const systemDark = matchMedia('(prefers-color-scheme: dark)');
 function applyTheme() {
   const pref = ME ? ME.theme || 'light' : 'system';
   document.documentElement.dataset.theme = pref === 'system' ? (systemDark.matches ? 'dark' : 'light') : pref;
+  // The phone paints its address bar and status bar with theme-color. It was a fixed #1c2b33, so
+  // that strip looked identical whichever theme you picked — on a phone, where the app fills the
+  // screen, that top band is a good part of what "dark mode" is supposed to change. Read the value
+  // back from the stylesheet so it always matches the header actually being drawn underneath it.
+  const bar = getComputedStyle(document.documentElement).getPropertyValue('--sidebar').trim();
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta && bar) meta.content = bar;
 }
 systemDark.addEventListener('change', applyTheme);
 // a stable hue per name, so different people get distinct avatar colours (the CSS turns the

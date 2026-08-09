@@ -15,8 +15,17 @@
   --display: "Bricolage Grotesque", system-ui, sans-serif;
   --body: "Public Sans", system-ui, sans-serif;
   --sidebar: #1c2b33;   /* stays dark in both themes */
+  /* A divider meant to be SEEN, unlike --line which edges inputs and is deliberately faint. --line
+     measures 1.31:1 against a card in both themes, which is not a separator so much as a rumour. */
+  --rule: #a8b7b2;
+  /* Tells the browser which way round the page is, which is the only thing that themes the parts
+     the stylesheet cannot reach: the popup a <select> opens, the native date picker, scrollbars,
+     spin buttons and autofill. Without it those all stayed light on top of the dark page — most
+     obvious on a phone, where tapping a select threw up a white sheet. */
+  color-scheme: light;
 }
-:root[data-theme="dark"] { --sidebar: #10171a; }
+/* the dark rule needs more separation than the light one to read the same — 2.98:1 vs 2.08:1 */
+:root[data-theme="dark"] { --sidebar: #10171a; --rule: #5a6f73; color-scheme: dark; }
 :root[data-theme="dark"] {
   --ink: #e8edeb;
   --ink-soft: #9db0a9;
@@ -84,7 +93,9 @@ label { display: block; font-size: 12.5px; font-weight: 600; color: var(--ink-so
 .pagehead p { margin: 0; color: var(--ink-soft); font-size: 13.5px; }
 
 /* cards & grids */
-.card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; }
+/* --card-pad-x is published so a child can pull itself back out to the card's edges (see .subform),
+   instead of a full-width rule being guessed at and landing a few pixels short */
+.card { --card-pad-x: 18px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px var(--card-pad-x); }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
 .stack > * + * { margin-top: 16px; }
@@ -283,8 +294,16 @@ tr.daysep > td { background: var(--paper); padding: 6px 10px; border-bottom: 1px
 /* top-categories strip above the expenses table */
 /* An "add" form sharing a card with the list it adds to. Without a break, the goal's progress bar
    ran straight into the form's first field and the whole thing read as one block — the fields
-   looked like they were editing the goal above rather than creating a new one. */
-.subform { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }
+   looked like they were editing the goal above rather than creating a new one.
+   A hairline in --line did not survive dark mode (1.31:1 against the card — a rule you can find if
+   you know it's there, and not otherwise), and boxing the form instead read as a card inside a
+   card. So: a single rule in the deliberately-visible --rule, pulled out to the card's own edges so
+   it reads as "the section ends here" rather than as the lid of a container. */
+.subform {
+  margin: 16px calc(-1 * var(--card-pad-x, 18px)) 0;
+  padding: 14px var(--card-pad-x, 18px) 0;
+  border-top: 1px solid var(--rule);
+}
 .subform > h4 {
   margin: 0 0 10px; font-size: 12.5px; font-weight: 600;
   text-transform: uppercase; letter-spacing: .04em; color: var(--ink-soft);
@@ -720,7 +739,7 @@ details.foldcard[open] > summary::after { transform: rotate(180deg); }
   .pagehead p.clampable::after { content: ' ▾'; color: var(--accent); font-weight: 600; }
   .pagehead p.clampable.open::after { content: ' ▴'; }
 
-  .card { padding: 14px; border-radius: 10px; }
+  .card { --card-pad-x: 14px; padding: 14px; border-radius: 10px; }
   details.entity > summary { padding: 12px 14px; }
   details.entity .body { padding: 12px 14px; }
   .chartbox { height: 200px; }
