@@ -472,6 +472,9 @@ function translateSubtree(root) {
 }
 const cur = () => (FAMILY?.currency || 'RON');
 const money = (n) => n == null ? '—' : `${Number(n).toLocaleString('ro-RO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${cur()}`;
+// Rounded, no currency — for places that repeat an amount many times in a tight space (the category
+// subtotal pills). The exact figure is always on the row or in the header next to it.
+const moneyShort = (n) => Number(n || 0).toLocaleString('ro-RO', { maximumFractionDigits: 0 });
 // dates: stored/handled as ISO (yyyy-mm-dd), shown to the user as dd/mm/yyyy
 const ISO_RE = /^\d{4}-\d{2}-\d{2}$/;
 const DMY_RE = /^(\d{2})\/(\d{2})\/(\d{4})$/;
@@ -749,6 +752,11 @@ function addBox(title, inner, forceOpen) {
 // same breakpoint the stylesheet switches layouts at, so JS and CSS never disagree about "phone"
 const isPhone = () => matchMedia('(max-width: 860px)').matches;
 function daysClass(d) { return d < 0 ? 'late' : d <= 14 ? 'warn' : ''; }
+// Whole days from today to an ISO date. Both ends are parsed as UTC midnight so a DST changeover
+// cannot round the difference to the wrong day.
+function daysUntil(iso) {
+  return Math.round((Date.parse(iso + 'T00:00:00Z') - Date.parse(today() + 'T00:00:00Z')) / 86400000);
+}
 // an alert's item key is "kind:ref:YYYY-MM-DD" for dated things (and "maintenance:3:open" for the
 // undated ones) — pull the days-left out of it so the alert list can show the same urgency colours
 function alertDays(item) {
@@ -1555,6 +1563,11 @@ async function drawCharts(stats, scopeView = 'all', scopeMonths = 1, trendStats 
     Chart.defaults.font.size = 12;
   }
   const mono = "'IBM Plex Mono', ui-monospace, monospace";
+  // Chart.js formats its own numbers, and its default locale is not ours: the axis read "14,000"
+  // beside a card reading "12.200,00 RON" on the same screen. Axis ticks drop the decimals (a
+  // gridline does not need them); tooltips show the full amount with the currency.
+  const axisNum = (v) => Number(v).toLocaleString('ro-RO', { maximumFractionDigits: 0 });
+  const moneyTooltip = { callbacks: { label: (c) => ` ${c.dataset.label || c.label}: ${money(c.parsed.y ?? c.parsed)}` } };
   // legend chips as small dots, matching the pill/badge language elsewhere
   const legendDots = { labels: { usePointStyle: true, pointStyle: 'circle', boxWidth: 8, padding: 14 } };
   // clicking a category slice opens Expenses filtered to that category, keeping the dashboard's scope
@@ -1570,7 +1583,7 @@ async function drawCharts(stats, scopeView = 'all', scopeMonths = 1, trendStats 
     data: { labels: cats.map(tr), datasets: [{ data: stats.byCategory.map((c) => c.total), backgroundColor: cats.map(catColor), borderColor: cardBg, borderWidth: 2, hoverOffset: 6 }] },
     options: {
       maintainAspectRatio: false, cutout: '62%',
-      plugins: { legend: { position: 'right', ...legendDots, onClick: (e, item) => drillTo(cats[item.index]) } },
+      plugins: { legend: { position: 'right', ...legendDots, onClick: (e, item) => drillTo(cats[item.index]) }, tooltip: moneyTooltip },
       onClick: (e, els) => { if (els.length) drillTo(cats[els[0].index]); },
     },
   }); cc.style.cursor = 'pointer'; }
@@ -1587,9 +1600,9 @@ async function drawCharts(stats, scopeView = 'all', scopeMonths = 1, trendStats 
     },
     options: {
       maintainAspectRatio: false,
-      plugins: { legend: legendDots },
+      plugins: { legend: legendDots, tooltip: moneyTooltip },
       scales: {
-        y: { beginAtZero: true, border: { display: false }, grid: { color: line }, ticks: { font: { family: mono } } },
+        y: { beginAtZero: true, border: { display: false }, grid: { color: line }, ticks: { font: { family: mono }, callback: axisNum } },
         x: { border: { display: false }, grid: { display: false } },
       },
     },
@@ -1843,7 +1856,11 @@ async function moneyExpenses(body, f = {}) {
   const byCat = Object.entries(inScope.reduce((m, e) => ((m[e.category] = (m[e.category] || 0) + e.amount), m), {}))
     .sort((a, b) => b[1] - a[1]);
   const subtotals = (byCat.length > 1 && scopeTotal > 0) ? `<div class="catstrip">${byCat.slice(0, 6).map(([c, amt]) =>
-    `<button class="catpill${flt.cat === c ? ' on' : ''}" data-catjump="${esc(c)}" style="--cat:${catColor(c)}" aria-pressed="${flt.cat === c}"><span class="catdot"></span>${esc(tr(c))}<b>${money(amt)}</b><span class="muted">${Math.round((amt / scopeTotal) * 100)}%</span></button>`).join('')}</div>` : '';
+    // The name is its own element so it can be the part that truncates when a pill is squeezed to
+    // half a phone row — a bare text node has nothing to hang text-overflow on. Both amounts are
+    // rendered and CSS picks one: a phone pill has no room for "1.250,00 RON" six times over, a
+    // desktop one does and there's no reason to make it read worse.
+    `<button class="catpill${flt.cat === c ? ' on' : ''}" data-catjump="${esc(c)}" style="--cat:${catColor(c)}" aria-pressed="${flt.cat === c}"><span class="catdot"></span><span class="catname">${esc(tr(c))}</span><b title="${money(amt)}"><span class="amt-full">${money(amt)}</span><span class="amt-short">${moneyShort(amt)}</span></b><span class="muted">${Math.round((amt / scopeTotal) * 100)}%</span></button>`).join('')}</div>` : '';
   const reload = (patch) => moneyExpenses(body, { ...flt, ...patch });
   body.innerHTML = `
     ${canWrite() ? (isPhone()
@@ -1892,12 +1909,12 @@ async function moneyExpenses(body, f = {}) {
     </div></details>
     <div class="card" style="margin-top:16px">
       <div class="row" style="justify-content:space-between;gap:10px"><h3 style="margin:0">Expenses</h3><span class="amount"><b>${money(total)}</b></span></div>
-      <div class="row" style="gap:8px;margin:10px 0;flex-wrap:wrap">
+      <div class="row filterrow">
         ${whoFilter('wfilter', members, flt.who)}
-        <select id="cfilter" style="width:150px"><option value="all" ${flt.cat === 'all' ? 'selected' : ''}>All categories</option>${CATEGORIES.map((c) => `<option value="${c}" ${flt.cat === c ? 'selected' : ''}>${c}</option>`).join('')}</select>
-        <input id="mfilter" type="month" value="${flt.month === 'all' ? '' : flt.month}" style="width:150px">
+        <select id="cfilter"><option value="all" ${flt.cat === 'all' ? 'selected' : ''}>All categories</option>${CATEGORIES.map((c) => `<option value="${c}" ${flt.cat === c ? 'selected' : ''}>${c}</option>`).join('')}</select>
+        <input id="mfilter" type="month" value="${flt.month === 'all' ? '' : flt.month}">
         <button class="btn ghost small" id="allmonths">${flt.month === 'all' ? '● All time' : 'All time'}</button>
-        <input id="qfilter" type="search" placeholder="Search note…" value="${esc(flt.q)}" style="width:180px">
+        <input id="qfilter" type="search" placeholder="Search note…" value="${esc(flt.q)}">
       </div>
       ${subtotals}
       ${rows.length ? `<table class="cards"><thead><tr><th>${tr('Date')}</th><th>${tr('Category')}</th><th>${tr('By')}</th><th>${tr('Note')}</th><th class="right">${tr('Amount')}</th><th></th></tr></thead><tbody>
@@ -2451,13 +2468,19 @@ async function viewBills(el) {
       ${bills.length ? `<table class="cards"><thead><tr><th>Bill</th><th>Owner</th><th>Due</th><th class="right">Amount</th><th>Status</th><th>Invoice</th><th></th></tr></thead><tbody>
       ${bills.map((b) => {
         const late = b.status === 'unpaid' && b.due_date < t;
+        const dLeft = daysUntil(b.due_date);
         return `<tr>
           <td><b>${esc(b.name)}</b><br><span class="muted">${esc(b.provider || tr(BILL_CATS[b.category]) || '')}${recurValue(b) === '0' ? '' : ` · ${tr(recurLabel(b))}`}${b.auto_pay ? (LANG === 'ro' ? ' · plată automată' : ' · auto-pay') : ''}${b.expense_category ? ` · ${tr(b.expense_category)}` : ''}${b.property_name ? ` · ⌂ ${esc(b.property_name)}` : ''}${b.vehicle_name ? ` · ⛟ ${esc(b.vehicle_name)}` : ''}</span></td>
-          <td data-label="${tr('Owner')}">${esc(b.owner_name || 'Family')}</td>
-          <td data-label="${tr('Due')}">${fdate(b.due_date)}</td>
+          <td class="lowpri" data-label="${tr('Owner')}">${esc(b.owner_name || 'Family')}</td>
+          <td data-label="${tr('Due')}">${fdate(b.due_date)}${b.status === 'unpaid'
+            // "11/08/2026" needs a mental subtraction before it means anything; "în 2z" doesn't.
+            // Only colour it once it's close — a badge on every far-off bill is just noise.
+            ? (daysClass(dLeft)
+              ? ` <span class="badge ${daysClass(dLeft)}">${daysLabel(dLeft)}</span>`
+              : ` <span class="muted">${daysLabel(dLeft)}</span>`) : ''}</td>
           <td class="right amount" data-label="${tr('Amount')}">${money(b.amount)}</td>
           <td data-label="${tr('Status')}"><span class="badge ${late ? 'late' : b.status}">${tr(late ? 'overdue' : b.status)}</span></td>
-          <td data-label="${tr('Invoice')}">${b.attachment ? `<a href="/api/bills/${b.id}/attachment" target="_blank">view</a>` : canWrite() ? `<label class="btn ghost small" style="display:inline-block">attach<input type="file" data-attach="${b.id}" accept=".pdf,image/*" hidden></label>` : '—'}</td>
+          <td class="lowpri" data-label="${tr('Invoice')}">${b.attachment ? `<a href="/api/bills/${b.id}/attachment" target="_blank">view</a>` : canWrite() ? `<label class="btn ghost small" style="display:inline-block">attach<input type="file" data-attach="${b.id}" accept=".pdf,image/*" hidden></label>` : '—'}</td>
           <td class="right"><span class="rowacts">${canWrite() ? `
             ${b.status === 'unpaid' ? `<button class="btn small" data-pay="${b.id}" data-amt="${b.amount ?? ''}">Mark paid</button>` : ''}
             ${rowMenu([
@@ -3850,6 +3873,65 @@ function addPasswordEyes(root) {
   if (root.matches && root.matches('input[type="password"]')) addPasswordEye(root);
   root.querySelectorAll?.('input[type="password"]').forEach(addPasswordEye);
 }
+/* The page description is clamped to two lines on a phone. Where that actually hides something,
+   mark it so it gets the "more" chevron and opens on tap; where the text already fits, leave it
+   alone rather than promising more than there is. */
+function upgradeClampedText(root) {
+  if (!isPhone()) return;
+  const ps = [];
+  if (root.matches?.('.pagehead p')) ps.push(root);
+  root.querySelectorAll?.('.pagehead p').forEach((p) => ps.push(p));
+  for (const p of ps) {
+    if (p.dataset.clampchecked) continue;
+    p.dataset.clampchecked = '1';
+    if (p.scrollHeight <= p.clientHeight + 1) continue; // nothing hidden — no affordance needed
+    p.classList.add('clampable');
+    p.setAttribute('role', 'button');
+    p.setAttribute('tabindex', '0');
+    const toggle = () => p.classList.toggle('open');
+    p.addEventListener('click', toggle);
+    p.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
+  }
+}
+/* A tab strip that scrolls has to say so. Seven money tabs on a phone showed three, with the rest
+   241px off-screen and nothing to suggest they existed — so Debt and Year may as well not have been
+   built. Two things fix that: the active tab scrolls itself into view (arrive on #money/debt and you
+   see where you are), and the edge with tabs behind it gets a fade via [data-more]. */
+function upgradeTabStrips(root) {
+  const strips = [];
+  if (root.matches?.('.tabs')) strips.push(root);
+  root.querySelectorAll?.('.tabs').forEach((s) => strips.push(s));
+  for (const strip of strips) {
+    if (strip.dataset.scrollhint) continue; // a re-render replaces the node, so this never leaks
+    strip.dataset.scrollhint = '1';
+    const sync = () => {
+      // 2px of slack: sub-pixel widths otherwise leave a permanent fade on a strip that fits
+      const more = strip.scrollWidth - strip.clientWidth > 2;
+      const left = more && strip.scrollLeft > 2;
+      const right = more && strip.scrollLeft < strip.scrollWidth - strip.clientWidth - 2;
+      strip.dataset.more = left && right ? 'both' : left ? 'left' : right ? 'right' : '';
+    };
+    strip.addEventListener('scroll', sync, { passive: true });
+    addEventListener('resize', sync, { passive: true });
+    // Switching tabs usually moves the .active class without rebuilding the strip, so scrolling
+    // only on creation left a half-cut "Credite" as the selected tab. Do it on click as well —
+    // after a frame, so it measures the layout the re-render actually produced.
+    strip.addEventListener('click', (e) => {
+      const b = e.target.closest('button');
+      if (!b) return;
+      requestAnimationFrame(() => { b.scrollIntoView({ block: 'nearest', inline: 'center' }); sync(); });
+    });
+    // Deferred a frame so the strip is laid out before it is measured. `inline: 'center'` rather
+    // than 'nearest': the strip is scroll-snapped, and a tab hanging 5px off the edge asks for a
+    // 5px correction that proximity-snapping immediately undoes — centring clears the snap point.
+    requestAnimationFrame(() => {
+      strip.querySelector('button.active, button[aria-selected="true"]')
+        ?.scrollIntoView({ block: 'nearest', inline: 'center' });
+      sync();
+    });
+    sync();
+  }
+}
 new MutationObserver((muts) => {
   for (const m of muts) for (const n of m.addedNodes) {
     if (n.nodeType !== 1) continue;
@@ -3859,6 +3941,8 @@ new MutationObserver((muts) => {
     labelIconButtons(n);
     markSortableHeaders(n);
     addPasswordEyes(n);
+    upgradeTabStrips(n);
+    upgradeClampedText(n);
   }
 }).observe(app, { childList: true, subtree: true });
 // click a column header to sort its table: dates (dd/mm/yyyy), RO-formatted amounts

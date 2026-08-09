@@ -255,6 +255,12 @@ tr.daysep > td { background: var(--paper); padding: 6px 10px; border-bottom: 1px
 .who { display: inline-flex; align-items: center; gap: 6px; }
 .who-av { width: 20px; height: 20px; border-radius: 50%; font-size: 11px; font-weight: 700; flex: none; }
 /* top-categories strip above the expenses table */
+/* the expense filter bar: widths live here rather than inline, so the phone layout can override
+   them instead of losing to an inline style */
+.filterrow { gap: 8px; margin: 10px 0; flex-wrap: wrap; }
+.filterrow #cfilter, .filterrow #mfilter { width: 150px; }
+.filterrow #qfilter { width: 180px; }
+
 .catstrip { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 14px; }
 .catpill {
   display: inline-flex; align-items: center; gap: 7px; padding: 5px 12px; border-radius: 999px;
@@ -267,6 +273,7 @@ tr.daysep > td { background: var(--paper); padding: 6px 10px; border-bottom: 1px
 .catpill b { font-family: var(--mono); font-weight: 500; }
 .catpill .catdot { width: 8px; height: 8px; }
 .catpill .muted { font-size: 12px; }
+.catpill .amt-short { display: none; } /* the phone variant; the media query below swaps them */
 .btn.danger { background: transparent; color: var(--red); border: 1px solid var(--red-soft); }
 .btn.danger:hover { background: var(--red-soft); }
 /* row action buttons (Mark paid / Edit / History / Delete): a flex row so the gaps are
@@ -284,6 +291,9 @@ tr.daysep > td { background: var(--paper); padding: 6px 10px; border-bottom: 1px
 .badge.unpaid { background: var(--amber-soft); color: var(--amber); }
 .badge.paid { background: var(--accent-soft); color: var(--accent); }
 .badge.late { background: var(--red-soft); color: var(--red); }
+/* every other .warn surface (.dead, .dchip, .stub, .alertrow) had an amber treatment and .badge did
+   not, so a "due in 2 days" chip rendered as plain text with no urgency at all */
+.badge.warn { background: var(--amber-soft); color: var(--amber); }
 .badge.role { background: var(--accent-soft); color: var(--accent); text-transform: capitalize; }
 
 /* budget bars */
@@ -517,12 +527,30 @@ details.foldcard[open] > summary::after { transform: rotate(180deg); }
 
   /* "Coming up" stacks instead of scrolling sideways: 9 items were 2018px of horizontal content
      in a 375px viewport, so exactly one was visible. Show the first few, rest behind "+N more". */
-  .grid2, .grid3, .kpi { grid-template-columns: 1fr; }
+  .grid2, .grid3 { grid-template-columns: 1fr; }
+
+  /* KPI cards go horizontal rather than stacking into three tall boxes: three numbers were taking
+     285px — a third of the phone screen — before anything actionable appeared. Label left, number
+     right, and any extra line (a breakdown, a hint) spans underneath. Same numbers, ~120px less. */
+  .kpi { grid-template-columns: 1fr; gap: 10px; }
+  .kpi .card {
+    display: grid; grid-template-columns: 1fr auto;
+    align-items: baseline; column-gap: 12px; row-gap: 2px;
+    padding: 11px 14px;
+  }
+  /* 12px/.02em rather than 12.5px/.03em: "Venituri · Luna aceasta" beside the longest amount was
+     ~3px over the line and wrapped to two rows, undoing the saving on that one card */
+  .kpi .card > .label { grid-column: 1; font-size: 12px; letter-spacing: .02em; }
+  .kpi .card > .value { grid-column: 2; margin-top: 0; text-align: right; }
+  .kpi .card > :not(.label):not(.value) { grid-column: 1 / -1; } /* breakdowns keep the full width */
   .pagehead { flex-direction: column; align-items: flex-start; gap: 8px; margin-bottom: 14px; }
   h1 { font-size: 1.45rem; }
 
   /* inputs: 16px stops iOS zooming in on focus; taller = easier to tap */
   input, select, textarea { font-size: 16px; padding: 10px 12px; }
+  /* A 13px checkbox is a miss waiting to happen on a thumb. min-* rather than width/height so the
+     inline `width:auto` these carry (to escape the full-width input rule) doesn't cancel it. */
+  input[type="checkbox"], input[type="radio"] { min-width: 20px; min-height: 20px; accent-color: var(--accent); }
 
   /* date fields get a tappable calendar icon on the right */
   .dateinput { padding-right: 46px; }
@@ -569,7 +597,12 @@ details.foldcard[open] > summary::after { transform: rotate(180deg); }
     content: attr(data-label); flex: none;
     color: var(--ink-soft); font-size: 12px; font-weight: 600;
   }
-  table.cards td[data-label].amount { font-size: 16px; font-weight: 600; } /* the number is what you scan for */
+  table.cards td[data-label].amount { font-size: 18px; font-weight: 600; } /* the number is what you scan for */
+  /* Not every field earns the same weight. A card that renders "Owner: Family" as loudly as
+     "Amount: 210,00 RON" makes you read five rows to find the one that matters, so the reference
+     fields step back and let the amount, the date and the status carry the card. */
+  table.cards td[data-label].lowpri { font-size: 12.5px; color: var(--ink-soft); }
+  table.cards td[data-label].lowpri::before { font-weight: 500; }
   table.cards td:empty { display: none; }
   table.cards td .rowacts { display: flex; flex-direction: column; align-items: stretch; gap: 6px; margin-top: 8px; }
   /* an edit form opened inside a card row must not inherit the card padding twice */
@@ -580,8 +613,7 @@ details.foldcard[open] > summary::after { transform: rotate(180deg); }
   td .rowacts { display: flex; flex-direction: column; align-items: stretch; gap: 6px; min-width: 92px; }
 
   /* Tab rows stay on ONE line and scroll sideways: wrapping five money tabs cost three rows
-     (132px) of screen before any content appeared. Scrollbar hidden — the cut-off tab at the
-     edge is the affordance. */
+     (132px) of screen before any content appeared. */
   .tabs {
     flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none;
     -webkit-overflow-scrolling: touch; scroll-snap-type: x proximity;
@@ -592,6 +624,52 @@ details.foldcard[open] > summary::after { transform: rotate(180deg); }
   .tabs::-webkit-scrollbar { display: none; }
   .tabs button { flex: 0 0 auto; min-height: 40px; padding: 8px 16px; scroll-snap-align: start; }
 
+  /* A cut-off tab at the edge was supposed to be the affordance, but with seven money tabs only
+     three fit and 241px sat off-screen — Debt and Year were unreachable in practice. Fade whichever
+     edge still has tabs behind it, so "there is more this way" is visible rather than inferred.
+     The mask paints the element box, not the scrolled content, so the fade stays at the edges.
+     [data-more] is set by upgradeTabStrips() and reflects the live scroll position. */
+  .tabs[data-more="right"] {
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 34px), transparent 100%);
+    mask-image: linear-gradient(to right, #000 calc(100% - 34px), transparent 100%);
+  }
+  .tabs[data-more="left"] {
+    -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 34px), transparent 100%);
+    mask-image: linear-gradient(to left, #000 calc(100% - 34px), transparent 100%);
+  }
+  .tabs[data-more="both"] {
+    -webkit-mask-image: linear-gradient(to right, transparent 0, #000 34px, #000 calc(100% - 34px), transparent 100%);
+    mask-image: linear-gradient(to right, transparent 0, #000 34px, #000 calc(100% - 34px), transparent 100%);
+  }
+
+  /* Five stacked filter controls pushed the first expense row to y=789 on an 812px screen — you
+     scrolled before seeing a single expense. Paired up, they cost two rows instead of five. */
+  .filterrow { display: grid; grid-template-columns: 1fr 1fr; align-items: center; }
+  .filterrow > * { width: 100%; min-width: 0; }
+  .filterrow > #qfilter { grid-column: 1 / -1; }
+
+  /* Six subtotal pills were six full rows — 214px of screen for a breakdown. The percentage is the
+     one part you can work out from the amount, so it goes, and the pill tightens up until two fit
+     across a 321px strip (they need to be ≤156px; at the desktop sizing they were 179px). */
+  .catstrip { gap: 8px; }
+  /* exactly two per row whatever the category is called: sizing by content left "Divertisment"
+     177px wide and it took a row to itself */
+  .catpill { flex: 1 1 calc(50% - 4px); min-width: 0; padding: 5px 9px; gap: 5px; font-size: 12.5px; }
+  .catpill .catname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .catpill .muted { display: none; }
+  .catpill .amt-full { display: none; }
+  .catpill .amt-short { display: inline; } /* rounded, no currency — it repeats six times over */
+  .catpill b { font-size: 12px; margin-left: auto; } /* amount pinned right, name takes the slack */
+
+  /* page descriptions earn their place the first time and cost 81px every time after. Clamped to
+     two lines, and tappable to see the rest when it actually is longer — density shouldn't quietly
+     eat text. .clampable/.open are set by upgradeClampedText(). */
+  .pagehead p { font-size: 13px; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+  .pagehead p.open { -webkit-line-clamp: unset; }
+  .pagehead p.clampable { cursor: pointer; }
+  .pagehead p.clampable::after { content: ' ▾'; color: var(--accent); font-weight: 600; }
+  .pagehead p.clampable.open::after { content: ' ▴'; }
+
   .card { padding: 14px; border-radius: 10px; }
   details.entity > summary { padding: 12px 14px; }
   details.entity .body { padding: 12px 14px; }
@@ -601,7 +679,9 @@ details.foldcard[open] > summary::after { transform: rotate(180deg); }
 }
 @media (max-width: 480px) {
   .formgrid { grid-template-columns: 1fr; }
-  .kpi .value { font-size: 21px; }
+  /* 18px keeps "12.200,00 RON" on the same line as its label instead of wrapping the label to two
+     lines, which cost more height than the larger digits were worth */
+  .kpi .value { font-size: 18px; }
   .stub { min-width: 148px; }
 }
 /* ============================================================
