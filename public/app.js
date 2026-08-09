@@ -40,8 +40,23 @@ const ownProps = (list) => (list || []).filter((p) => !p.managed);
 // one stable colour per category, keyed by position in CATEGORIES, so a category reads as the same
 // colour everywhere — the dashboard donut and the expense-list dots. Two palettes: the donut/dots
 // pick the theme-matched one at render time. (Same values the donut already used.)
-const CAT_PALETTE_LIGHT = ['#2f6b5a', '#c98a2d', '#5b7fa6', '#b23a2e', '#7c5ba6', '#3e7c4f', '#8a6d3b', '#45565f', '#a0522d', '#4a8fb0'];
-const CAT_PALETTE_DARK = ['#57b394', '#e0a13d', '#7ea6cf', '#e06a5c', '#a98fce', '#5fae6f', '#c3a06a', '#9db0a9', '#cf8a5f', '#79b3cf'];
+/* Category colours, re-stepped against the palette validator (OKLab ΔE, CVD-simulated).
+   The old set failed badly: Entertainment #b23a2e and Other #a0522d were ΔE 0.3 apart for a
+   deuteranope — literally the same colour — and Transportation #5b7fa6 vs Subscriptions #4a8fb0
+   were 4.5 apart for FULL colour vision, i.e. nobody could tell those two blues apart. These nine
+   identity hues now clear both gates in light and dark (CVD 9.2/9.4 against a target of 8;
+   normal-vision 19.6/19.3 against a floor of 15). Order is fixed and tied to the category, never to
+   rank, so filtering a chart never repaints the survivors.
+   'Other' is deliberately the neutral gray — it is a residual, not an identity, and a gray says so.
+   Nine identities is past what any palette can separate for EVERY pair (measured: the best
+   achievable worst-pair is ΔE ~5, well under the 15 floor — a hard ceiling, not a search failure),
+   so the nine are at least drawn from nine different hue families, and the one chart where colour
+   could carry meaning alone — the doughnut — folds to six slices and prints name, amount and share
+   beside every swatch. Identity never rests on the colour.
+   Three light-mode hues sit under 3:1 against the surface, which the validator allows only with a
+   visible label; every swatch in this app is drawn beside its category name. */
+const CAT_PALETTE_LIGHT = ['#e34948', '#2a78d6', '#8a5a2b', '#a63d8f', '#eda100', '#e87ba4', '#4a3aa7', '#1baf7a', '#eb6834', '#6f7772'];
+const CAT_PALETTE_DARK = ['#e66767', '#3987e5', '#b98047', '#c760ad', '#c98500', '#d55181', '#9085e9', '#199e70', '#d95926', '#9aa39d'];
 function catColor(category) {
   const pal = document.documentElement.dataset.theme === 'dark' ? CAT_PALETTE_DARK : CAT_PALETTE_LIGHT;
   const i = CATEGORIES.indexOf(category);
@@ -145,6 +160,15 @@ const RO = {
   'No invitations yet': 'Nicio invitație încă', 'leave empty to clear': 'lasă gol ca să ștergi',
   'No answer yet': 'Fără răspuns încă',
   'Seats': 'Scaun', 'Seats only, no menu': 'Doar scaun, fără meniu', 'seats only': 'doar scaun',
+  // charts & insights
+  'What you kept': 'Ce ai păstrat', 'Kept': 'Păstrat',
+  'Income minus spending, month by month. Below the line means you spent more than came in.':
+    'Venituri minus cheltuieli, lună de lună. Sub linie înseamnă că ai cheltuit mai mult decât ai încasat.',
+  'the faint mark is the same month in': 'linia estompată e aceeași lună din',
+  'Category trends': 'Cum evoluează categoriile',
+  'Where the money is drifting, month by month.': 'Încotro se duc banii, lună de lună.',
+  'since the start of the year': 'de la începutul anului', 'flat': 'constant',
+  'not enough history': 'prea puțin istoric',
   'Add the first family above — adults and children are counted for you.': 'Adaugă prima familie mai sus — adulții și copiii se numără automat.',
   'Item': 'Articol', 'Target': 'Obiectiv', 'Person': 'Persoană', 'Nothing here yet': 'Nimic aici încă',
   'Add the first item above.': 'Adaugă primul articol mai sus.',
@@ -475,6 +499,24 @@ const money = (n) => n == null ? '—' : `${Number(n).toLocaleString('ro-RO', { 
 // Rounded, no currency — for places that repeat an amount many times in a tight space (the category
 // subtotal pills). The exact figure is always on the row or in the header next to it.
 const moneyShort = (n) => Number(n || 0).toLocaleString('ro-RO', { maximumFractionDigits: 0 });
+/* "2026-01" is a database key, not a label. The Year view already spelled its months properly while
+   the dashboard axis showed the raw key rotated 43° to fit — same data, two answers. `short` gives
+   the axis form ("ian."), the long form names the year too, for titles that stand alone. */
+function monthLabel(m, { short = true } = {}) {
+  const d = new Date(m + '-01T00:00:00Z');
+  if (isNaN(d)) return m;
+  return d.toLocaleDateString(LANG === 'ro' ? 'ro-RO' : 'en-GB',
+    short ? { month: 'short', timeZone: 'UTC' } : { month: 'long', year: 'numeric', timeZone: 'UTC' });
+}
+/* Past about six slices a part-to-whole chart stops being readable, and a categorical palette runs
+   out of separable hues long before the category list does. So the tail folds into one "Other"
+   slice instead of being drawn in colours nobody can tell apart. */
+function foldToTop(rows, n = 5, key = 'category', valueKey = 'total') {
+  if (rows.length <= n + 1) return rows.map((r) => ({ ...r }));
+  const head = rows.slice(0, n).map((r) => ({ ...r }));
+  const tailTotal = rows.slice(n).reduce((s, r) => s + Number(r[valueKey] || 0), 0);
+  return [...head, { [key]: 'Other', [valueKey]: tailTotal, folded: rows.length - n }];
+}
 // dates: stored/handled as ISO (yyyy-mm-dd), shown to the user as dd/mm/yyyy
 const ISO_RE = /^\d{4}-\d{2}-\d{2}$/;
 const DMY_RE = /^(\d{2})\/(\d{2})\/(\d{4})$/;
@@ -1437,13 +1479,20 @@ async function viewDashboard(el) {
     <section class="kpi" style="margin-top:18px">
       <a class="card clickcard" href="#money" data-tab="income"><div class="label">${tr('Income')} · ${esc(tr(periodLabel))}</div><div class="value" data-cu="${stats.income}">${money(stats.income)}</div>${deltaHtml(stats.income, stats.prev?.income, 'up-good')}<span class="spark-pos">${sparkline(incomeSeries)}</span></a>
       <a class="card clickcard" href="#money" data-tab="expenses"><div class="label">${tr('Spent')} · ${esc(tr(periodLabel))}</div><div class="value" data-cu="${stats.spent}">${money(stats.spent)}</div>${deltaHtml(stats.spent, stats.prev?.spent, 'up-bad')}<span class="spark-neg">${sparkline(spendSeries)}</span></a>
-      <div class="card"><div class="label">Left over</div><div class="value ${net < 0 ? 'neg' : ''}" data-cu="${net}">${money(net)}</div>${deltaHtml(net, (stats.prev?.income ?? 0) - (stats.prev?.spent ?? 0), 'up-good')}<span class="spark-pos">${sparkline(netSeries)}</span></div>
+      <div class="card"><div class="label">Left over</div><div class="value ${net < 0 ? 'neg' : ''}" data-cu="${net}">${money(net)}</div>${deltaHtml(net, (stats.prev?.income ?? 0) - (stats.prev?.spent ?? 0), 'up-good')}${savingsRateHtml(stats.income, net)}<span class="spark-pos">${sparkline(netSeries)}</span></div>
     </section>
     ${dashInsight(stats, suggest, DASH_MONTHS, upcoming)}
     ${rentHtml(rent)}
     <section class="grid2" style="margin-top:18px">
-      <div class="card"><h3>${tr('Spending by category')} · ${esc(tr(periodLabel))}</h3><div class="chartbox"><canvas id="catChart"></canvas></div></div>
+      <div class="card"><h3>${tr('Spending by category')} · ${esc(tr(periodLabel))}</h3>
+        <div class="chartbox"><canvas id="catChart"></canvas></div>
+        <ul class="catlegend" id="catLegend"></ul></div>
       <div class="card"><h3>Income vs spending</h3><div class="chartbox"><canvas id="trendChart"></canvas></div></div>
+    </section>
+    <section class="card" style="margin-top:18px">
+      <h3 style="margin-top:0">${tr('What you kept')}</h3>
+      <p class="muted" style="margin:-4px 0 8px;font-size:13px">${tr('Income minus spending, month by month. Below the line means you spent more than came in.')}</p>
+      <div class="chartbox"><canvas id="netChart"></canvas></div>
     </section>
     <section class="card" style="margin-top:18px">
       <h3>${tr('Budget vs actual')} · ${budgets.month}</h3>
@@ -1504,6 +1553,18 @@ function rentHtml(rent) {
           : `<span class="badge unpaid">${tr('to pay')}</span>`}</span>
     </div>`).join('')}
     <p class="muted" style="margin:6px 0 0"><a href="#properties">${tr('Open Properties')} →</a></p></section>`;
+}
+/* The share of what came in that you still have. A leftover of 5.000 means nothing on its own —
+   it's excellent on an income of 6.000 and poor on 20.000 — and unlike the absolute figure it stays
+   comparable when income changes, which is what makes it the one number worth watching. */
+function savingsRateHtml(income, net) {
+  const inc = Number(income) || 0;
+  if (inc <= 0) return '';
+  const pct = Math.round((net / inc) * 100);
+  const txt = LANG === 'ro'
+    ? (pct < 0 ? `ai cheltuit cu ${-pct}% mai mult decât ai încasat` : `ai păstrat ${pct}% din venituri`)
+    : (pct < 0 ? `spent ${-pct}% more than came in` : `kept ${pct}% of income`);
+  return `<div class="muted" style="font-size:12.5px">${txt}</div>`;
 }
 /* goals only nudge you if you see them; they lived two clicks away under Money → Savings */
 function goalsHtml(goals) {
@@ -1577,25 +1638,52 @@ async function drawCharts(stats, scopeView = 'all', scopeMonths = 1, trendStats 
     location.hash = '#money';
   };
   const cc = $('#catChart'); let catChart;
-  const cats = stats.byCategory.map((c) => c.category); // untranslated keys for the drill-down filter
-  if (cc && stats.byCategory.length) { catChart = new Chart(cc, {
-    type: 'doughnut',
-    data: { labels: cats.map(tr), datasets: [{ data: stats.byCategory.map((c) => c.total), backgroundColor: cats.map(catColor), borderColor: cardBg, borderWidth: 2, hoverOffset: 6 }] },
-    options: {
-      maintainAspectRatio: false, cutout: '62%',
-      plugins: { legend: { position: 'right', ...legendDots, onClick: (e, item) => drillTo(cats[item.index]) }, tooltip: moneyTooltip },
-      onClick: (e, els) => { if (els.length) drillTo(cats[els[0].index]); },
-    },
-  }); cc.style.cursor = 'pointer'; }
-  else if (cc) cc.replaceWith(Object.assign(document.createElement('div'), { className: 'empty', innerHTML: `<b>${tr('No expenses this month yet.')}</b>` }));
+  // folded to six slices: past that a doughnut stops being readable and the palette runs out of
+  // separable hues. The tail is not lost — it becomes "Other (+3)" and still drills through.
+  const catRows = foldToTop(stats.byCategory, 5);
+  const cats = catRows.map((c) => c.category); // untranslated keys for the drill-down filter
+  const catTotal = catRows.reduce((s, c) => s + Number(c.total || 0), 0);
+  if (cc && catRows.length) {
+    catChart = new Chart(cc, {
+      type: 'doughnut',
+      data: { labels: cats.map(tr), datasets: [{ data: catRows.map((c) => c.total), backgroundColor: cats.map(catColor), borderColor: cardBg, borderWidth: 2, hoverOffset: 6 }] },
+      options: {
+        maintainAspectRatio: false, cutout: '62%',
+        // the legend below carries name + amount + share, so the built-in one is redundant chrome
+        plugins: { legend: { display: false }, tooltip: moneyTooltip },
+        onClick: (e, els) => { if (els.length && !catRows[els[0].index].folded) drillTo(cats[els[0].index]); },
+      },
+    });
+    cc.style.cursor = 'pointer';
+    // A ring of six colours and six words told you Credit was biggest but not by how much, and
+    // hovering was the only way to find out — which on a phone means never. The legend now carries
+    // the numbers, and doubles as the chart's table view.
+    const legend = $('#catLegend');
+    if (legend) {
+      legend.innerHTML = catRows.map((c, i) => {
+        const pct = catTotal > 0 ? Math.round((c.total / catTotal) * 100) : 0;
+        const name = c.folded ? `${tr('Other')} <span class="muted">(+${c.folded})</span>` : esc(tr(c.category));
+        return `<li><button type="button" class="catleg" ${c.folded ? 'disabled' : `data-catjump="${esc(c.category)}"`}>
+          <span class="catdot" style="--cat:${catColor(c.category)}"></span>
+          <span class="catleg-name">${name}</span>
+          <b class="catleg-amt">${money(c.total)}</b>
+          <span class="muted catleg-pct">${pct}%</span></button></li>`;
+      }).join('');
+      legend.querySelectorAll('[data-catjump]').forEach((b) => (b.onclick = () => drillTo(b.dataset.catjump)));
+    }
+  } else if (cc) cc.replaceWith(Object.assign(document.createElement('div'), { className: 'empty', innerHTML: `<b>${tr('No expenses this month yet.')}</b>` }));
   const months = [...new Set([...trendStats.trend.map((t) => t.m), ...trendStats.incomeTrend.map((t) => t.m)])].sort();
+  const spentBy = (m) => trendStats.trend.find((t) => t.m === m)?.total || 0;
+  const incomeBy = (m) => trendStats.incomeTrend.find((t) => t.m === m)?.total || 0;
+  // "2026-01" rotated 43° to fit; "ian." fits flat, and matches how the Year view already writes it
+  const monthLabels = months.map((m) => monthLabel(m));
   const tc = $('#trendChart'); if (tc && months.length) new Chart(tc, {
     type: 'bar',
     data: {
-      labels: months,
+      labels: monthLabels,
       datasets: [
-        { label: tr('Spent'), data: months.map((m) => trendStats.trend.find((t) => t.m === m)?.total || 0), backgroundColor: red, borderRadius: 5, maxBarThickness: 30 },
-        { label: tr('Income'), data: months.map((m) => trendStats.incomeTrend.find((t) => t.m === m)?.total || 0), backgroundColor: accent, borderRadius: 5, maxBarThickness: 30 },
+        { label: tr('Spent'), data: months.map(spentBy), backgroundColor: red, borderRadius: 5, maxBarThickness: 30 },
+        { label: tr('Income'), data: months.map(incomeBy), backgroundColor: accent, borderRadius: 5, maxBarThickness: 30 },
       ],
     },
     options: {
@@ -1603,11 +1691,46 @@ async function drawCharts(stats, scopeView = 'all', scopeMonths = 1, trendStats 
       plugins: { legend: legendDots, tooltip: moneyTooltip },
       scales: {
         y: { beginAtZero: true, border: { display: false }, grid: { color: line }, ticks: { font: { family: mono }, callback: axisNum } },
-        x: { border: { display: false }, grid: { display: false } },
+        // flat labels: short month names fit, and Chart.js otherwise tilts them 43° on a narrow card
+        x: { border: { display: false }, grid: { display: false }, ticks: { maxRotation: 0, autoSkipPadding: 8 } },
       },
     },
   });
   else if (tc) tc.replaceWith(Object.assign(document.createElement('div'), { className: 'empty', innerHTML: `<b>${tr('History appears once you log expenses.')}</b>` }));
+
+  /* What you kept, month by month.
+     Income vs spending answers "what came in and what went out", but with a steady salary that is
+     eight identical tall bars setting the scale while the spending variation — the part that is
+     actually yours to change — gets squashed into the bottom third. This chart plots the difference
+     instead, around a zero baseline, so a month you overspent drops below the line and is
+     unmissable. Surplus/deficit is genuine polarity, so it earns a diverging pair (the app's own
+     accent green and red) rather than two arbitrary series colours; the midpoint is the axis. */
+  const nc = $('#netChart');
+  if (nc && months.length) {
+    const netData = months.map((m) => incomeBy(m) - spentBy(m));
+    new Chart(nc, {
+      type: 'bar',
+      data: {
+        labels: monthLabels,
+        datasets: [{
+          label: tr('Kept'),
+          data: netData,
+          backgroundColor: netData.map((v) => (v < 0 ? red : accent)),
+          borderRadius: 5, maxBarThickness: 34,
+        }],
+      },
+      options: {
+        maintainAspectRatio: false,
+        // one series: the title names it, so a legend box would just be chrome
+        plugins: { legend: { display: false }, tooltip: moneyTooltip },
+        scales: {
+          y: { border: { display: false }, grid: { color: line }, ticks: { font: { family: mono }, callback: axisNum } },
+          // flat labels: short month names fit, and Chart.js otherwise tilts them 43° on a narrow card
+        x: { border: { display: false }, grid: { display: false }, ticks: { maxRotation: 0, autoSkipPadding: 8 } },
+        },
+      },
+    });
+  } else if (nc) nc.replaceWith(Object.assign(document.createElement('div'), { className: 'empty', innerHTML: `<b>${tr('History appears once you log expenses.')}</b>` }));
 }
 
 /* ---------- calendar ---------- */
@@ -1763,7 +1886,40 @@ async function moneyYear(body) {
   // month-by-month bars, drawn from the same numbers rather than a chart library
   const months = Array.from({ length: 12 }, (_, i) => `${yr}-${String(i + 1).padStart(2, '0')}`);
   const perMonth = months.map((m) => thisYear.filter((e) => e.date.startsWith(m)).reduce((s, e) => s + Number(e.amount || 0), 0));
-  const peak = Math.max(...perMonth, 1);
+  // the same months a year earlier, so each bar can be read against its own season rather than
+  // against the month before it — January heating never did compare fairly to December
+  const perMonthPrev = months.map((m) => {
+    const lm = `${yr - 1}-${m.slice(5)}`;
+    return lastYear.filter((e) => e.date.startsWith(lm)).reduce((s, e) => s + Number(e.amount || 0), 0);
+  });
+  const peak = Math.max(...perMonth, ...perMonthPrev, 1);
+  const hasPrevMonths = perMonthPrev.some((v) => v > 0);
+  const thisMonthIdx = now.getUTCMonth();
+
+  /* Category drift — the actionable view the year page never had. The doughnut says what this month
+     looked like and the bars say what every month totalled, but neither answers "is this creeping
+     up?", which is the only question that changes behaviour. One mini-chart per category, sharing a
+     scale within each row so the shapes are comparable. */
+  const catSeries = Object.keys(curCat)
+    .map((c) => ({
+      c,
+      total: curCat[c],
+      series: months.map((m) => thisYear.filter((e) => e.category === c && e.date.startsWith(m))
+        .reduce((s, e) => s + Number(e.amount || 0), 0)),
+    }))
+    .filter((x) => x.series.filter((v) => v > 0).length >= 2) // one month is not a trend
+    .sort((a, b) => b.total - a.total)
+    .slice(0, 6);
+  // First vs last COMPLETED month. The current month is only part-spent — on the 9th it holds nine
+  // days against a full January — so including it made every category read as falling sharply.
+  // It still gets a bar; it just doesn't get a vote on the trend.
+  const drift = (s) => {
+    const active = s.slice(0, thisMonthIdx).map((v, i) => [v, i]).filter(([v]) => v > 0);
+    if (active.length < 2) return null;
+    const first = active[0][0], last = active[active.length - 1][0];
+    if (!(first > 0)) return null;
+    return Math.round(((last - first) / first) * 100);
+  };
 
   const moves = Object.keys({ ...curCat, ...prevCat })
     .map((c) => ({ c, now: curCat[c] || 0, then: prevCat[c] || 0, diff: (curCat[c] || 0) - (prevCat[c] || 0) }))
@@ -1784,12 +1940,45 @@ async function moneyYear(body) {
     </section>
 
     <section class="card" style="margin-top:18px"><h3 style="margin-top:0">${tr('Month by month')} · ${yr}</h3>
-      <div class="yearbars">${months.map((m, i) => `
-        <div class="yearbar" title="${m} · ${money(perMonth[i])}">
-          <div class="yb-track"><div class="yb-fill" style="height:${(perMonth[i] / peak) * 100}%"></div></div>
-          <div class="yb-label">${new Date(m + '-01T00:00:00Z').toLocaleDateString(LANG === 'ro' ? 'ro-RO' : 'en-GB', { month: 'short', timeZone: 'UTC' })}</div>
-        </div>`).join('')}</div>
+      ${hasPrevMonths ? `<p class="muted" style="margin:-4px 0 10px;font-size:13px">
+        <span class="ghostkey"></span> ${tr('the faint mark is the same month in')} ${yr - 1}</p>` : ''}
+      <div class="yearbars">${months.map((m, i) => {
+        // The value used to live only in a native `title`, which never fires on a phone — so on the
+        // device this app is actually used on, the chart could not be read at all. Now the current
+        // month and the year's peak are labelled outright, and every bar answers to a tap.
+        const isPeak = perMonth[i] === peak && peak > 0;
+        const isNow = i === thisMonthIdx;
+        const show = (isPeak || isNow) && perMonth[i] > 0;
+        return `<button type="button" class="yearbar${perMonth[i] > 0 ? '' : ' yb-zero'}" data-ybar="${m}"
+          aria-label="${esc(monthLabel(m, { short: false }))}: ${esc(money(perMonth[i]))}">
+          <div class="yb-val${show ? '' : ' hid'}">${show ? moneyShort(perMonth[i]) : ''}</div>
+          <div class="yb-track">
+            ${hasPrevMonths && perMonthPrev[i] > 0 ? `<span class="yb-prev" style="bottom:${(perMonthPrev[i] / peak) * 100}%"></span>` : ''}
+            <div class="yb-fill${isNow ? ' now' : ''}" style="height:${(perMonth[i] / peak) * 100}%"></div>
+          </div>
+          <div class="yb-label">${monthLabel(m)}</div>
+        </button>`;
+      }).join('')}</div>
+      <p class="muted yb-readout" id="ybReadout" aria-live="polite"></p>
     </section>
+
+    ${catSeries.length ? `<section class="card" style="margin-top:18px">
+      <h3 style="margin-top:0">${tr('Category trends')} · ${yr}</h3>
+      <p class="muted" style="margin:-4px 0 10px;font-size:13px">${tr('Where the money is drifting, month by month.')}</p>
+      <div class="sparkgrid">${catSeries.map((x) => {
+        const d = drift(x.series);
+        const peakC = Math.max(...x.series, 1);
+        return `<div class="sparkcell">
+          <div class="row" style="justify-content:space-between;gap:8px;align-items:baseline">
+            <span class="catcell"><span class="catdot" style="--cat:${catColor(x.c)}"></span>${esc(tr(x.c))}</span>
+            <b class="amount" style="font-size:13px">${money(x.total)}</b></div>
+          <div class="minibars">${x.series.map((v, i) => `<span class="mb${i === thisMonthIdx ? ' now' : ''}" style="height:${Math.max(v > 0 ? 6 : 2, (v / peakC) * 100)}%;--cat:${catColor(x.c)}" title="${esc(monthLabel(months[i], { short: false }))}: ${esc(money(v))}"></span>`).join('')}</div>
+          <div class="muted" style="font-size:12px">${d == null ? tr('not enough history')
+            : d === 0 ? tr('flat')
+            : `${d > 0 ? '▲' : '▼'} ${Math.abs(d)}% ${tr('since the start of the year')}`}</div>
+        </div>`;
+      }).join('')}</div>
+    </section>` : ''}
 
     ${moves.length ? `<section class="card" style="margin-top:18px"><h3 style="margin-top:0">${tr('What moved')} · ${yr} ${tr('vs')} ${yr - 1}</h3>
       <table class="cards"><thead><tr><th>${tr('Category')}</th><th class="right">${yr - 1}</th><th class="right">${yr}</th><th class="right">${tr('Change')}</th></tr></thead><tbody>
@@ -1808,6 +1997,22 @@ async function moneyYear(body) {
         <td data-label="${tr('Note')}">${esc(e.note || '')}</td>
         <td class="right amount" data-label="${tr('Amount')}">${money(e.amount)}</td></tr>`).join('')}
       </tbody></table></section>` : ''}`;
+
+  // Tap (or focus) a bar to read its month — the readout is a real element rather than a native
+  // `title`, so it works on a touch screen and is announced to a screen reader.
+  const readout = body.querySelector('#ybReadout');
+  body.querySelectorAll('[data-ybar]').forEach((b) => {
+    const say = () => {
+      const m = b.dataset.ybar, i = months.indexOf(m);
+      const prevPart = hasPrevMonths && perMonthPrev[i] > 0
+        ? ` · ${yr - 1}: ${money(perMonthPrev[i])}` : '';
+      readout.textContent = `${monthLabel(m, { short: false })}: ${money(perMonth[i])}${prevPart}`;
+      body.querySelectorAll('[data-ybar]').forEach((o) => o.classList.toggle('sel', o === b));
+    };
+    b.addEventListener('click', say);
+    b.addEventListener('focus', say);
+    b.addEventListener('mouseenter', say);
+  });
 }
 function whoFilter(id, members, who) {
   return `<select id="${id}" style="width:160px">
