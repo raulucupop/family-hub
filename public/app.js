@@ -112,6 +112,7 @@ const RO = {
   'Add or remove funds': 'Adaugă sau retrage fonduri', 'Economy account balance': 'Sold cont de economii',
   'Deposit (add)': 'Depunere (adaugă)', 'Withdraw (remove)': 'Retragere', 'History': 'Istoric', 'Save': 'Salvează',
   'Savings goals': 'Obiective de economisire', 'Goal': 'Obiectiv', 'Add goal': 'Adaugă obiectiv',
+  'New goal': 'Obiectiv nou',
   'Mark done': 'Finalizat', 'Reopen': 'Redeschide', 'reached!': 'atins!', '— general —': '— general —',
   'Add credit (loan)': 'Adaugă credit', 'Add credit': 'Adaugă credit', 'Anticipated payments': 'Plăți anticipate', 'Add payment': 'Adaugă plată',
   // dashboard
@@ -2333,11 +2334,13 @@ async function moneySavings(body) {
           ${eta ? `<div class="muted" style="font-size:12.5px;margin-top:4px">${eta}</div>` : ''}
         </div>`;
       }).join('') : `<p class="muted">No goals yet — set one below and tag deposits to it.</p>`}
-      ${canWrite() ? `<form id="goalform" class="formgrid" style="margin-top:10px">
+      ${canWrite() ? `<div class="subform">
+        <h4>${tr('New goal')}</h4>
+        <form id="goalform" class="formgrid">
         <div><label>Goal</label><input name="title" placeholder="Vacanță 2027" required></div>
         <div><label>Target (${cur()})</label><input name="target" type="number" step="0.01" min="0.01" required></div>
         <div><label>Person</label><select name="user_id"><option value="">Whole family</option>${members.map((m) => `<option value="${m.id}">${esc(m.name)}</option>`).join('')}</select></div>
-        <button class="btn small">Add goal</button></form>` : ''}
+        <button class="btn small">Add goal</button></form></div>` : ''}
     </div>
     ${canWrite() ? `<div class="card" style="margin-top:16px"><h3>Add or remove funds</h3><form id="savform" class="formgrid">
       <div><label>Type</label><select name="kind"><option value="deposit">Deposit (add)</option><option value="withdrawal">Withdraw (remove)</option></select></div>

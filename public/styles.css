@@ -281,6 +281,15 @@ tr.daysep > td { background: var(--paper); padding: 6px 10px; border-bottom: 1px
 .who { display: inline-flex; align-items: center; gap: 6px; }
 .who-av { width: 20px; height: 20px; border-radius: 50%; font-size: 11px; font-weight: 700; flex: none; }
 /* top-categories strip above the expenses table */
+/* An "add" form sharing a card with the list it adds to. Without a break, the goal's progress bar
+   ran straight into the form's first field and the whole thing read as one block — the fields
+   looked like they were editing the goal above rather than creating a new one. */
+.subform { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }
+.subform > h4 {
+  margin: 0 0 10px; font-size: 12.5px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .04em; color: var(--ink-soft);
+}
+
 /* The doughnut's legend, carrying the numbers the ring can't. It replaces Chart.js's own legend
    (names only) and doubles as the chart's table view — every value readable without hovering,
    which on a touch screen was previously impossible. */
