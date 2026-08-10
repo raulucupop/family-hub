@@ -2027,6 +2027,94 @@ app.delete('/api/lists/:id', auth, canWrite, (req, res) => {
   res.json({ ok: true });
 });
 
+/* ---------- recurring chores ----------
+   A chore is a definition; ticking it writes a row for the CURRENT period. That is what makes the
+   list reset by itself at midnight (or on Monday) without a cron job clearing flags, and what keeps
+   "who fed the dogs on Tuesday" answerable afterwards. */
+const CADENCES = ['daily', 'weekly'];
+// the period a given date belongs to: the date itself for a daily chore, the Monday of its week for
+// a weekly one. UTC throughout, so a chore doesn't change period when the clocks go back.
+function chorePeriod(cadence, iso) {
+  const d = new Date((iso || new Date().toISOString().slice(0, 10)) + 'T00:00:00Z');
+  if (cadence !== 'weekly') return d.toISOString().slice(0, 10);
+  const isoDow = (d.getUTCDay() + 6) % 7; // Mon = 0
+  d.setUTCDate(d.getUTCDate() - isoDow);
+  return d.toISOString().slice(0, 10);
+}
+const CHORE_SELECT = `
+  SELECT c.*, u.name AS user_name, d.id AS done_id, d.done_at, d.user_id AS done_by, du.name AS done_by_name
+  FROM chores c
+  LEFT JOIN users u ON u.id = c.user_id
+  LEFT JOIN chore_done d ON d.chore_id = c.id AND d.period = CASE c.cadence WHEN 'weekly' THEN ? ELSE ? END
+  LEFT JOIN users du ON du.id = d.user_id`;
+function choreRows(fid, iso) {
+  const week = chorePeriod('weekly', iso), day = chorePeriod('daily', iso);
+  return db.prepare(`${CHORE_SELECT} WHERE c.family_id = ? AND c.active = 1 ORDER BY c.cadence, c.id`)
+    .all(week, day, fid)
+    .map((r) => ({ ...r, done: !!r.done_id, period: r.cadence === 'weekly' ? week : day }));
+}
+app.get('/api/chores', auth, (req, res) => {
+  const iso = isDate(req.query.date) ? req.query.date : null;
+  res.json(choreRows(req.user.family_id, iso));
+});
+function validateChore(b) {
+  if (!str(b.title)) return 'Give the chore a name';
+  if (!CADENCES.includes(b.cadence)) return 'Cadence must be daily or weekly';
+  if (b.weekday != null && b.weekday !== '') {
+    const w = Math.round(Number(b.weekday));
+    if (!(w >= 0 && w <= 6)) return 'Weekday must be between 0 and 6';
+  }
+  return null;
+}
+app.post('/api/chores', auth, canWrite, (req, res) => {
+  const b = req.body || {};
+  const err = validateChore(b);
+  if (err) return res.status(400).json({ error: err });
+  let uid = num(b.user_id);
+  if (uid != null && !db.prepare('SELECT id FROM users WHERE id = ? AND family_id = ?').get(uid, req.user.family_id)) {
+    return res.status(400).json({ error: 'Person must be a member of the family' });
+  }
+  // a weekday only means anything on a weekly chore; storing one on a daily chore would be a lie
+  const weekday = b.cadence === 'weekly' && b.weekday != null && b.weekday !== '' ? Math.round(Number(b.weekday)) : null;
+  const info = db.prepare('INSERT INTO chores (family_id, title, cadence, weekday, user_id, note) VALUES (?,?,?,?,?,?)')
+    .run(req.user.family_id, str(b.title), b.cadence, weekday, uid, str(b.note));
+  res.json(db.prepare('SELECT * FROM chores WHERE id = ?').get(info.lastInsertRowid));
+});
+app.put('/api/chores/:id', auth, canWrite, (req, res) => {
+  const row = db.prepare('SELECT * FROM chores WHERE id = ? AND family_id = ?').get(req.params.id, req.user.family_id);
+  if (!row) return res.status(404).json({ error: 'Not found' });
+  const b = req.body || {};
+  const err = validateChore(b);
+  if (err) return res.status(400).json({ error: err });
+  let uid = num(b.user_id);
+  if (uid != null && !db.prepare('SELECT id FROM users WHERE id = ? AND family_id = ?').get(uid, req.user.family_id)) {
+    return res.status(400).json({ error: 'Person must be a member of the family' });
+  }
+  const weekday = b.cadence === 'weekly' && b.weekday != null && b.weekday !== '' ? Math.round(Number(b.weekday)) : null;
+  db.prepare('UPDATE chores SET title = ?, cadence = ?, weekday = ?, user_id = ?, note = ?, active = ? WHERE id = ?')
+    .run(str(b.title), b.cadence, weekday, uid, str(b.note), b.active === false || b.active === 0 ? 0 : 1, row.id);
+  res.json({ ok: true });
+});
+// Ticking is idempotent per period: the UNIQUE (chore_id, period) makes the insert either land or
+// do nothing, so a double-tap from a phone can't create two completions.
+app.post('/api/chores/:id/toggle', auth, canWrite, (req, res) => {
+  const row = db.prepare('SELECT * FROM chores WHERE id = ? AND family_id = ?').get(req.params.id, req.user.family_id);
+  if (!row) return res.status(404).json({ error: 'Not found' });
+  const period = chorePeriod(row.cadence, isDate(req.body?.date) ? req.body.date : null);
+  const existing = db.prepare('SELECT id FROM chore_done WHERE chore_id = ? AND period = ?').get(row.id, period);
+  if (existing) {
+    db.prepare('DELETE FROM chore_done WHERE id = ?').run(existing.id);
+    return res.json({ ok: true, done: false });
+  }
+  db.prepare('INSERT OR IGNORE INTO chore_done (chore_id, family_id, period, user_id) VALUES (?,?,?,?)')
+    .run(row.id, req.user.family_id, period, req.user.id);
+  res.json({ ok: true, done: true, by: req.user.name });
+});
+app.delete('/api/chores/:id', auth, canWrite, (req, res) => {
+  db.prepare('DELETE FROM chores WHERE id = ? AND family_id = ?').run(req.params.id, req.user.family_id);
+  res.json({ ok: true });
+});
+
 // ---------- reminders (aggregated deadlines) ----------
 function collectReminders(fid, horizon, scopeUserId = null) {
   const items = [];

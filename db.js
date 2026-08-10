@@ -357,6 +357,36 @@ CREATE TABLE IF NOT EXISTS list_items (
 );
 CREATE INDEX IF NOT EXISTS idx_list_items_family ON list_items(family_id);
 
+-- Recurring household chores. Unlike list_items (a thing you tick once and it's gone), a chore
+-- comes back: "feed the dogs" is done for today, not done forever. So the chore row holds only the
+-- definition, and every completion is its own row keyed by the period it belongs to — which means
+-- the tick resets by itself when the period rolls over, and you keep a history of who did what.
+CREATE TABLE IF NOT EXISTS chores (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  family_id INTEGER NOT NULL REFERENCES families(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  cadence TEXT NOT NULL CHECK (cadence IN ('daily','weekly')),
+  weekday INTEGER,            -- weekly only: 0 = Monday … 6 = Sunday; NULL means any day that week
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL, -- NULL = anyone in the family
+  note TEXT,
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_chores_family ON chores(family_id);
+
+-- one row per chore per period. The period column is the date for a daily chore and the Monday of
+-- the week for a weekly one, so UNIQUE does the "already ticked" check rather than SELECT-then-INSERT.
+CREATE TABLE IF NOT EXISTS chore_done (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  chore_id INTEGER NOT NULL REFERENCES chores(id) ON DELETE CASCADE,
+  family_id INTEGER NOT NULL REFERENCES families(id) ON DELETE CASCADE,
+  period TEXT NOT NULL,
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL, -- who actually ticked it
+  done_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (chore_id, period)
+);
+CREATE INDEX IF NOT EXISTS idx_chore_done_family ON chore_done(family_id, period);
+
 -- bank import: remembers what was already imported so re-uploading a statement is safe
 CREATE TABLE IF NOT EXISTS imported_tx (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

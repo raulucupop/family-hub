@@ -17,6 +17,8 @@ const ICON = {
   search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.6-3.6"/>',
   wallet: '<path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H18a1 1 0 0 1 1 1v1.5"/><rect x="3" y="7.5" width="18" height="12" rx="2.5"/><path d="M16.5 13.5h2.5"/>',
   coins: '<ellipse cx="12" cy="6.5" rx="7" ry="3"/><path d="M5 6.5v5c0 1.66 3.13 3 7 3s7-1.34 7-3v-5"/><path d="M5 11.5v5c0 1.66 3.13 3 7 3s7-1.34 7-3v-5"/>',
+  // a chore is a task that comes back, so: the repeat arc with a tick inside it
+  chore: '<path d="M20.5 12a8.5 8.5 0 1 1-2.6-6.1"/><path d="M20.8 4.2v4.3h-4.3"/><path d="m8.8 12.2 2.2 2.2 4.2-4.4"/>',
   receipt: '<path d="M5 3.5h14v17l-2.3-1.6-2.35 1.6-2.35-1.6L9.65 20.5 7.3 18.9 5 20.5Z"/><path d="M8.5 8.5h7M8.5 12.5h7"/>',
   upload: '<path d="M12 15.5V4m0 0L8 8m4-4 4 4"/><path d="M4 15v3.5A2.5 2.5 0 0 0 6.5 21h11a2.5 2.5 0 0 0 2.5-2.5V15"/>',
   home: '<path d="m3 10.6 9-7.1 9 7.1"/><path d="M5.5 9.2V20.5h13V9.2"/><path d="M10 20.5v-5.5h4v5.5"/>',
@@ -164,6 +166,20 @@ const RO = {
   'Seats': 'Scaun', 'Seats only, no menu': 'Doar scaun, fără meniu', 'seats only': 'doar scaun',
   // charts & insights
   'What you kept': 'Ce ai păstrat', 'Kept': 'Păstrat',
+  // chores
+  'Chores': 'Treburi', 'Chore': 'Treabă', 'New chore': 'Treabă nouă', 'Add chore': 'Adaugă treabă',
+  'Recurring jobs around the house. Ticking one marks it done for today — it comes back tomorrow.':
+    'Treburi care se repetă prin casă. Când bifezi una, e gata pe ziua de azi — mâine revine.',
+  'Left for today': 'Rămase azi', 'Done today': 'Făcute azi', 'Done this week': 'Făcute săptămâna asta',
+  'How often': 'Cât de des', 'Day': 'Ziua', 'Any day': 'Oricând', 'any day this week': 'oricând săptămâna asta',
+  'Daily': 'Zilnic', 'Weekly': 'Săptămânal',
+  'Chores today': 'Treburi azi', 'All chores done for today': 'Toate treburile pe azi sunt gata',
+  'See all': 'Vezi toate',
+  'Everyone': 'Toată lumea', 'Nobody in particular': 'Fără responsabil', 'Anyone': 'Oricine', 'anyone': 'oricine',
+  'done by': 'făcut de', 'Feed the dogs': 'Dat de mâncare la câini',
+  'Add a chore below and it will show up every day.': 'Adaugă o treabă mai jos și va apărea în fiecare zi.',
+  'Monday': 'Luni', 'Tuesday': 'Marți', 'Wednesday': 'Miercuri', 'Thursday': 'Joi',
+  'Friday': 'Vineri', 'Saturday': 'Sâmbătă', 'Sunday': 'Duminică',
   'Finance Score': 'Scor financiar', 'Finance quality': 'Sănătatea finanțelor',
   'Excellent': 'Excelent', 'Good': 'Bun', 'Fair': 'Acceptabil', 'Needs work': 'De îmbunătățit',
   'Money kept': 'Bani păstrați', 'Within budget': 'În buget', 'Paid on time': 'Plătit la timp',
@@ -853,7 +869,7 @@ function dayLabel(iso) {
 }
 
 /* ---------- router ---------- */
-const routes = { dashboard: viewDashboard, money: viewMoney, bills: viewBills, search: viewSearch, vehicles: viewVehicles, properties: viewProperties, tenants: viewTenants, property: viewProperty, acte: viewActe, lists: viewLists, import: viewImport, alerts: viewAlerts, family: viewFamily, settings: viewSettings };
+const routes = { dashboard: viewDashboard, money: viewMoney, bills: viewBills, search: viewSearch, vehicles: viewVehicles, properties: viewProperties, tenants: viewTenants, property: viewProperty, acte: viewActe, lists: viewLists, chores: viewChores, import: viewImport, alerts: viewAlerts, family: viewFamily, settings: viewSettings };
 // Page changes cross-fade where the browser supports it; plain render elsewhere.
 //
 // The cross-fade is decoration — the render is the point — so nothing about the transition may be
@@ -999,7 +1015,7 @@ const NAV = [
   [null, 'Property & things'],
   ['properties', 'home', 'Properties'], ['tenants', 'key', 'Tenants'], ['vehicles', 'car', 'Vehicles'], ['acte', 'file', 'Acte'],
   [null, 'Household'],
-  ['lists', 'checklist', 'Lists'], ['alerts', 'bell', 'Alerts'], ['family', 'users', 'Family'], ['settings', 'gear', 'Settings'],
+  ['chores', 'chore', 'Chores'], ['lists', 'checklist', 'Lists'], ['alerts', 'bell', 'Alerts'], ['family', 'users', 'Family'], ['settings', 'gear', 'Settings'],
 ];
 // the four that earn a permanent spot on a phone; everything else lives behind "More".
 // Alerts is here on purpose: its badge used to sit ~680px off-screen in the old scrolling strip,
@@ -1446,13 +1462,14 @@ async function viewDashboard(el) {
   const userQ = DASH_VIEW === 'all' ? '' : `&user=${DASH_VIEW}`;
   // the KPI tiles follow the period selector, but a trend chart of ONE bar teaches nothing —
   // so the history chart always pulls a rolling 12 months, whatever the tiles are showing
-  const [reminders, stats, trend12, budgets, rent, savings, suggest, upcoming] = await Promise.all([
+  const [reminders, stats, trend12, budgets, rent, savings, suggest, upcoming, chores] = await Promise.all([
     api(`/reminders?days=60${userQ}`), api(`/stats?months=${DASH_MONTHS}${userQ}`),
     DASH_MONTHS >= 12 ? null : api(`/stats?months=12${userQ}`).catch(() => null), api('/budgets'),
     api('/rent-status').catch(() => []), api('/savings').catch(() => ({ goals: [] })),
     api('/budgets/suggest').catch(() => null),
     // charges committed but not yet posted; a whole-family, single-month idea, so only fetched then
     (DASH_MONTHS === 1 && DASH_VIEW === 'all') ? api('/upcoming-month').catch(() => null) : null,
+    api('/chores').catch(() => []),
   ]);
   const trendStats = trend12 || stats;
   // monthly series behind each KPI, for the sparklines under the numbers
@@ -1488,6 +1505,7 @@ async function viewDashboard(el) {
         </${T}>`; })()}`).join('')}</div>`
       : `<div class="card empty"><b>Nothing due soon</b>${DASH_VIEW === 'all' ? 'Add bills, vehicle or property deadlines and they will line up here.' : 'Nothing assigned to this person is coming up.'}</div>`}
     </section>
+    ${choresCard(chores)}
     <section class="kpi" style="margin-top:18px">
       <a class="card clickcard" href="#money" data-tab="income"><div class="label"><span class="kpi-ic">${icon('wallet')}</span>${tr('Income')}</div>${pctPill(stats.income, stats.prev?.income, 'up-good')}<div class="value" data-cu="${stats.income}">${money(stats.income)}</div>${deltaAmountHtml(stats.income, stats.prev?.income)}<span class="spark-pos">${sparkline(incomeSeries)}</span></a>
       <a class="card clickcard" href="#money" data-tab="expenses"><div class="label"><span class="kpi-ic">${icon('receipt')}</span>${tr('Spent')}</div>${pctPill(stats.spent, stats.prev?.spent, 'up-bad')}<div class="value" data-cu="${stats.spent}">${money(stats.spent)}</div>${deltaAmountHtml(stats.spent, stats.prev?.spent)}<span class="spark-neg">${sparkline(spendSeries)}</span></a>
@@ -1532,6 +1550,12 @@ async function viewDashboard(el) {
       viewDashboard(el);
     } catch (err) { e.target.disabled = false; toast(err.message, 'error'); }
   });
+  // ticking a chore from the dashboard re-renders it, so the count and the list stay honest
+  el.querySelectorAll('[data-dashchore]').forEach((cb) => (cb.onchange = async () => {
+    cb.closest('.chorerow').classList.add('is-done');
+    try { await api(`/chores/${cb.dataset.dashchore}/toggle`, { method: 'POST' }); viewDashboard(el); }
+    catch (err) { toast(err.message, 'error'); viewDashboard(el); }
+  }));
   countUpAll(el.querySelector('#dash'));
   drawCharts(stats, DASH_VIEW, DASH_MONTHS, trendStats);
   renderCalendar(el.querySelector('#dashcal'), true);
@@ -1642,6 +1666,33 @@ function savingsRateHtml(income, net) {
     ? (pct < 0 ? `ai cheltuit cu ${-pct}% mai mult decât ai încasat` : `ai păstrat ${pct}% din venituri`)
     : (pct < 0 ? `spent ${-pct}% more than came in` : `kept ${pct}% of income`);
   return `<div class="muted" style="font-size:12.5px">${txt}</div>`;
+}
+/* Today's chores, on the page you open first. A chore list that lives one nav click away is a chore
+   list nobody reads, so the open ones surface here and can be ticked without leaving. Weekly jobs
+   only appear on the day they are pinned to (or every day, if pinned to none). */
+function choresCard(chores) {
+  const all = chores || [];
+  if (!all.length) return '';
+  const dow = (new Date().getDay() + 6) % 7;
+  const today = all.filter((c) => c.cadence === 'daily' || c.weekday == null || Number(c.weekday) === dow);
+  const open = today.filter((c) => !c.done);
+  if (!today.length) return '';
+  if (!open.length) {
+    return `<section class="card" style="margin-top:18px"><div class="row" style="justify-content:space-between;gap:10px;align-items:center">
+      <b>${tr('All chores done for today')}</b><a class="btn ghost small" href="#chores">${tr('Chores')}</a></div></section>`;
+  }
+  return `<section class="card" style="margin-top:18px">
+    <div class="row" style="justify-content:space-between;gap:10px;align-items:baseline">
+      <h3 style="margin:0">${tr('Chores today')}</h3>
+      <span class="muted">${open.length} ${LANG === 'ro' ? (open.length === 1 ? 'rămasă' : 'rămase') : 'left'}</span></div>
+    <ul class="chorelist">${open.slice(0, 5).map((c) => `<li class="chorerow">
+      <label class="chorecheck">
+        <input type="checkbox" data-dashchore="${c.id}" ${canWrite() ? '' : 'disabled'} style="width:auto">
+        <span class="chorebody"><span class="choretitle">${esc(c.title)}</span>
+          <span class="muted choremeta">${c.user_name ? esc(c.user_name) : tr('anyone')}</span></span>
+      </label></li>`).join('')}</ul>
+    ${open.length > 5 ? `<p class="muted" style="margin:8px 0 0"><a href="#chores">${tr('See all')} ${open.length} →</a></p>`
+      : `<p class="muted" style="margin:8px 0 0"><a href="#chores">${tr('Chores')} →</a></p>`}</section>`;
 }
 /* goals only nudge you if you see them; they lived two clicks away under Money → Savings */
 function goalsHtml(goals) {
@@ -3594,6 +3645,102 @@ function guestList(rows) {
         : (n(r.amount) ? money(r.amount) : '')}</td>
       <td class="right">${canWrite() ? `<button class="btn danger small" data-del="${r.id}">✕</button>` : ''}</td></tr>`).join('')}
     </tbody></table>`;
+}
+/* ---------- recurring chores ----------
+   The list you actually look at every morning. Two things make it different from the checklists on
+   the Lists page: a chore comes back (ticking it means "done for today", not "gone"), and it is
+   usually somebody's job. So the tick is stored against today's date server-side and the list resets
+   by itself, and every chore can name a person. */
+const WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+let CHORE_WHO = 'all';
+async function viewChores(el, tab = 'daily') {
+  const [chores, members] = await Promise.all([api('/chores'), api('/family/members')]);
+  const mine = chores.filter((c) => CHORE_WHO === 'all' || String(c.user_id ?? '') === String(CHORE_WHO));
+  const rows = mine.filter((c) => c.cadence === tab);
+  const done = rows.filter((c) => c.done).length;
+  const pct = rows.length ? Math.round((done / rows.length) * 100) : 0;
+  // "today" is the daily list plus whatever weekly jobs are pinned to this weekday (or to no day)
+  const todayDow = (new Date().getDay() + 6) % 7;
+  const todayOpen = mine.filter((c) => !c.done
+    && (c.cadence === 'daily' || c.weekday == null || Number(c.weekday) === todayDow)).length;
+
+  el.innerHTML = `<div class="pagehead"><div><h1>Chores</h1><p>Recurring jobs around the house. Ticking one marks it done for today — it comes back tomorrow.</p></div></div>
+    <section class="card chorehead">
+      <div class="row" style="justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap">
+        <div><div class="muted" style="font-size:12.5px">${tr('Left for today')}</div>
+          <div class="chorecount">${todayOpen}</div></div>
+        <div style="text-align:right"><div class="muted" style="font-size:12.5px">${tr(tab === 'weekly' ? 'Done this week' : 'Done today')}</div>
+          <div class="amount"><b>${done}/${rows.length}</b></div></div>
+      </div>
+      <div class="scorebar" style="margin-top:10px"><i style="width:${pct}%"></i></div>
+    </section>
+
+    <div class="tabs" style="max-width:420px">
+      ${[['daily', 'Daily'], ['weekly', 'Weekly']].map(([k, l]) =>
+        `<button data-t="${k}" class="${k === tab ? 'active' : ''}">${tr(l)}</button>`).join('')}
+    </div>
+    <div class="card">
+      <div class="row filterrow" style="margin-top:0">
+        <select id="chorewho">
+          <option value="all" ${CHORE_WHO === 'all' ? 'selected' : ''}>${tr('Everyone')}</option>
+          <option value="" ${CHORE_WHO === '' ? 'selected' : ''}>${tr('Nobody in particular')}</option>
+          ${members.map((m) => `<option value="${m.id}" ${String(CHORE_WHO) === String(m.id) ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}
+        </select>
+      </div>
+      ${rows.length ? `<ul class="chorelist">${rows.map((c) => `<li class="chorerow${c.done ? ' is-done' : ''}">
+        <label class="chorecheck">
+          <input type="checkbox" data-chore="${c.id}" ${c.done ? 'checked' : ''} ${canWrite() ? '' : 'disabled'} style="width:auto">
+          <span class="chorebody">
+            <span class="choretitle">${esc(c.title)}</span>
+            <span class="muted choremeta">${[
+              c.user_name ? esc(c.user_name) : tr('anyone'),
+              c.cadence === 'weekly' ? (c.weekday == null ? tr('any day this week') : tr(WEEKDAYS[c.weekday])) : '',
+              c.done && c.done_by_name ? `${tr('done by')} ${esc(c.done_by_name)}` : '',
+              c.note ? esc(c.note) : '',
+            ].filter(Boolean).join(' · ')}</span>
+          </span>
+        </label>
+        ${canWrite() ? `<button class="btn danger small" data-chdel="${c.id}" aria-label="${tr('Delete')}">✕</button>` : ''}
+      </li>`).join('')}</ul>`
+      : `<div class="empty"><b>${tr('Nothing here yet')}</b>${tr('Add a chore below and it will show up every day.')}</div>`}
+
+      ${canWrite() ? `<div class="subform">
+        <h4>${tr('New chore')}</h4>
+        <form id="choreform" class="formgrid">
+          <div><label>${tr('Chore')}</label><input name="title" placeholder="${tr('Feed the dogs')}" required></div>
+          <div><label>${tr('How often')}</label><select name="cadence" id="chcad">
+            <option value="daily" ${tab === 'daily' ? 'selected' : ''}>${tr('Daily')}</option>
+            <option value="weekly" ${tab === 'weekly' ? 'selected' : ''}>${tr('Weekly')}</option></select></div>
+          <div id="chdaywrap" ${tab === 'weekly' ? '' : 'hidden'}><label>${tr('Day')}</label><select name="weekday">
+            <option value="">${tr('Any day')}</option>
+            ${WEEKDAYS.map((d, i) => `<option value="${i}">${tr(d)}</option>`).join('')}</select></div>
+          <div><label>${tr('Person')}</label><select name="user_id"><option value="">${tr('Anyone')}</option>
+            ${members.map((m) => `<option value="${m.id}">${esc(m.name)}</option>`).join('')}</select></div>
+          <button class="btn small">${tr('Add chore')}</button>
+        </form></div>` : ''}
+    </div>`;
+
+  el.querySelectorAll('.tabs button').forEach((b) => (b.onclick = () => viewChores(el, b.dataset.t)));
+  el.querySelector('#chorewho').onchange = (e) => { CHORE_WHO = e.target.value; viewChores(el, tab); };
+  // the weekday picker only means something for a weekly chore
+  const cad = el.querySelector('#chcad');
+  if (cad) cad.onchange = () => { el.querySelector('#chdaywrap').hidden = cad.value !== 'weekly'; };
+  el.querySelectorAll('[data-chore]').forEach((cb) => (cb.onchange = async () => {
+    // flip the row immediately, then reconcile — a chore tick should feel instant
+    cb.closest('.chorerow').classList.toggle('is-done', cb.checked);
+    try { await api(`/chores/${cb.dataset.chore}/toggle`, { method: 'POST' }); viewChores(el, tab); }
+    catch (err) { toast(err.message, 'error'); viewChores(el, tab); }
+  }));
+  el.querySelectorAll('[data-chdel]').forEach((b) => (b.onclick = () => {
+    const { hide, restore } = rowHide(b);
+    undoableDelete({ hide, restore, commit: () => api('/chores/' + b.dataset.chdel, { method: 'DELETE' }).then(() => viewChores(el, tab)) });
+  }));
+  el.querySelector('#choreform')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const body = Object.fromEntries(new FormData(e.target));
+    try { await api('/chores', { method: 'POST', body }); viewChores(el, body.cadence || tab); }
+    catch (err) { toast(err.message, 'error'); }
+  });
 }
 async function viewLists(el, tab = 'buy') {
   const [items, members] = await Promise.all([api('/lists'), api('/family/members')]);

@@ -358,6 +358,22 @@ tr.daysep > td { background: var(--paper); padding: 6px 10px; border-bottom: 1px
 .catlegend .catleg-amt { font-family: var(--mono); font-weight: 500; font-size: 13px; }
 .catlegend .catleg-pct { font-size: 12px; min-width: 34px; text-align: right; }
 
+/* chores: a tick list you read every morning, so the row is one big target and the text carries
+   who it belongs to rather than a separate column */
+.chorehead .chorecount { font-family: var(--display); font-size: 2rem; font-weight: 700; line-height: 1.1; }
+.chorelist { list-style: none; margin: 6px 0 0; padding: 0; }
+.chorerow { display: flex; align-items: center; gap: 10px; padding: 4px 0; border-bottom: 1px solid var(--line); }
+.chorerow:last-child { border-bottom: 0; }
+.chorecheck { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; padding: 8px 4px; cursor: pointer; border-radius: 8px; }
+.chorecheck:hover { background: var(--paper); }
+.chorebody { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.choretitle { font-weight: 600; }
+.choremeta { font-size: 12.5px; }
+/* done: struck through and stepped back, but still readable — you want to see what's already been
+   handled, not have it vanish and leave you wondering whether you imagined it */
+.chorerow.is-done .choretitle { text-decoration: line-through; }
+.chorerow.is-done { opacity: .55; }
+
 /* the expense filter bar: widths live here rather than inline, so the phone layout can override
    them instead of losing to an inline style */
 .filterrow { gap: 8px; margin: 10px 0; flex-wrap: wrap; }
