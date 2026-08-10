@@ -16,6 +16,7 @@ const ICON = {
   grid: '<rect x="3" y="3" width="7.5" height="7.5" rx="1.6"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.6"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1.6"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.6"/>',
   search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.6-3.6"/>',
   wallet: '<path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H18a1 1 0 0 1 1 1v1.5"/><rect x="3" y="7.5" width="18" height="12" rx="2.5"/><path d="M16.5 13.5h2.5"/>',
+  coins: '<ellipse cx="12" cy="6.5" rx="7" ry="3"/><path d="M5 6.5v5c0 1.66 3.13 3 7 3s7-1.34 7-3v-5"/><path d="M5 11.5v5c0 1.66 3.13 3 7 3s7-1.34 7-3v-5"/>',
   receipt: '<path d="M5 3.5h14v17l-2.3-1.6-2.35 1.6-2.35-1.6L9.65 20.5 7.3 18.9 5 20.5Z"/><path d="M8.5 8.5h7M8.5 12.5h7"/>',
   upload: '<path d="M12 15.5V4m0 0L8 8m4-4 4 4"/><path d="M4 15v3.5A2.5 2.5 0 0 0 6.5 21h11a2.5 2.5 0 0 0 2.5-2.5V15"/>',
   home: '<path d="m3 10.6 9-7.1 9 7.1"/><path d="M5.5 9.2V20.5h13V9.2"/><path d="M10 20.5v-5.5h4v5.5"/>',
@@ -163,6 +164,9 @@ const RO = {
   'Seats': 'Scaun', 'Seats only, no menu': 'Doar scaun, fără meniu', 'seats only': 'doar scaun',
   // charts & insights
   'What you kept': 'Ce ai păstrat', 'Kept': 'Păstrat',
+  'Finance Score': 'Scor financiar', 'Finance quality': 'Sănătatea finanțelor',
+  'Excellent': 'Excelent', 'Good': 'Bun', 'Fair': 'Acceptabil', 'Needs work': 'De îmbunătățit',
+  'Money kept': 'Bani păstrați', 'Within budget': 'În buget', 'Paid on time': 'Plătit la timp',
   'Income minus spending, month by month. Below the line means you spent more than came in.':
     'Venituri minus cheltuieli, lună de lună. Sub linie înseamnă că ai cheltuit mai mult decât ai încasat.',
   'the faint mark is the same month in': 'linia estompată e aceeași lună din',
@@ -1485,11 +1489,12 @@ async function viewDashboard(el) {
       : `<div class="card empty"><b>Nothing due soon</b>${DASH_VIEW === 'all' ? 'Add bills, vehicle or property deadlines and they will line up here.' : 'Nothing assigned to this person is coming up.'}</div>`}
     </section>
     <section class="kpi" style="margin-top:18px">
-      <a class="card clickcard" href="#money" data-tab="income"><div class="label">${tr('Income')} · ${esc(tr(periodLabel))}</div><div class="value" data-cu="${stats.income}">${money(stats.income)}</div>${deltaHtml(stats.income, stats.prev?.income, 'up-good')}<span class="spark-pos">${sparkline(incomeSeries)}</span></a>
-      <a class="card clickcard" href="#money" data-tab="expenses"><div class="label">${tr('Spent')} · ${esc(tr(periodLabel))}</div><div class="value" data-cu="${stats.spent}">${money(stats.spent)}</div>${deltaHtml(stats.spent, stats.prev?.spent, 'up-bad')}<span class="spark-neg">${sparkline(spendSeries)}</span></a>
-      <div class="card"><div class="label">Left over</div><div class="value ${net < 0 ? 'neg' : ''}" data-cu="${net}">${money(net)}</div>${deltaHtml(net, (stats.prev?.income ?? 0) - (stats.prev?.spent ?? 0), 'up-good')}${savingsRateHtml(stats.income, net)}<span class="spark-pos">${sparkline(netSeries)}</span></div>
+      <a class="card clickcard" href="#money" data-tab="income"><div class="label"><span class="kpi-ic">${icon('wallet')}</span>${tr('Income')}</div>${pctPill(stats.income, stats.prev?.income, 'up-good')}<div class="value" data-cu="${stats.income}">${money(stats.income)}</div>${deltaAmountHtml(stats.income, stats.prev?.income)}<span class="spark-pos">${sparkline(incomeSeries)}</span></a>
+      <a class="card clickcard" href="#money" data-tab="expenses"><div class="label"><span class="kpi-ic">${icon('receipt')}</span>${tr('Spent')}</div>${pctPill(stats.spent, stats.prev?.spent, 'up-bad')}<div class="value" data-cu="${stats.spent}">${money(stats.spent)}</div>${deltaAmountHtml(stats.spent, stats.prev?.spent)}<span class="spark-neg">${sparkline(spendSeries)}</span></a>
+      <div class="card"><div class="label"><span class="kpi-ic">${icon('coins')}</span>Left over</div>${pctPill(net, (stats.prev?.income ?? 0) - (stats.prev?.spent ?? 0), 'up-good')}<div class="value ${net < 0 ? 'neg' : ''}" data-cu="${net}">${money(net)}</div>${deltaAmountHtml(net, (stats.prev?.income ?? 0) - (stats.prev?.spent ?? 0))}${savingsRateHtml(stats.income, net)}<span class="spark-pos">${sparkline(netSeries)}</span></div>
     </section>
     ${dashInsight(stats, suggest, DASH_MONTHS, upcoming)}
+    ${financeScoreHtml(financeScore(stats, budgets, spentMap, reminders))}
     ${rentHtml(rent)}
     <section class="grid2" style="margin-top:18px">
       <div class="card"><h3>${tr('Spending by category')} · ${esc(tr(periodLabel))}</h3>
@@ -1535,6 +1540,29 @@ async function viewDashboard(el) {
    `sense` says which direction is good, so spending more reads amber and earning more reads green.
    The sentence is written out per language rather than glued together from single words — the
    dictionary is exact-match, and "more" already means "altele" ("+2 more" on the calendar). */
+/* The percentage move, as a pill in the card's corner. It says the same thing as the sentence
+   underneath, in the shape you can read without reading — so on a phone, where the sentence is
+   already there and space is not, the pill is hidden rather than repeated. */
+function pctPill(now, before, sense) {
+  if (before == null || !isFinite(before) || Math.abs(before) < 0.005) return '';
+  const pct = Math.round(((now - before) / Math.abs(before)) * 100);
+  if (pct === 0) return '';
+  const up = pct > 0;
+  const good = sense === 'up-good' ? up : !up;
+  return `<span class="kpi-pill ${good ? 'good' : 'bad'}">${up ? '↑' : '↓'} ${Math.abs(pct)}%</span>`;
+}
+/* The absolute move in money. A percentage tells you the shape of the change and a sum tells you
+   what it cost — the tiles carry both, the way the mock-up does. */
+function deltaAmountHtml(now, before) {
+  if (before == null || !isFinite(before) || Math.abs(before) < 0.005) return '';
+  const diff = now - before;
+  if (Math.abs(diff) < 0.005) return '';
+  const ro = LANG === 'ro';
+  const period = DASH_MONTHS === 1
+    ? (ro ? 'luna trecută' : 'last month')
+    : (ro ? `precedentele ${DASH_MONTHS} luni` : `the previous ${DASH_MONTHS} months`);
+  return `<div class="delta"><b>${diff > 0 ? '+' : '−'}${money(Math.abs(diff))}</b> ${ro ? 'față de' : 'than'} ${period}</div>`;
+}
 function deltaHtml(now, before, sense) {
   if (before == null || !isFinite(before) || Math.abs(before) < 0.005) return ''; // no baseline, no claim
   const pct = Math.round(((now - before) / Math.abs(before)) * 100);
@@ -1561,6 +1589,47 @@ function rentHtml(rent) {
           : `<span class="badge unpaid">${tr('to pay')}</span>`}</span>
     </div>`).join('')}
     <p class="muted" style="margin:6px 0 0"><a href="#properties">${tr('Open Properties')} →</a></p></section>`;
+}
+/* A single "how are we doing" figure — but a made-up one is worse than none, so it is the average
+   of parts that are each computed from real rows, and the parts are listed underneath so the number
+   can be argued with. A component with no data to stand on (no budgets set, no income recorded)
+   drops out of the average rather than scoring zero and quietly dragging the total down. */
+function financeScore(stats, budgets, spentMap, reminders) {
+  const parts = [];
+  const income = Number(stats.income) || 0;
+  const net = income - (Number(stats.spent) || 0);
+
+  if (income > 0) {
+    // 20% of income kept is the usual "healthy" mark; below zero scores zero, not negative
+    const rate = net / income;
+    parts.push({ key: 'Money kept', pct: Math.max(0, Math.min(100, Math.round((rate / 0.2) * 100))) });
+  }
+  const set = (budgets?.budgets || []).filter((b) => Number(b.amount) > 0);
+  if (set.length) {
+    const within = set.filter((b) => (spentMap[b.category] || 0) <= Number(b.amount)).length;
+    parts.push({ key: 'Within budget', pct: Math.round((within / set.length) * 100) });
+  }
+  // anything already past its date and still unpaid; each one costs a fifth of this component
+  const late = (reminders || []).filter((r) => !r.auto_pay && Number(r.days_left) < 0).length;
+  const dated = (reminders || []).filter((r) => Number.isFinite(Number(r.days_left))).length;
+  if (dated) parts.push({ key: 'Paid on time', pct: Math.max(0, 100 - late * 20) });
+
+  if (!parts.length) return null;
+  const score = Math.round(parts.reduce((s, p) => s + p.pct, 0) / parts.length);
+  const label = score >= 85 ? 'Excellent' : score >= 70 ? 'Good' : score >= 50 ? 'Fair' : 'Needs work';
+  return { score, label, parts };
+}
+function financeScoreHtml(fs) {
+  if (!fs) return '';
+  const tone = fs.score >= 85 ? 'good' : fs.score >= 50 ? 'warn' : 'bad';
+  return `<section class="card scorecard" style="margin-top:18px">
+    <h3 style="margin-top:0">${tr('Finance Score')}</h3>
+    <div class="muted" style="font-size:12.5px">${tr('Finance quality')}</div>
+    <div class="row" style="justify-content:space-between;align-items:baseline;gap:10px">
+      <div class="scoreword">${tr(fs.label)}</div><div class="scorenum">${fs.score}%</div></div>
+    <div class="scorebar ${tone}"><i style="width:${fs.score}%"></i></div>
+    <ul class="scoreparts">${fs.parts.map((p) => `<li><span>${tr(p.key)}</span><b>${p.pct}%</b></li>`).join('')}</ul>
+  </section>`;
 }
 /* The share of what came in that you still have. A leftover of 5.000 means nothing on its own —
    it's excellent on an income of 6.000 and poor on 20.000 — and unlike the absolute figure it stays
@@ -1685,24 +1754,65 @@ async function drawCharts(stats, scopeView = 'all', scopeMonths = 1, trendStats 
   const incomeBy = (m) => trendStats.incomeTrend.find((t) => t.m === m)?.total || 0;
   // "2026-01" rotated 43° to fit; "ian." fits flat, and matches how the Year view already writes it
   const monthLabels = months.map((m) => monthLabel(m));
+  /* Cashflow as two smooth filled areas rather than sixteen bars: the shape of a month-over-month
+     trend is the point, and a bar chart makes you read heights one pair at a time. A crosshair plus
+     a tooltip carrying the value and the month replaces the grid-squinting. Colours stay green for
+     money in and red for money out — the semantic is worth more than a monochrome pair. */
+  const areaFill = (ctx, hex) => {
+    const { chart } = ctx;
+    if (!chart.chartArea) return 'transparent'; // first pass, before layout is known
+    const g = chart.ctx.createLinearGradient(0, chart.chartArea.top, 0, chart.chartArea.bottom);
+    g.addColorStop(0, hex + '4d'); // ~30% at the top of the plot
+    g.addColorStop(1, hex + '00');
+    return g;
+  };
+  const series = (label, data, hex) => ({
+    label, data, borderColor: hex, borderWidth: 2, tension: 0.4,
+    fill: true, backgroundColor: (ctx) => areaFill(ctx, hex),
+    pointRadius: 0, pointHoverRadius: 5, pointHoverBackgroundColor: hex,
+    pointHoverBorderColor: cardBg, pointHoverBorderWidth: 2,
+  });
+  // the dashed vertical line under the hovered point, drawn behind the datasets
+  const crosshair = {
+    id: 'fhCrosshair',
+    beforeDatasetsDraw(chart) {
+      const active = chart.tooltip?.getActiveElements?.() || [];
+      if (!active.length) return;
+      const x = active[0].element.x;
+      const { top, bottom } = chart.chartArea;
+      const c = chart.ctx;
+      c.save();
+      c.beginPath(); c.setLineDash([4, 4]); c.lineWidth = 1; c.strokeStyle = inkSoft;
+      c.moveTo(x, top); c.lineTo(x, bottom); c.stroke();
+      c.restore();
+    },
+  };
   const tc = $('#trendChart'); if (tc && months.length) new Chart(tc, {
-    type: 'bar',
+    type: 'line',
     data: {
       labels: monthLabels,
-      datasets: [
-        { label: tr('Spent'), data: months.map(spentBy), backgroundColor: red, borderRadius: 5, maxBarThickness: 30 },
-        { label: tr('Income'), data: months.map(incomeBy), backgroundColor: accent, borderRadius: 5, maxBarThickness: 30 },
-      ],
+      datasets: [series(tr('Income'), months.map(incomeBy), accent), series(tr('Spent'), months.map(spentBy), red)],
     },
     options: {
       maintainAspectRatio: false,
-      plugins: { legend: legendDots, tooltip: moneyTooltip },
+      interaction: { mode: 'index', intersect: false }, // anywhere on the column, not on the 2px line
+      plugins: {
+        legend: legendDots,
+        tooltip: {
+          ...moneyTooltip, displayColors: true, usePointStyle: true,
+          padding: 10, cornerRadius: 8, caretSize: 0,
+          backgroundColor: cardBg, titleColor: inkSoft, bodyColor: val('--ink', '#000'),
+          borderColor: line, borderWidth: 1,
+          titleFont: { weight: '600' }, bodyFont: { family: mono, size: 13 },
+        },
+      },
       scales: {
         y: { beginAtZero: true, border: { display: false }, grid: { color: line }, ticks: { font: { family: mono }, callback: axisNum } },
         // flat labels: short month names fit, and Chart.js otherwise tilts them 43° on a narrow card
         x: { border: { display: false }, grid: { display: false }, ticks: { maxRotation: 0, autoSkipPadding: 8 } },
       },
     },
+    plugins: [crosshair],
   });
   else if (tc) tc.replaceWith(Object.assign(document.createElement('div'), { className: 'empty', innerHTML: `<b>${tr('History appears once you log expenses.')}</b>` }));
 
