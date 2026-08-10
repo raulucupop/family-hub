@@ -207,6 +207,11 @@ CREATE TABLE IF NOT EXISTS properties (
   owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL, -- NULL = whole family
   rent_amount REAL,            -- monthly rent charged to the tenant
   rent_due_day INTEGER,        -- day of month rent is due (1-31; clamped to the last day in shorter months)
+  lease_start TEXT,            -- tenancy: when the contract started
+  lease_end TEXT,              -- ...and when it runs out
+  notice_days INTEGER,         -- how many days before lease_end notice has to be given
+  deposit_amount REAL,         -- the deposit being held, which has to come back out at the end
+  deposit_returned_at TEXT,    -- NULL while it is still held
   tenant_invite_code TEXT,     -- code a tenant uses to register
   payment_link TEXT,           -- e.g. revolut.me link the tenant pays to (amount gets appended)
   managed INTEGER NOT NULL DEFAULT 0, -- 1 = we administer it but don't own it: its costs and rent
@@ -560,6 +565,16 @@ if (!userCols.includes('phone')) db.exec('ALTER TABLE users ADD COLUMN phone TEX
 if (!userCols.includes('notif_muted')) db.exec("ALTER TABLE users ADD COLUMN notif_muted TEXT NOT NULL DEFAULT ''");
 if (!userCols.includes('quiet_start')) db.exec('ALTER TABLE users ADD COLUMN quiet_start INTEGER');
 if (!userCols.includes('quiet_end')) db.exec('ALTER TABLE users ADD COLUMN quiet_end INTEGER');
+
+// The tenancy itself, which the app tracked the money for but never the contract. All three carry
+// money: a lease runs out, notice has to be given a fixed number of days before that, and the
+// deposit is a sum being held that has to come back out at the end.
+const propCols4 = db.prepare('PRAGMA table_info(properties)').all().map((c) => c.name);
+if (!propCols4.includes('lease_start')) db.exec('ALTER TABLE properties ADD COLUMN lease_start TEXT');
+if (!propCols4.includes('lease_end')) db.exec('ALTER TABLE properties ADD COLUMN lease_end TEXT');
+if (!propCols4.includes('notice_days')) db.exec('ALTER TABLE properties ADD COLUMN notice_days INTEGER');
+if (!propCols4.includes('deposit_amount')) db.exec('ALTER TABLE properties ADD COLUMN deposit_amount REAL');
+if (!propCols4.includes('deposit_returned_at')) db.exec('ALTER TABLE properties ADD COLUMN deposit_returned_at TEXT');
 
 const propCols = db.prepare('PRAGMA table_info(properties)').all().map((c) => c.name);
 if (!propCols.includes('owner_id')) db.exec('ALTER TABLE properties ADD COLUMN owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL');

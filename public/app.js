@@ -173,6 +173,17 @@ const RO = {
   'Left for today': 'Rămase azi', 'Done today': 'Făcute azi', 'Done this week': 'Făcute săptămâna asta',
   'How often': 'Cât de des', 'Day': 'Ziua', 'Any day': 'Oricând', 'any day this week': 'oricând săptămâna asta',
   'Daily': 'Zilnic', 'Weekly': 'Săptămânal',
+  // safe to spend + tenancy contract
+  'Safe to spend today': 'Poți cheltui azi',
+  'Contract & deposit': 'Contract și garanție', 'Lease start': 'Început contract', 'Lease end': 'Sfârșit contract',
+  'Notice (days)': 'Preaviz (zile)', 'Notice by': 'Preaviz până la', 'Tenancy ends': 'Contractul expiră',
+  'Deposit': 'Garanție', 'held': 'reținută', 'returned': 'returnată',
+  'Mark deposit returned': 'Marchează garanția returnată', 'Deposit is held again': 'Garanția e reținută din nou',
+  'No contract recorded yet. Add the end date and the notice period and both land in your deadlines.':
+    'Niciun contract înregistrat. Adaugă data de expirare și preavizul, iar amândouă ajung în termenele tale.',
+  'Give notice': 'Dă preaviz',
+  'Changing this relabels existing amounts — it does not convert them.':
+    'Schimbarea reetichetează sumele existente — nu le convertește.',
   'Chores today': 'Treburi azi', 'All chores done for today': 'Toate treburile pe azi sunt gata',
   'See all': 'Vezi toate',
   'Everyone': 'Toată lumea', 'Nobody in particular': 'Fără responsabil', 'Anyone': 'Oricine', 'anyone': 'oricine',
@@ -515,7 +526,13 @@ function translateSubtree(root) {
     for (const [rx, rep] of RO_RX) if (rx.test(key)) { n.nodeValue = raw.replace(key, key.replace(rx, rep)); break; }
   }
 }
-const cur = () => (FAMILY?.currency || 'RON');
+/* The currencies a family can keep its books in. The code is what's stored; the label is what's
+   shown. RON stays "RON" rather than the locale's "lei" so nothing already on screen shifts under
+   anyone, while EUR and GBP get the symbol people actually expect.
+   Grouping stays Romanian (1.234,56) for all three on purpose: the app is read in Romania whatever
+   the currency, and it keeps the amount parser and the table sorter working unchanged. */
+const CURRENCIES = { RON: 'RON', EUR: '€', GBP: '£' };
+const cur = () => CURRENCIES[FAMILY?.currency] || FAMILY?.currency || 'RON';
 const money = (n) => n == null ? '—' : `${Number(n).toLocaleString('ro-RO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${cur()}`;
 // Rounded, no currency — for places that repeat an amount many times in a tight space (the category
 // subtotal pills). The exact figure is always on the row or in the header next to it.
@@ -852,7 +869,8 @@ function reminderHref(r) {
   switch (r.kind) {
     case 'bill': return '#bills';
     case 'rca': case 'casco': case 'vignette': case 'itp': case 'road_tax': return '#vehicles';
-    case 'property_insurance': case 'property_tax': return r.ref_id ? `#property/${r.ref_id}` : '#properties';
+    case 'property_insurance': case 'property_tax': case 'lease_end': case 'lease_notice':
+      return r.ref_id ? `#property/${r.ref_id}` : '#properties';
     case 'tenant_unpaid': return r.property_id ? `#property/${r.property_id}` : '#tenants';
     case 'document': return '#acte';
     case 'birthday': return '#family';
@@ -1396,6 +1414,36 @@ function dashSkeleton() {
 // Categories that arrive as a single fixed charge rather than day-by-day spending, so they must be
 // kept out of the run-rate when forecasting the month (see dashInsight).
 const PROJECTION_FIXED = new Set(['Credit']);
+/* What you can spend today without breaking the month.
+   Everything here was already being computed for the month-end projection; nobody had ever turned
+   it around into the question people actually ask. What came in, minus what has gone out, minus
+   what is committed but not yet posted (instalments, auto-paid bills, recurring costs) — spread
+   over the days left, today included. The committed part is what makes it honest: without it the
+   number reads generously all month and then the rent lands. */
+function safeToSpendHtml(stats, months, upcoming) {
+  if (months !== 1) return '';
+  const income = Number(stats.income) || 0;
+  if (income <= 0) return ''; // nothing came in to divide up — no basis for a number
+  const now = new Date();
+  const day = now.getUTCDate();
+  const inMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0)).getUTCDate();
+  const daysLeft = Math.max(1, inMonth - day + 1); // today counts
+  const committed = Number(upcoming?.total) || 0;
+  const available = income - (Number(stats.spent) || 0) - committed;
+  const perDay = available / daysLeft;
+  const ro = LANG === 'ro';
+  const over = available <= 0;
+  const note = over
+    ? (ro ? `Ai depășit ce a intrat luna asta cu ${money(-available)}${committed > 0 ? `, incluzând ${money(committed)} deja programați` : ''}.`
+          : `You're ${money(-available)} past what came in this month${committed > 0 ? `, including ${money(committed)} already committed` : ''}.`)
+    : (ro ? `${money(available)} rămași pentru ${daysLeft} ${daysLeft === 1 ? 'zi' : 'zile'}${committed > 0 ? `, după ce am scăzut ${money(committed)} deja programați` : ''}.`
+          : `${money(available)} left for ${daysLeft} ${daysLeft === 1 ? 'day' : 'days'}${committed > 0 ? `, after setting aside ${money(committed)} already committed` : ''}.`);
+  return `<section class="card safespend${over ? ' over' : ''}" style="margin-top:18px">
+    <div class="muted" style="font-size:12.5px">${tr('Safe to spend today')}</div>
+    <div class="safeamt">${money(Math.max(0, perDay))}</div>
+    <div class="muted" style="font-size:13px">${note}</div>
+  </section>`;
+}
 function dashInsight(stats, suggest, months, upcoming) {
   if (months !== 1) return '';
   const ro = LANG === 'ro';
@@ -1511,6 +1559,7 @@ async function viewDashboard(el) {
       <a class="card clickcard" href="#money" data-tab="expenses"><div class="label"><span class="kpi-ic">${icon('receipt')}</span>${tr('Spent')}</div>${pctPill(stats.spent, stats.prev?.spent, 'up-bad')}<div class="value" data-cu="${stats.spent}">${money(stats.spent)}</div>${deltaAmountHtml(stats.spent, stats.prev?.spent)}<span class="spark-neg">${sparkline(spendSeries)}</span></a>
       <div class="card"><div class="label"><span class="kpi-ic">${icon('coins')}</span>Left over</div>${pctPill(net, (stats.prev?.income ?? 0) - (stats.prev?.spent ?? 0), 'up-good')}<div class="value ${net < 0 ? 'neg' : ''}" data-cu="${net}">${money(net)}</div>${deltaAmountHtml(net, (stats.prev?.income ?? 0) - (stats.prev?.spent ?? 0))}${savingsRateHtml(stats.income, net)}<span class="spark-pos">${sparkline(netSeries)}</span></div>
     </section>
+    ${safeToSpendHtml(stats, DASH_MONTHS, upcoming)}
     ${dashInsight(stats, suggest, DASH_MONTHS, upcoming)}
     ${financeScoreHtml(financeScore(stats, budgets, spentMap, reminders))}
     ${rentHtml(rent)}
@@ -3205,6 +3254,40 @@ function parseSchedule(p) {
   return out;
 }
 async function renderTenantBox(box, p) {
+  /* The contract itself, which the app tracked the money for but never the paperwork. The notice
+     date is derived, never stored — storing it would let it drift out of step with the lease end. */
+  function leaseBlock(prop) {
+    const end = prop.lease_end;
+    const days = Number(prop.notice_days) || 0;
+    let noticeOn = null;
+    if (end && days > 0) {
+      const n = new Date(end + 'T00:00:00Z');
+      n.setUTCDate(n.getUTCDate() - days);
+      noticeOn = n.toISOString().slice(0, 10);
+    }
+    const dep = Number(prop.deposit_amount) || 0;
+    const held = dep > 0 && !prop.deposit_returned_at;
+    const chip = (iso, label) => {
+      const d = daysUntil(iso), c = daysClass(d);
+      return `<span class="dchip ${c}"><span>${label}</span> <b>${fdate(iso)}</b> <span class="muted">${daysLabel(d)}</span></span>`;
+    };
+    return `<h3 style="margin-top:18px">${tr('Contract & deposit')}</h3>
+      ${end || dep ? `<div class="row" style="gap:8px;flex-wrap:wrap;margin-bottom:8px">
+        ${end ? chip(end, tr('Tenancy ends')) : ''}
+        ${noticeOn ? chip(noticeOn, tr('Notice by')) : ''}
+        ${dep ? `<span class="dchip"><span>${tr('Deposit')}</span> <b>${money(dep)}</b>
+          <span class="muted">${held ? tr('held') : `${tr('returned')} ${fdate(prop.deposit_returned_at)}`}</span></span>` : ''}
+      </div>` : `<p class="muted">${tr('No contract recorded yet. Add the end date and the notice period and both land in your deadlines.')}</p>`}
+      ${canWrite() ? `<form data-leaseform class="row" style="flex-wrap:wrap;align-items:flex-end;gap:8px">
+        <div><label>${tr('Lease start')}</label><input name="lease_start" type="date" value="${prop.lease_start || ''}"></div>
+        <div><label>${tr('Lease end')}</label><input name="lease_end" type="date" value="${prop.lease_end || ''}"></div>
+        <div><label>${tr('Notice (days)')}</label><input name="notice_days" type="number" min="0" max="365" value="${prop.notice_days ?? ''}" style="max-width:110px"></div>
+        <div><label>${tr('Deposit')} (${cur()})</label><input name="deposit_amount" type="number" step="0.01" min="0" value="${prop.deposit_amount ?? ''}" style="max-width:130px"></div>
+        <button class="btn small">${tr('Save')}</button>
+        ${held ? `<button type="button" class="btn ghost small" data-depret>${tr('Mark deposit returned')}</button>` : ''}
+        ${dep && !held ? `<button type="button" class="btn ghost small" data-depheld>${tr('Deposit is held again')}</button>` : ''}
+      </form>` : ''}`;
+  }
   const [tinfo, charges, meters, maint] = await Promise.all([
     api(`/properties/${p.id}/tenant`), api(`/properties/${p.id}/charges`), api(`/properties/${p.id}/meter-requests`),
     api(`/properties/${p.id}/maintenance`)]);
@@ -3215,6 +3298,7 @@ async function renderTenantBox(box, p) {
       <div><label>${tr('Rent')} (${cur()})</label><input name="rent_amount" type="number" step="0.01" min="0" value="${p.rent_amount ?? ''}" style="max-width:130px"></div>
       <div><label>${tr('Rent due day (1-31)')}</label><input name="rent_due_day" type="number" min="1" max="31" value="${p.rent_due_day ?? 1}" style="max-width:120px"></div>
       <button class="btn small">${tr('Save')}</button></form>` : ''}
+    ${leaseBlock(p)}
     ${canWrite() ? `<p class="row" style="flex-wrap:wrap">
       ${tinfo.invite_code ? `<span>Tenant code: <b class="amount" style="font-size:18px;letter-spacing:.12em">${esc(tinfo.invite_code)}</b></span>
       <button class="btn ghost small" data-copy="${esc(tinfo.invite_code)}">Copy code</button>
@@ -3304,6 +3388,25 @@ async function renderTenantBox(box, p) {
       toast('Saved', 'success'); reload();
     } catch (err) { toast(err.message, 'error'); }
   });
+  const saveLease = async (body) => {
+    try {
+      const updated = await api(`/properties/${p.id}`, { method: 'PUT', body });
+      Object.assign(p, updated);
+      toast('Saved', 'success'); reload();
+    } catch (err) { toast(err.message, 'error'); }
+  };
+  box.querySelector('[data-leaseform]')?.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const f = Object.fromEntries(new FormData(e.target));
+    saveLease({
+      lease_start: f.lease_start || null,
+      lease_end: f.lease_end || null,
+      notice_days: f.notice_days === '' ? null : Number(f.notice_days),
+      deposit_amount: f.deposit_amount === '' ? null : Number(f.deposit_amount),
+    });
+  });
+  box.querySelector('[data-depret]')?.addEventListener('click', () => saveLease({ deposit_returned_at: today() }));
+  box.querySelector('[data-depheld]')?.addEventListener('click', () => saveLease({ deposit_returned_at: null }));
   // the meter schedule used to be editable only from the property's Edit form; the Tenants page
   // reuses this panel without that button, so it's set here directly
   // a meter's day input is only live while its box is ticked
@@ -4068,8 +4171,10 @@ async function viewFamily(el) {
     ${isAdmin ? `<div class="card" style="margin-top:16px"><h3>Family settings</h3>
       <form id="famform" class="formgrid">
         <div><label>Family name</label><input name="name" value="${esc(FAMILY.name)}"></div>
-        <div><label>Currency</label><input name="currency" value="${esc(FAMILY.currency)}" maxlength="4"></div>
-        <button class="btn">Save</button></form></div>` : ''}`;
+        <div><label>Currency</label><select name="currency">${Object.entries(CURRENCIES).map(([code, sym]) =>
+          `<option value="${code}" ${code === FAMILY.currency ? 'selected' : ''}>${code}${code === sym ? '' : ` (${sym})`}</option>`).join('')}</select></div>
+        <button class="btn">Save</button></form>
+        <p class="muted" style="margin:10px 0 0;font-size:12.5px">${tr('Changing this relabels existing amounts — it does not convert them.')}</p></div>` : ''}`;
   $('#rotate')?.addEventListener('click', async () => {
     const r = await api('/family/invite/rotate', { method: 'POST' });
     FAMILY.invite_code = r.invite_code; viewFamily(el);

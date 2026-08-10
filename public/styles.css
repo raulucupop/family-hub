@@ -358,6 +358,12 @@ tr.daysep > td { background: var(--paper); padding: 6px 10px; border-bottom: 1px
 .catlegend .catleg-amt { font-family: var(--mono); font-weight: 500; font-size: 13px; }
 .catlegend .catleg-pct { font-size: 12px; min-width: 34px; text-align: right; }
 
+/* the one number worth opening the app for on a Tuesday */
+.safespend { border-left: 3px solid var(--accent); }
+.safespend.over { border-left-color: var(--red); }
+.safespend .safeamt { font-family: var(--mono); font-size: 2rem; font-weight: 600; line-height: 1.15; margin: 2px 0 4px; }
+.safespend.over .safeamt { color: var(--red); }
+
 /* chores: a tick list you read every morning, so the row is one big target and the text carries
    who it belongs to rather than a separate column */
 .chorehead .chorecount { font-family: var(--display); font-size: 2rem; font-weight: 700; line-height: 1.1; }

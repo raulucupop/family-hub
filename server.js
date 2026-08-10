@@ -417,7 +417,13 @@ app.post('/api/family/invite/email', auth, adminOnly, async (req, res) => {
 app.patch('/api/family', auth, adminOnly, (req, res) => {
   const { name, currency } = req.body || {};
   if (name) db.prepare('UPDATE families SET name = ? WHERE id = ?').run(String(name).trim(), req.user.family_id);
-  if (currency) db.prepare('UPDATE families SET currency = ? WHERE id = ?').run(String(currency).trim().toUpperCase().slice(0, 4), req.user.family_id);
+  if (currency) {
+    // free text let anything through, including a typo that would then label every amount in the
+    // household — the books are kept in one of three currencies, so say so
+    const code = String(currency).trim().toUpperCase();
+    if (!CURRENCY_SYMBOL[code]) return res.status(400).json({ error: 'Currency must be RON, EUR or GBP' });
+    db.prepare('UPDATE families SET currency = ? WHERE id = ?').run(code, req.user.family_id);
+  }
   res.json({ ok: true });
 });
 
@@ -746,7 +752,7 @@ crud({
 });
 crud({
   route: 'properties', table: 'properties',
-  fields: ['name', 'address', 'insurance_expiry', 'insurance2_expiry', 'property_tax_due', 'mortgage_lender', 'mortgage_payment', 'mortgage_due_day', 'owner_id', 'rent_amount', 'rent_due_day', 'reading_day', 'reading_utilities', 'payment_link', 'managed', 'notes'],
+  fields: ['name', 'address', 'insurance_expiry', 'insurance2_expiry', 'property_tax_due', 'mortgage_lender', 'mortgage_payment', 'mortgage_due_day', 'owner_id', 'rent_amount', 'rent_due_day', 'reading_day', 'reading_utilities', 'payment_link', 'managed', 'lease_start', 'lease_end', 'notice_days', 'deposit_amount', 'deposit_returned_at', 'notes'],
   orderBy: 'name',
   validate: (b, req) => {
     if (!b.name) return 'Property name is required';
@@ -757,6 +763,15 @@ crud({
     if (num(b.owner_id) != null && !db.prepare('SELECT id FROM users WHERE id = ? AND family_id = ?').get(num(b.owner_id), req.user.family_id)) {
       return 'Owner must be a member of the family';
     }
+    for (const f of ['lease_start', 'lease_end', 'deposit_returned_at']) {
+      if (b[f] && !isDate(b[f])) return 'Lease dates must be YYYY-MM-DD';
+    }
+    // a lease that ends before it starts is a typo, and it would make the notice date nonsense
+    if (b.lease_start && b.lease_end && b.lease_end < b.lease_start) return 'The lease cannot end before it starts';
+    if (b.notice_days != null && b.notice_days !== '' && !(Number(b.notice_days) >= 0 && Number(b.notice_days) <= 365)) {
+      return 'Notice must be between 0 and 365 days';
+    }
+    if (b.deposit_amount != null && b.deposit_amount !== '' && !(Number(b.deposit_amount) >= 0)) return 'Deposit must be 0 or more';
     return null;
   },
 });
@@ -1502,8 +1517,12 @@ function propOwnerEmails(prop) {
   }
   return db.prepare("SELECT email FROM users WHERE family_id = ? AND role IN ('admin','adult') AND email IS NOT NULL").all(prop.family_id).map((u) => u.email);
 }
+// what an amount is suffixed with. RON keeps its code (nothing on screen shifts); EUR and GBP get
+// the symbol. The client's CURRENCIES map is the same three, kept in step by hand.
+const CURRENCY_SYMBOL = { RON: 'RON', EUR: '€', GBP: '£' };
+const curSymbol = (code) => CURRENCY_SYMBOL[code] || code || 'RON';
 function familyCurrency(fid) {
-  return db.prepare('SELECT currency FROM families WHERE id = ?').get(fid)?.currency || 'RON';
+  return curSymbol(db.prepare('SELECT currency FROM families WHERE id = ?').get(fid)?.currency);
 }
 // the app's public address for links inside emails and push notifications. APP_URL overrides
 // for local/dev use; production has one known domain, so that is the sane default.
@@ -1808,7 +1827,7 @@ app.get('/api/tenant/charges', auth, (req, res) => {
   const meters = db.prepare("SELECT id, utility, status, reading, provided_at, requested_at FROM meter_requests WHERE property_id = ? ORDER BY (status = 'done'), id DESC LIMIT 20").all(prop.id);
   const maintenance = db.prepare("SELECT id, title, note, photo, status, created_at, resolved_at, reopened_at, reopen_note FROM maintenance_requests WHERE property_id = ? ORDER BY (status = 'done'), id DESC LIMIT 20").all(prop.id);
   const fam = db.prepare('SELECT currency FROM families WHERE id = ?').get(prop.family_id);
-  res.json({ property: { name: prop.name, address: prop.address, payment_link: prop.payment_link, currency: fam?.currency || 'RON' }, charges, meters, maintenance });
+  res.json({ property: { name: prop.name, address: prop.address, payment_link: prop.payment_link, currency: curSymbol(fam?.currency) }, charges, meters, maintenance });
 });
 app.get('/api/tenant/charges/:cid/attachment', auth, (req, res) => {
   if (req.user.role !== 'tenant') return res.status(403).json({ error: 'Tenant accounts only' });
@@ -2119,7 +2138,8 @@ app.delete('/api/chores/:id', auth, canWrite, (req, res) => {
 function collectReminders(fid, horizon, scopeUserId = null) {
   const items = [];
   // priority: birthdays, cars & documents rank above property, above bills (tiebreaker on same date)
-  const PRIO = { birthday: 3, document: 3, rca: 3, casco: 3, vignette: 3, itp: 3, road_tax: 3, tenant_unpaid: 2, property_insurance: 2, property_tax: 2, bill: 1 };
+  // notice ranks with the documents: miss the window and the lease renews itself whether you meant it to or not
+  const PRIO = { birthday: 3, document: 3, rca: 3, casco: 3, vignette: 3, itp: 3, road_tax: 3, lease_notice: 3, lease_end: 2, tenant_unpaid: 2, property_insurance: 2, property_tax: 2, bill: 1 };
   const push = (kind, label, entity, date, id, owner, extra) => {
     if (!date) return;
     items.push({ kind, label, entity, date, ref_id: id, owner_id: owner ?? null, priority: PRIO[kind] || 1, ...extra });
@@ -2147,6 +2167,21 @@ function collectReminders(fid, horizon, scopeUserId = null) {
     ppush(p.id, 'insurance_expiry', 'property_insurance', 'Property insurance (PAD)', p.name, p.insurance_expiry, p.owner_id);
     ppush(p.id, 'insurance2_expiry', 'property_insurance', 'Additional home insurance', p.name, p.insurance2_expiry, p.owner_id);
     ppush(p.id, 'property_tax_due', 'property_tax', 'Property tax', p.name, p.property_tax_due, p.owner_id);
+    // The tenancy. The notice date is the one that actually bites: by the time the lease end is
+    // near it is already too late to give notice, so it gets its own reminder, ahead of the end.
+    if (p.lease_end) {
+      push('lease_end', 'Tenancy ends', p.name, p.lease_end, p.id, p.owner_id);
+      const days = Number(p.notice_days);
+      if (days > 0) {
+        const n = new Date(p.lease_end + 'T00:00:00Z');
+        n.setUTCDate(n.getUTCDate() - days);
+        const noticeDate = n.toISOString().slice(0, 10);
+        // only worth raising while it is still ahead of us; past that, the lease-end row says it all
+        if (noticeDate >= new Date().toISOString().slice(0, 10)) {
+          push('lease_notice', `Give notice (${days} days)`, p.name, noticeDate, p.id, p.owner_id);
+        }
+      }
+    }
   }
   for (const d of db.prepare(`${DOC_SELECT} WHERE d.family_id = ? AND d.expiry_date IS NOT NULL`).all(fid)) {
     push('document', `Act: ${d.name}`, d.person_name || d.vehicle_name || d.property_name || 'Family', d.expiry_date, d.id, d.user_id);
@@ -2600,7 +2635,7 @@ async function runEmailReminders() {
   const daysTo = (d) => Math.ceil((new Date(d) - new Date(new Date().toISOString().slice(0, 10))) / 86400000);
   let sent = 0, errors = 0;
   for (const fam of db.prepare('SELECT * FROM families').all()) {
-    const cur = fam.currency || 'RON';
+    const cur = curSymbol(fam.currency);
     // --- household digest: bills ≤ 7 days, other deadlines at 30/14/7/3 ---
     const due = [];
     const keys = [];
@@ -2665,7 +2700,7 @@ async function runMonthlyReports() {
     if (!claimKeys([key]).length) continue;
     const to = db.prepare("SELECT email FROM users WHERE family_id = ? AND role IN ('admin','adult') AND email IS NOT NULL").all(fam.id).map((u) => u.email);
     if (!to.length) { releaseKeys([key]); continue; }
-    const cur = fam.currency || 'RON';
+    const cur = curSymbol(fam.currency);
     const m = (n) => `${Number(n || 0).toFixed(2)} ${cur}`;
     const income = db.prepare("SELECT COALESCE(SUM(amount),0) t FROM incomes WHERE family_id = ? AND substr(date,1,7) = ?").get(fam.id, prev).t;
     const spent = db.prepare("SELECT COALESCE(SUM(amount),0) t FROM expenses WHERE family_id = ? AND substr(date,1,7) = ?").get(fam.id, prev).t;
