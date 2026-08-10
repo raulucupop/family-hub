@@ -608,6 +608,31 @@ app.get('/api/search', auth, (req, res) => {
     SELECT id, title, list, note FROM list_items WHERE family_id = ? AND (lower(title) LIKE ? OR lower(COALESCE(note,'')) LIKE ?) LIMIT 10
   `).all(fid, like, like), (r) => ({ id: r.id, title: r.title, sub: r.list }));
 
+  // Everything below was added to the app after search was written and never wired into it, so the
+  // newest features were the ones you could not find: a chore, a savings goal, a charge raised on a
+  // tenant, or the maintenance ticket someone reported.
+  add('chore', 'chores', db.prepare(`
+    SELECT c.id, c.title, c.cadence, c.note, u.name AS who FROM chores c LEFT JOIN users u ON u.id = c.user_id
+    WHERE c.family_id = ? AND c.active = 1 AND (lower(c.title) LIKE ? OR lower(COALESCE(c.note,'')) LIKE ?) LIMIT 10
+  `).all(fid, like, like), (r) => ({ id: r.id, title: r.title, sub: [r.cadence, r.who].filter(Boolean).join(' · ') }));
+
+  add('goal', 'money', db.prepare(`
+    SELECT g.id, g.title, g.target, u.name AS who FROM savings_goals g LEFT JOIN users u ON u.id = g.user_id
+    WHERE g.family_id = ? AND lower(g.title) LIKE ? LIMIT 10
+  `).all(fid, like), (r) => ({ id: r.id, title: r.title, sub: r.who || '', amount: r.target }));
+
+  add('charge', 'tenants', db.prepare(`
+    SELECT t.id, t.title, t.type, t.amount, t.due_date, t.status, p.name AS prop FROM tenant_charges t
+    JOIN properties p ON p.id = t.property_id
+    WHERE t.family_id = ? AND (lower(t.title) LIKE ? OR lower(COALESCE(t.note,'')) LIKE ?) ORDER BY t.due_date DESC LIMIT 10
+  `).all(fid, like, like), (r) => ({ id: r.id, title: r.title, sub: [r.prop, r.status].filter(Boolean).join(' · '), date: r.due_date, amount: r.amount }));
+
+  add('maintenance', 'tenants', db.prepare(`
+    SELECT m.id, m.title, m.note, m.status, m.created_at, p.name AS prop FROM maintenance_requests m
+    JOIN properties p ON p.id = m.property_id
+    WHERE m.family_id = ? AND (lower(m.title) LIKE ? OR lower(COALESCE(m.note,'')) LIKE ?) ORDER BY m.id DESC LIMIT 10
+  `).all(fid, like, like), (r) => ({ id: r.id, title: r.title, sub: [r.prop, r.status].filter(Boolean).join(' · ') }));
+
   // Deadlines are date FIELDS, not records — "rovinieta" used to find nothing because there is
   // no row named rovinieta. Keyword-match the field instead and answer with the stored date.
   // Titles are exactly the collectReminders labels, so the client's RO dictionary translates them.

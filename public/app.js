@@ -175,6 +175,7 @@ const RO = {
   'Daily': 'Zilnic', 'Weekly': 'Săptămânal',
   // safe to spend + tenancy contract
   'Safe to spend today': 'Poți cheltui azi',
+  'Charge': 'Taxă', 'Repair': 'Reparație', 'Deadline': 'Termen',
   'Contract & deposit': 'Contract și garanție', 'Lease start': 'Început contract', 'Lease end': 'Sfârșit contract',
   'Notice (days)': 'Preaviz (zile)', 'Notice by': 'Preaviz până la', 'Tenancy ends': 'Contractul expiră',
   'Deposit': 'Garanție', 'held': 'reținută', 'returned': 'returnată',
@@ -4048,7 +4049,7 @@ async function viewImport(el) {
 
 /* ---------- search ---------- */
 let SEARCH_Q = '';
-const SEARCH_KINDS = { expense: 'Expense', income: 'Income', bill: 'Bill', document: 'Document', credit: 'Credit', vehicle: 'Vehicle', property: 'Property', list: 'List' };
+const SEARCH_KINDS = { expense: 'Expense', income: 'Income', bill: 'Bill', document: 'Document', credit: 'Credit', vehicle: 'Vehicle', property: 'Property', list: 'List', chore: 'Chore', goal: 'Goal', charge: 'Charge', maintenance: 'Repair', deadline: 'Deadline' };
 async function viewSearch(el) {
   el.innerHTML = `<div class="pagehead"><div><h1>Search</h1><p>Across expenses, income, bills, acte, credits, cars, properties and lists.</p></div></div>
     <div class="card">
