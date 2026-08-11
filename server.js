@@ -1072,6 +1072,62 @@ app.get('/api/credits/:id/advance', auth, (req, res) => {
   const months = Math.min(Math.max(Math.round(Number(req.query.months) || 1), 1), 600);
   res.json(advanceCost(credit, db.prepare('SELECT * FROM credit_payments WHERE credit_id = ?').all(credit.id), months));
 });
+/* An advance payment is money out of the account, exactly like the monthly instalment that
+   autoLogCreditExpenses already writes. It was only ever recorded against the loan, so the expense
+   list, the month's total, the projection and "safe to spend" all behaved as if it had never
+   happened — the balance fell but the spending never showed it.
+   Same shape as the instalment: category Credit, the loan's property link carried through so a
+   mortgage overpayment still lands in that property's cost history, and mirrored the same way.
+   The note follows the existing convention (`Rent 2026-08`, `Credit: Casa 2026-08`) and is stored
+   English, since these are data rather than interface text and the overlay never translates them. */
+/* Payments recorded before this existed have no expense behind them, so the money they took out is
+   still missing from every total. Backfill them once, on boot.
+   The one thing to be careful of: someone who noticed the gap may have typed the expense in by
+   hand. Writing a second one would double-count it, and a duplicate in your spending is worse than
+   the omission we are fixing — so a payment that already has a Credit expense on the same day for
+   the same amount is left alone and simply linked to it. */
+function backfillCreditPaymentExpenses() {
+  const orphans = db.prepare('SELECT * FROM credit_payments WHERE expense_id IS NULL').all();
+  if (!orphans.length) return;
+  let written = 0, adopted = 0;
+  for (const p of orphans) {
+    const credit = db.prepare('SELECT * FROM credits WHERE id = ?').get(p.credit_id);
+    if (!credit) continue;
+    const existing = db.prepare(`
+      SELECT id FROM expenses WHERE family_id = ? AND category = 'Credit' AND date = ?
+        AND ABS(amount - ?) < 0.005 LIMIT 1
+    `).get(p.family_id, p.date, Number(p.amount));
+    if (existing) {
+      db.prepare('UPDATE credit_payments SET expense_id = ? WHERE id = ?').run(existing.id, p.id);
+      adopted++;
+    } else {
+      db.transaction(() => logCreditPaymentExpense(credit, p))();
+      written++;
+    }
+  }
+  console.log(`credit advance payments: ${written} expense(s) written, ${adopted} already logged by hand`);
+}
+function logCreditPaymentExpense(credit, payment) {
+  const label = payment.months
+    ? `Credit: ${credit.name} — ${payment.months} ${payment.months === 1 ? 'month' : 'months'} in advance`
+    : `Credit: ${credit.name} — advance payment`;
+  const amount = Number(payment.amount);
+  const b = { category: 'Credit', amount, note: label, date: payment.date, property_id: credit.property_id, vehicle_id: null };
+  const info = db.prepare('INSERT INTO expenses (family_id, user_id, category, amount, note, date, property_id) VALUES (?,?,?,?,?,?,?)')
+    .run(credit.family_id, payment.paid_by, 'Credit', amount, label, payment.date, credit.property_id);
+  mirrorExpense(credit.family_id, info.lastInsertRowid, b, payment.paid_by);
+  db.prepare('UPDATE credit_payments SET expense_id = ? WHERE id = ?').run(info.lastInsertRowid, payment.id);
+  return info.lastInsertRowid;
+}
+// removing the payment removes the expense it wrote, so undoing a mistake does not leave the money
+// counted as spent for ever
+function unlogCreditPaymentExpense(payment) {
+  if (!payment?.expense_id) return;
+  for (const t of ['property_records', 'vehicle_records']) {
+    db.prepare(`DELETE FROM ${t} WHERE expense_id = ? AND family_id = ?`).run(payment.expense_id, payment.family_id);
+  }
+  db.prepare('DELETE FROM expenses WHERE id = ? AND family_id = ?').run(payment.expense_id, payment.family_id);
+}
 app.post('/api/credits/:id/payments', auth, canWrite, (req, res) => {
   const credit = db.prepare('SELECT * FROM credits WHERE id = ? AND family_id = ?').get(req.params.id, req.user.family_id);
   if (!credit) return res.status(404).json({ error: 'Not found' });
@@ -1085,13 +1141,22 @@ app.post('/api/credits/:id/payments', auth, canWrite, (req, res) => {
     months = Math.round(Number(b.months));
     if (!(months >= 1 && months <= 600)) return res.status(400).json({ error: 'Months must be between 1 and 600' });
   }
-  db.prepare('INSERT INTO credit_payments (credit_id, family_id, amount, date, paid_by, months) VALUES (?,?,?,?,?,?)')
-    .run(credit.id, req.user.family_id, Number(b.amount), b.date, req.user.id, months);
-  res.json({ ok: true });
+  const out = db.transaction(() => {
+    const info = db.prepare('INSERT INTO credit_payments (credit_id, family_id, amount, date, paid_by, months) VALUES (?,?,?,?,?,?)')
+      .run(credit.id, req.user.family_id, Number(b.amount), b.date, req.user.id, months);
+    const payment = db.prepare('SELECT * FROM credit_payments WHERE id = ?').get(info.lastInsertRowid);
+    return { id: payment.id, expense_id: logCreditPaymentExpense(credit, payment) };
+  })();
+  res.json({ ok: true, ...out });
 });
 app.delete('/api/credits/:id/payments/:pid', auth, canWrite, (req, res) => {
-  db.prepare('DELETE FROM credit_payments WHERE id = ? AND credit_id = ? AND family_id = ?')
-    .run(req.params.pid, req.params.id, req.user.family_id);
+  const payment = db.prepare('SELECT * FROM credit_payments WHERE id = ? AND credit_id = ? AND family_id = ?')
+    .get(req.params.pid, req.params.id, req.user.family_id);
+  if (!payment) return res.json({ ok: true }); // already gone; deleting twice is not an error
+  db.transaction(() => {
+    unlogCreditPaymentExpense(payment);
+    db.prepare('DELETE FROM credit_payments WHERE id = ?').run(payment.id);
+  })();
   res.json({ ok: true });
 });
 
@@ -3031,6 +3096,24 @@ app.get('/api/savings', auth, (req, res) => {
   `).all(fid);
   res.json({ balance: Math.round(balance * 100) / 100, byUser, goals, entries: rows });
 });
+/* "Finalizat" is a claim about the money, and once the money goes the claim stops being true.
+   A goal marked done whose balance has since fallen under its target was still sitting there struck
+   through, as if it were still met.
+   The rule runs one way only: falling below the target reopens a goal, but nothing here ever marks
+   one done — that stays a decision you make. So a goal you finished and then spent is reopened once
+   and you close it again, which is a click; the alternative is the app quietly asserting you have
+   money you no longer have. Deleting a deposit lowers the balance too, so it is checked there. */
+function reopenGoalIfShort(goalId, fid) {
+  const id = num(goalId);
+  if (id == null) return;
+  const g = db.prepare('SELECT * FROM savings_goals WHERE id = ? AND family_id = ?').get(id, fid);
+  if (!g || !g.done) return;
+  const saved = db.prepare(`
+    SELECT COALESCE(SUM(CASE WHEN kind = 'deposit' THEN amount ELSE -amount END), 0) AS t
+    FROM savings WHERE goal_id = ?
+  `).get(id).t;
+  if (saved < Number(g.target)) db.prepare('UPDATE savings_goals SET done = 0 WHERE id = ?').run(id);
+}
 app.post('/api/savings', auth, canWrite, (req, res) => {
   const b = req.body || {};
   if (!['deposit', 'withdrawal'].includes(b.kind)) return res.status(400).json({ error: 'Kind must be deposit or withdrawal' });
@@ -3041,10 +3124,13 @@ app.post('/api/savings', auth, canWrite, (req, res) => {
   }
   const info = db.prepare('INSERT INTO savings (family_id, user_id, kind, amount, date, note, goal_id) VALUES (?,?,?,?,?,?,?)')
     .run(req.user.family_id, req.user.id, b.kind, Number(b.amount), b.date, str(b.note), num(b.goal_id));
+  reopenGoalIfShort(b.goal_id, req.user.family_id);
   res.json(db.prepare('SELECT * FROM savings WHERE id = ?').get(info.lastInsertRowid));
 });
 app.delete('/api/savings/:id', auth, canWrite, (req, res) => {
+  const row = db.prepare('SELECT * FROM savings WHERE id = ? AND family_id = ?').get(req.params.id, req.user.family_id);
   db.prepare('DELETE FROM savings WHERE id = ? AND family_id = ?').run(req.params.id, req.user.family_id);
+  if (row) reopenGoalIfShort(row.goal_id, req.user.family_id);
   res.json({ ok: true });
 });
 app.post('/api/savings-goals', auth, canWrite, (req, res) => {
@@ -3126,5 +3212,6 @@ function backfillCreditPropertyLinks() {
   if (fixed) console.log(`backfilled ${fixed} credit payment(s) into property cost history`);
 }
 try { backfillCreditPropertyLinks(); } catch (err) { console.error('credit backfill:', err.message); }
+try { backfillCreditPaymentExpenses(); } catch (err) { console.error('advance-payment backfill:', err.message); }
 
 app.listen(PORT, () => console.log(`Family Hub running on http://localhost:${PORT}`));

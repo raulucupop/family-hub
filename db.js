@@ -134,7 +134,8 @@ CREATE TABLE IF NOT EXISTS credit_payments (
   amount REAL NOT NULL,       -- what the bank actually charged
   date TEXT NOT NULL,
   paid_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
-  months INTEGER              -- instalments this payment bought, as the bank counted them
+  months INTEGER,             -- instalments this payment bought, as the bank counted them
+  expense_id INTEGER REFERENCES expenses(id) ON DELETE SET NULL -- the expense row this payment logged
 );
 CREATE INDEX IF NOT EXISTS idx_credit_payments_credit ON credit_payments(credit_id);
 
@@ -540,6 +541,10 @@ if (!db.prepare('PRAGMA table_info(list_items)').all().some((c) => c.name === 's
 // schedule; recording that alongside the sum keeps the history honest about what was bought
 const cpCols = db.prepare('PRAGMA table_info(credit_payments)').all().map((c) => c.name);
 if (!cpCols.includes('months')) db.exec('ALTER TABLE credit_payments ADD COLUMN months INTEGER');
+// An advance payment is money that left the account, so it belongs in the expense list like the
+// monthly instalment already does. Holding the id lets the expense be removed again if the payment
+// is deleted, and stops a second one being written for a payment that already has one.
+if (!cpCols.includes('expense_id')) db.exec('ALTER TABLE credit_payments ADD COLUMN expense_id INTEGER REFERENCES expenses(id) ON DELETE SET NULL');
 
 const maintCols = db.prepare('PRAGMA table_info(maintenance_requests)').all().map((c) => c.name);
 if (!maintCols.includes('reopened_at')) db.exec('ALTER TABLE maintenance_requests ADD COLUMN reopened_at TEXT');
