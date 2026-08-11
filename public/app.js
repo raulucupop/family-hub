@@ -192,9 +192,6 @@ const RO = {
   'Add a chore below and it will show up every day.': 'Adaugă o treabă mai jos și va apărea în fiecare zi.',
   'Monday': 'Luni', 'Tuesday': 'Marți', 'Wednesday': 'Miercuri', 'Thursday': 'Joi',
   'Friday': 'Vineri', 'Saturday': 'Sâmbătă', 'Sunday': 'Duminică',
-  'Finance Score': 'Scor financiar', 'Finance quality': 'Sănătatea finanțelor',
-  'Excellent': 'Excelent', 'Good': 'Bun', 'Fair': 'Acceptabil', 'Needs work': 'De îmbunătățit',
-  'Money kept': 'Bani păstrați', 'Within budget': 'În buget', 'Paid on time': 'Plătit la timp',
   'Income minus spending, month by month. Below the line means you spent more than came in.':
     'Venituri minus cheltuieli, lună de lună. Sub linie înseamnă că ai cheltuit mai mult decât ai încasat.',
   'the faint mark is the same month in': 'linia estompată e aceeași lună din',
@@ -1562,7 +1559,6 @@ async function viewDashboard(el) {
     </section>
     ${safeToSpendHtml(stats, DASH_MONTHS, upcoming)}
     ${dashInsight(stats, suggest, DASH_MONTHS, upcoming)}
-    ${financeScoreHtml(financeScore(stats, budgets, spentMap, reminders))}
     ${rentHtml(rent)}
     <section class="grid2" style="margin-top:18px">
       <div class="card"><h3>${tr('Spending by category')} · ${esc(tr(periodLabel))}</h3>
@@ -1663,47 +1659,6 @@ function rentHtml(rent) {
           : `<span class="badge unpaid">${tr('to pay')}</span>`}</span>
     </div>`).join('')}
     <p class="muted" style="margin:6px 0 0"><a href="#properties">${tr('Open Properties')} →</a></p></section>`;
-}
-/* A single "how are we doing" figure — but a made-up one is worse than none, so it is the average
-   of parts that are each computed from real rows, and the parts are listed underneath so the number
-   can be argued with. A component with no data to stand on (no budgets set, no income recorded)
-   drops out of the average rather than scoring zero and quietly dragging the total down. */
-function financeScore(stats, budgets, spentMap, reminders) {
-  const parts = [];
-  const income = Number(stats.income) || 0;
-  const net = income - (Number(stats.spent) || 0);
-
-  if (income > 0) {
-    // 20% of income kept is the usual "healthy" mark; below zero scores zero, not negative
-    const rate = net / income;
-    parts.push({ key: 'Money kept', pct: Math.max(0, Math.min(100, Math.round((rate / 0.2) * 100))) });
-  }
-  const set = (budgets?.budgets || []).filter((b) => Number(b.amount) > 0);
-  if (set.length) {
-    const within = set.filter((b) => (spentMap[b.category] || 0) <= Number(b.amount)).length;
-    parts.push({ key: 'Within budget', pct: Math.round((within / set.length) * 100) });
-  }
-  // anything already past its date and still unpaid; each one costs a fifth of this component
-  const late = (reminders || []).filter((r) => !r.auto_pay && Number(r.days_left) < 0).length;
-  const dated = (reminders || []).filter((r) => Number.isFinite(Number(r.days_left))).length;
-  if (dated) parts.push({ key: 'Paid on time', pct: Math.max(0, 100 - late * 20) });
-
-  if (!parts.length) return null;
-  const score = Math.round(parts.reduce((s, p) => s + p.pct, 0) / parts.length);
-  const label = score >= 85 ? 'Excellent' : score >= 70 ? 'Good' : score >= 50 ? 'Fair' : 'Needs work';
-  return { score, label, parts };
-}
-function financeScoreHtml(fs) {
-  if (!fs) return '';
-  const tone = fs.score >= 85 ? 'good' : fs.score >= 50 ? 'warn' : 'bad';
-  return `<section class="card scorecard" style="margin-top:18px">
-    <h3 style="margin-top:0">${tr('Finance Score')}</h3>
-    <div class="muted" style="font-size:12.5px">${tr('Finance quality')}</div>
-    <div class="row" style="justify-content:space-between;align-items:baseline;gap:10px">
-      <div class="scoreword">${tr(fs.label)}</div><div class="scorenum">${fs.score}%</div></div>
-    <div class="scorebar ${tone}"><i style="width:${fs.score}%"></i></div>
-    <ul class="scoreparts">${fs.parts.map((p) => `<li><span>${tr(p.key)}</span><b>${p.pct}%</b></li>`).join('')}</ul>
-  </section>`;
 }
 /* The share of what came in that you still have. A leftover of 5.000 means nothing on its own —
    it's excellent on an income of 6.000 and poor on 20.000 — and unlike the absolute figure it stays
