@@ -189,6 +189,14 @@ const RO = {
   'See all': 'Vezi toate',
   'Everyone': 'Toată lumea', 'Nobody in particular': 'Fără responsabil', 'Anyone': 'Oricine', 'anyone': 'oricine',
   'done by': 'făcut de', 'Feed the dogs': 'Dat de mâncare la câini',
+  // the to-do list: jobs with no cadence, done once and then done
+  'To-do': 'De făcut', 'Still to do': 'Rămase de făcut', 'Ticked off': 'Bifate',
+  'Nothing on the list': 'Nimic pe listă',
+  'Add a one-off job below — it stays put until someone ticks it.': 'Adaugă mai jos un lucru de făcut o singură dată — rămâne acolo până îl bifează cineva.',
+  'New task': 'Sarcină nouă', 'Task': 'Sarcină', 'Add task': 'Adaugă sarcina',
+  'Change the front door lock': 'Schimbat yala de la intrare',
+  'One-off jobs. Ticking one is the end of it — nothing comes back tomorrow.': 'Lucruri de făcut o singură dată. Când bifezi unul, s-a terminat — nu revine mâine.',
+  'By when': 'Până când', 'by': 'până', 'no deadline': 'fără termen',
   'Add a chore below and it will show up every day.': 'Adaugă o treabă mai jos și va apărea în fiecare zi.',
   'Monday': 'Luni', 'Tuesday': 'Marți', 'Wednesday': 'Miercuri', 'Thursday': 'Joi',
   'Friday': 'Vineri', 'Saturday': 'Sâmbătă', 'Sunday': 'Duminică',
@@ -289,7 +297,15 @@ const RO = {
   'Debt-free': 'Fără datorii din', 'loan': 'credit', 'loans': 'credite', 'Loans': 'Credite', 'Credit': 'Credit',
   'instalments + commission': 'rate + comision', 'Interest': 'Dobândă', 'Total cost of borrowing': 'Costul total al împrumutului',
   'paid so far': 'plătită până acum', 'still to pay': 'rămasă de plătit',
-  'Nothing outstanding — add a loan under Credits and it is summarised here.': 'Nimic de plată — adaugă un credit la Credite și apare rezumat aici.',
+  'Nothing outstanding — add a loan under Credits, or record money you lent below.': 'Nimic de plată — adaugă un credit la Credite, sau notează mai jos banii pe care i-ai împrumutat altcuiva.',
+  // money lent to people — the other direction of debt
+  'Money lent': 'Bani împrumutați', 'Still out with people': 'Încă la alții', 'Settled': 'Închis',
+  'is past its date': 'a trecut de termen', 'are past their date': 'au trecut de termen',
+  'lent': 'dat', 'back': 'înapoi', 'due back': 'de returnat', 'no date agreed': 'fără termen stabilit',
+  'Record repayment': 'Notează o restituire', 'Repayment recorded': 'Restituire notată', 'Loan recorded': 'Împrumut notat',
+  'Nobody owes you anything': 'Nu-ți datorează nimeni nimic',
+  'Record money you lend out and what comes back is tracked here.': 'Notează banii pe care îi dai cu împrumut, iar ce se întoarce se ține minte aici.',
+  'Lend money': 'Împrumută bani', 'Who has it': 'La cine sunt', 'Due back': 'De returnat până',
   // year in review
   'Year': 'An', 'Monthly average': 'Media lunară',
   'months with spending': 'luni cu cheltuieli', 'month with spending': 'lună cu cheltuieli',
@@ -702,9 +718,9 @@ function quickSearch() {
   };
   const go = (r) => {
     if (!r) return;
-    if (r.kind === 'expense' || r.kind === 'income' || r.kind === 'credit') {
-      PENDING_MONEY_TAB = r.kind === 'expense' ? 'expenses' : r.kind === 'income' ? 'income' : 'credits';
-    }
+    // a money hit has to say which of the seven tabs it lives on, or "View" lands on the wrong one
+    const MONEY_TAB = { expense: 'expenses', income: 'income', credit: 'credits', loan: 'debt', goal: 'savings' };
+    if (MONEY_TAB[r.kind]) PENDING_MONEY_TAB = MONEY_TAB[r.kind];
     if (r.kind === 'expense') PENDING_EXPENSE_FILTER = { q: input.value.trim(), month: 'all', who: 'all', cat: 'all' };
     closeModal();
     if (location.hash === `#${r.tab}`) render(); else location.hash = `#${r.tab}`;
@@ -1984,10 +2000,17 @@ async function viewMoney(el, tab) {
    total_interest (what it costs given the overpayments actually made), so their difference is
    exactly the interest those overpayments have saved. That was already computed and never shown. */
 async function moneyDebt(body) {
-  const credits = await api('/credits');
+  const [credits, loans, members] = await Promise.all([api('/credits'), api('/loans'), api('/family/members')]);
   const live = credits.filter((c) => Number(c.months_left) > 0 || Number(c.balance) > 0.005);
+  if (!live.length && !loans.length) {
+    body.innerHTML = `<div class="card empty"><b>${tr('No debt')}</b>${tr('Nothing outstanding — add a loan under Credits, or record money you lent below.')}</div>
+      <div id="lentwrap"></div>`;
+    renderLent(body.querySelector('#lentwrap'), loans, members, () => moneyDebt(body));
+    return;
+  }
   if (!live.length) {
-    body.innerHTML = `<div class="card empty"><b>${tr('No debt')}</b>${tr('Nothing outstanding — add a loan under Credits and it is summarised here.')}</div>`;
+    body.innerHTML = '<div id="lentwrap"></div>';
+    renderLent(body.querySelector('#lentwrap'), loans, members, () => moneyDebt(body));
     return;
   }
   const owed = live.reduce((s, c) => s + Number(c.balance || 0), 0);
@@ -2037,7 +2060,95 @@ async function moneyDebt(body) {
         <td class="right amount" data-label="${tr('Monthly total')}">${money(Number(c.monthly_payment || 0) + (Number(c.commission) || 0))}</td>
         <td class="right" data-label="${tr('mo left')}">${Math.round(Number(c.months_left) || 0)}</td></tr>`).join('')}
       </tbody></table>
-    </section>`;
+    </section>
+    <div id="lentwrap"></div>`;
+  renderLent(body.querySelector('#lentwrap'), loans, members, () => moneyDebt(body));
+}
+
+/* ---------- the other direction: money lent to people ----------
+   A bank loan has a schedule; lending your brother 2.000 lei has a name and whatever comes back. The
+   outstanding figure is recomputed from the repayments on every render rather than kept anywhere, so
+   it cannot drift from the rows underneath it. */
+function renderLent(el, loans, members, refresh) {
+  if (!el) return;
+  const open = loans.filter((l) => !l.settled);
+  const outstanding = open.reduce((s, l) => s + Number(l.balance || 0), 0);
+  const iso = new Date().toISOString().slice(0, 10);
+  const overdue = open.filter((l) => l.due_date && l.due_date < iso);
+
+  el.innerHTML = `<section class="card" style="margin-top:18px">
+    <div class="row" style="justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap">
+      <h3 style="margin:0">${tr('Money lent')}</h3>
+      ${open.length ? `<div style="text-align:right"><div class="muted" style="font-size:12.5px">${tr('Still out with people')}</div>
+        <div class="amount"><b>${money(outstanding)}</b></div></div>` : ''}
+    </div>
+    ${overdue.length ? `<p class="badge warn" style="margin:10px 0 0">${overdue.length} ${tr(overdue.length === 1 ? 'is past its date' : 'are past their date')}</p>` : ''}
+
+    ${loans.length ? `<ul class="chorelist" style="margin-top:12px">${loans.map((l) => {
+    const pct = Number(l.amount) > 0 ? Math.min(100, (Number(l.repaid) / Number(l.amount)) * 100) : 0;
+    const late = !l.settled && l.due_date && l.due_date < iso;
+    return `<li class="chorerow${l.settled ? ' is-done' : ''}" style="display:block">
+      <div class="row" style="justify-content:space-between;gap:10px;align-items:baseline">
+        <span class="choretitle">${esc(l.person)}</span>
+        <span class="amount"${late ? ' style="color:var(--red)"' : ''}>${l.settled ? tr('Settled') : money(l.balance)}</span>
+      </div>
+      <div class="bar" style="margin-top:8px"><i style="width:${pct}%"></i></div>
+      <div class="row" style="justify-content:space-between;margin-top:4px;gap:8px;flex-wrap:wrap">
+        <span class="muted" style="font-size:12.5px">${[
+      `${tr('lent')} ${money(l.amount)}`,
+      Number(l.repaid) > 0 ? `${tr('back')} ${money(l.repaid)}` : null,
+      l.due_date ? `${tr('due back')} ${fdate(l.due_date)}` : tr('no date agreed'),
+      l.user_name ? esc(l.user_name) : null,
+      l.note ? esc(l.note) : null,
+    ].filter(Boolean).join(' · ')}</span>
+        ${canWrite() ? `<span class="row" style="gap:6px">
+          ${l.settled ? '' : `<button class="btn ghost small" data-lenpay="${l.id}">${tr('Record repayment')}</button>`}
+          <button class="btn danger small" data-lendel="${l.id}" aria-label="${tr('Delete')}">✕</button></span>` : ''}
+      </div>
+      <form class="formgrid" data-lenform="${l.id}" hidden style="margin-top:10px">
+        <div><label>${tr('Amount')}</label><input name="amount" type="number" step="0.01" min="0.01" max="${l.balance}" required></div>
+        <div><label>${tr('Date')}</label><input name="date" type="date" value="${iso}" required></div>
+        <button class="btn small">${tr('Save')}</button>
+      </form>
+    </li>`;
+  }).join('')}</ul>`
+    : `<div class="empty" style="margin-top:12px"><b>${tr('Nobody owes you anything')}</b>${tr('Record money you lend out and what comes back is tracked here.')}</div>`}
+
+    ${canWrite() ? `<div class="subform">
+      <h4>${tr('Lend money')}</h4>
+      <form id="lentform" class="formgrid">
+        <div><label>${tr('Who has it')}</label><input name="person" placeholder="Andrei" required></div>
+        <div><label>${tr('Amount')}</label><input name="amount" type="number" step="0.01" min="0.01" required></div>
+        <div><label>${tr('Date')}</label><input name="date" type="date" value="${iso}" required></div>
+        <div><label>${tr('Due back')} <span class="muted">${tr('optional')}</span></label><input name="due_date" type="date"></div>
+        <div><label>${tr('Person')}</label><select name="user_id"><option value="">${tr('Anyone')}</option>
+          ${members.map((m) => `<option value="${m.id}">${esc(m.name)}</option>`).join('')}</select></div>
+        <div><label>${tr('Note')} <span class="muted">${tr('optional')}</span></label><input name="note"></div>
+        <button class="btn small">${tr('Save')}</button>
+      </form></div>` : ''}
+  </section>`;
+
+  el.querySelectorAll('[data-lenpay]').forEach((b) => (b.onclick = () => {
+    const f = el.querySelector(`[data-lenform="${b.dataset.lenpay}"]`);
+    f.hidden = !f.hidden;
+    if (!f.hidden) f.querySelector('input')?.focus();
+  }));
+  el.querySelectorAll('[data-lenform]').forEach((f) => f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      await api(`/loans/${f.dataset.lenform}/payments`, { method: 'POST', body: Object.fromEntries(new FormData(f)) });
+      toast(tr('Repayment recorded'), 'success'); refresh();
+    } catch (err) { toast(err.message, 'error'); }
+  }));
+  el.querySelectorAll('[data-lendel]').forEach((b) => (b.onclick = () => {
+    const { hide, restore } = rowHide(b);
+    undoableDelete({ hide, restore, commit: () => api('/loans/' + b.dataset.lendel, { method: 'DELETE' }).then(refresh) });
+  }));
+  el.querySelector('#lentform')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try { await api('/loans', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) }); toast(tr('Loan recorded'), 'success'); refresh(); }
+    catch (err) { toast(err.message, 'error'); }
+  });
 }
 /* ---------- year in review ----------
    The dashboard answers "how is this month going"; this answers "how was the year". Same stats
@@ -3713,9 +3824,13 @@ function guestList(rows) {
 const WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 let CHORE_WHO = 'all';
 async function viewChores(el, tab = 'daily') {
-  const [chores, members] = await Promise.all([api('/chores'), api('/family/members')]);
-  const mine = chores.filter((c) => CHORE_WHO === 'all' || String(c.user_id ?? '') === String(CHORE_WHO));
-  const rows = mine.filter((c) => c.cadence === tab);
+  // A chore and a task differ by whether they come back, so the third tab reads a different table —
+  // not a cadence of "never", which would have to invent a period that means nothing.
+  const isTodo = tab === 'todo';
+  const [chores, todos, members] = await Promise.all([api('/chores'), api('/todos'), api('/family/members')]);
+  const byWho = (r) => CHORE_WHO === 'all' || String(r.user_id ?? '') === String(CHORE_WHO);
+  const mine = chores.filter(byWho);
+  const rows = isTodo ? todos.filter(byWho) : mine.filter((c) => c.cadence === tab);
   const done = rows.filter((c) => c.done).length;
   const pct = rows.length ? Math.round((done / rows.length) * 100) : 0;
   // "today" is the daily list plus whatever weekly jobs are pinned to this weekday (or to no day)
@@ -3723,19 +3838,21 @@ async function viewChores(el, tab = 'daily') {
   const todayOpen = mine.filter((c) => !c.done
     && (c.cadence === 'daily' || c.weekday == null || Number(c.weekday) === todayDow)).length;
 
-  el.innerHTML = `<div class="pagehead"><div><h1>Chores</h1><p>Recurring jobs around the house. Ticking one marks it done for today — it comes back tomorrow.</p></div></div>
+  el.innerHTML = `<div class="pagehead"><div><h1>Chores</h1><p>${tr(isTodo
+    ? 'One-off jobs. Ticking one is the end of it — nothing comes back tomorrow.'
+    : 'Recurring jobs around the house. Ticking one marks it done for today — it comes back tomorrow.')}</p></div></div>
     <section class="card chorehead">
       <div class="row" style="justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap">
-        <div><div class="muted" style="font-size:12.5px">${tr('Left for today')}</div>
-          <div class="chorecount">${todayOpen}</div></div>
-        <div style="text-align:right"><div class="muted" style="font-size:12.5px">${tr(tab === 'weekly' ? 'Done this week' : 'Done today')}</div>
+        <div><div class="muted" style="font-size:12.5px">${tr(isTodo ? 'Still to do' : 'Left for today')}</div>
+          <div class="chorecount">${isTodo ? rows.length - done : todayOpen}</div></div>
+        <div style="text-align:right"><div class="muted" style="font-size:12.5px">${tr(isTodo ? 'Ticked off' : tab === 'weekly' ? 'Done this week' : 'Done today')}</div>
           <div class="amount"><b>${done}/${rows.length}</b></div></div>
       </div>
       <div class="scorebar" style="margin-top:10px"><i style="width:${pct}%"></i></div>
     </section>
 
-    <div class="tabs" style="max-width:420px">
-      ${[['daily', 'Daily'], ['weekly', 'Weekly']].map(([k, l]) =>
+    <div class="tabs" style="max-width:520px">
+      ${[['daily', 'Daily'], ['weekly', 'Weekly'], ['todo', 'To-do']].map(([k, l]) =>
         `<button data-t="${k}" class="${k === tab ? 'active' : ''}">${tr(l)}</button>`).join('')}
     </div>
     <div class="card">
@@ -3748,22 +3865,38 @@ async function viewChores(el, tab = 'daily') {
       </div>
       ${rows.length ? `<ul class="chorelist">${rows.map((c) => `<li class="chorerow${c.done ? ' is-done' : ''}">
         <label class="chorecheck">
-          <input type="checkbox" data-chore="${c.id}" ${c.done ? 'checked' : ''} ${canWrite() ? '' : 'disabled'} style="width:auto">
+          <input type="checkbox" data-${isTodo ? 'todo' : 'chore'}="${c.id}" ${c.done ? 'checked' : ''} ${canWrite() ? '' : 'disabled'} style="width:auto">
           <span class="chorebody">
             <span class="choretitle">${esc(c.title)}</span>
-            <span class="muted choremeta">${[
-              c.user_name ? esc(c.user_name) : tr('anyone'),
-              c.cadence === 'weekly' ? (c.weekday == null ? tr('any day this week') : tr(WEEKDAYS[c.weekday])) : '',
-              c.done && c.done_by_name ? `${tr('done by')} ${esc(c.done_by_name)}` : '',
-              c.note ? esc(c.note) : '',
-            ].filter(Boolean).join(' · ')}</span>
+            <span class="muted choremeta">${(isTodo ? [
+    c.user_name ? esc(c.user_name) : tr('anyone'),
+    c.due_date ? `${tr('by')} ${fdate(c.due_date)}` : tr('no deadline'),
+    c.done && c.done_by_name ? `${tr('done by')} ${esc(c.done_by_name)}` : '',
+    c.note ? esc(c.note) : '',
+  ] : [
+    c.user_name ? esc(c.user_name) : tr('anyone'),
+    c.cadence === 'weekly' ? (c.weekday == null ? tr('any day this week') : tr(WEEKDAYS[c.weekday])) : '',
+    c.done && c.done_by_name ? `${tr('done by')} ${esc(c.done_by_name)}` : '',
+    c.note ? esc(c.note) : '',
+  ]).filter(Boolean).join(' · ')}</span>
           </span>
         </label>
-        ${canWrite() ? `<button class="btn danger small" data-chdel="${c.id}" aria-label="${tr('Delete')}">✕</button>` : ''}
+        ${canWrite() ? `<button class="btn danger small" data-${isTodo ? 'tddel' : 'chdel'}="${c.id}" aria-label="${tr('Delete')}">✕</button>` : ''}
       </li>`).join('')}</ul>`
-      : `<div class="empty"><b>${tr('Nothing here yet')}</b>${tr('Add a chore below and it will show up every day.')}</div>`}
+      : `<div class="empty"><b>${tr(isTodo ? 'Nothing on the list' : 'Nothing here yet')}</b>${tr(isTodo ? 'Add a one-off job below — it stays put until someone ticks it.' : 'Add a chore below and it will show up every day.')}</div>`}
 
-      ${canWrite() ? `<div class="subform">
+      ${canWrite() && isTodo ? `<div class="subform">
+        <h4>${tr('New task')}</h4>
+        <form id="todoform" class="formgrid">
+          <div><label>${tr('Task')}</label><input name="title" placeholder="${tr('Change the front door lock')}" required></div>
+          <div><label>${tr('By when')} <span class="muted">${tr('optional')}</span></label><input name="due_date" type="date"></div>
+          <div><label>${tr('Person')}</label><select name="user_id"><option value="">${tr('Anyone')}</option>
+            ${members.map((m) => `<option value="${m.id}">${esc(m.name)}</option>`).join('')}</select></div>
+          <div><label>${tr('Note')} <span class="muted">${tr('optional')}</span></label><input name="note"></div>
+          <button class="btn small">${tr('Add task')}</button>
+        </form></div>` : ''}
+
+      ${canWrite() && !isTodo ? `<div class="subform">
         <h4>${tr('New chore')}</h4>
         <form id="choreform" class="formgrid">
           <div><label>${tr('Chore')}</label><input name="title" placeholder="${tr('Feed the dogs')}" required></div>
@@ -3790,14 +3923,28 @@ async function viewChores(el, tab = 'daily') {
     try { await api(`/chores/${cb.dataset.chore}/toggle`, { method: 'POST' }); viewChores(el, tab); }
     catch (err) { toast(err.message, 'error'); viewChores(el, tab); }
   }));
+  el.querySelectorAll('[data-todo]').forEach((cb) => (cb.onchange = async () => {
+    cb.closest('.chorerow').classList.toggle('is-done', cb.checked);
+    try { await api(`/todos/${cb.dataset.todo}/toggle`, { method: 'POST' }); viewChores(el, tab); }
+    catch (err) { toast(err.message, 'error'); viewChores(el, tab); }
+  }));
   el.querySelectorAll('[data-chdel]').forEach((b) => (b.onclick = () => {
     const { hide, restore } = rowHide(b);
     undoableDelete({ hide, restore, commit: () => api('/chores/' + b.dataset.chdel, { method: 'DELETE' }).then(() => viewChores(el, tab)) });
+  }));
+  el.querySelectorAll('[data-tddel]').forEach((b) => (b.onclick = () => {
+    const { hide, restore } = rowHide(b);
+    undoableDelete({ hide, restore, commit: () => api('/todos/' + b.dataset.tddel, { method: 'DELETE' }).then(() => viewChores(el, tab)) });
   }));
   el.querySelector('#choreform')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     const body = Object.fromEntries(new FormData(e.target));
     try { await api('/chores', { method: 'POST', body }); viewChores(el, body.cadence || tab); }
+    catch (err) { toast(err.message, 'error'); }
+  });
+  el.querySelector('#todoform')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try { await api('/todos', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) }); viewChores(el, 'todo'); }
     catch (err) { toast(err.message, 'error'); }
   });
 }
@@ -4004,7 +4151,7 @@ async function viewImport(el) {
 
 /* ---------- search ---------- */
 let SEARCH_Q = '';
-const SEARCH_KINDS = { expense: 'Expense', income: 'Income', bill: 'Bill', document: 'Document', credit: 'Credit', vehicle: 'Vehicle', property: 'Property', list: 'List', chore: 'Chore', goal: 'Goal', charge: 'Charge', maintenance: 'Repair', deadline: 'Deadline' };
+const SEARCH_KINDS = { expense: 'Expense', income: 'Income', bill: 'Bill', document: 'Document', credit: 'Credit', vehicle: 'Vehicle', property: 'Property', list: 'List', chore: 'Chore', todo: 'Task', loan: 'Money lent', goal: 'Goal', charge: 'Charge', maintenance: 'Repair', deadline: 'Deadline' };
 async function viewSearch(el) {
   el.innerHTML = `<div class="pagehead"><div><h1>Search</h1><p>Across expenses, income, bills, acte, credits, cars, properties and lists.</p></div></div>
     <div class="card">
@@ -4030,7 +4177,8 @@ async function viewSearch(el) {
     // an expense result lands on the Expenses tab already filtered to what was searched
     box.querySelectorAll('[data-go]').forEach((a) => (a.onclick = () => {
       const k = a.dataset.go;
-      if (k === 'expense' || k === 'income' || k === 'credit') PENDING_MONEY_TAB = k === 'expense' ? 'expenses' : k === 'income' ? 'income' : 'credits';
+      const MONEY_TAB = { expense: 'expenses', income: 'income', credit: 'credits', loan: 'debt', goal: 'savings' };
+      if (MONEY_TAB[k]) PENDING_MONEY_TAB = MONEY_TAB[k];
       if (k === 'expense') PENDING_EXPENSE_FILTER = { q: SEARCH_Q, month: 'all', who: 'all', cat: 'all' };
     }));
   };

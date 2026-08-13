@@ -19,6 +19,8 @@ test('search reaches every kind of thing the app stores', async (t) => {
   await api.post('/api/chores', { title: 'Aspirat Zorilor', cadence: 'weekly' });
   await api.post('/api/savings-goals', { title: 'Vacanța Zorilor', target: 12000 });
   await api.post(`/api/properties/${prop.id}/charges`, { type: 'invoice', title: 'Apă Zorilor', amount: 85, due_date: plusDays(10) });
+  await api.post('/api/todos', { title: 'Schimbat yala Zorilor' });
+  await api.post('/api/loans', { person: 'Vecinul Zorilor', amount: 500, date: today() });
 
   const hits = (await api.get('/api/search?q=zorilor')).body.results;
   const kinds = new Set(hits.map((h) => h.kind));
@@ -28,7 +30,7 @@ test('search reaches every kind of thing the app stores', async (t) => {
     assert.ok(kinds.has(k), `search missed ${k}`);
   }
   // ...and the ones it had grown out of step with
-  for (const k of ['chore', 'goal', 'charge']) {
+  for (const k of ['chore', 'goal', 'charge', 'todo', 'loan']) {
     assert.ok(kinds.has(k), `search missed ${k} — a feature was added without wiring it into search`);
   }
 

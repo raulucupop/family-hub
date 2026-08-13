@@ -402,6 +402,52 @@ CREATE TABLE IF NOT EXISTS imported_tx (
   UNIQUE(family_id, hash)
 );
 
+-- money lent to somebody outside the family. Deliberately not a credit: there is no interest, no
+-- schedule and no amortisation to compute, just an amount handed over and whatever comes back. It is
+-- also not an expense — the money is expected back, so counting it as spending would misstate the
+-- household twice, once on the way out and again on the way in.
+CREATE TABLE IF NOT EXISTS personal_loans (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  family_id INTEGER NOT NULL REFERENCES families(id) ON DELETE CASCADE,
+  person TEXT NOT NULL,        -- who is holding the money
+  amount REAL NOT NULL,        -- what was handed over
+  date TEXT NOT NULL,
+  due_date TEXT,               -- when it was promised back; NULL = no date was agreed
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL, -- who in the family lent it
+  note TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_personal_loans_family ON personal_loans(family_id);
+
+-- repayments against a loan. Rows rather than a running balance, so somebody paying back in
+-- instalments leaves a history, and deleting one entered by mistake restores the debt.
+CREATE TABLE IF NOT EXISTS personal_loan_payments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  loan_id INTEGER NOT NULL REFERENCES personal_loans(id) ON DELETE CASCADE,
+  family_id INTEGER NOT NULL REFERENCES families(id) ON DELETE CASCADE,
+  amount REAL NOT NULL,
+  date TEXT NOT NULL,
+  note TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_personal_loan_payments_loan ON personal_loan_payments(loan_id);
+
+-- one-off jobs: the things done once that then stay done. A chore is a definition plus a completion
+-- per period, which is exactly what makes it come back; a todo has no period at all, so it carries
+-- its own done flag and the moment it was ticked.
+CREATE TABLE IF NOT EXISTS todos (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  family_id INTEGER NOT NULL REFERENCES families(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL, -- NULL = anyone in the family
+  note TEXT,
+  due_date TEXT,
+  done INTEGER NOT NULL DEFAULT 0,
+  done_at TEXT,
+  done_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_todos_family ON todos(family_id, done);
+
 -- site notifications, generated when a deadline crosses a threshold (30/14/7/1/0 days)
 CREATE TABLE IF NOT EXISTS notifications (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

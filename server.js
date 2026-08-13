@@ -616,6 +616,17 @@ app.get('/api/search', auth, (req, res) => {
     WHERE c.family_id = ? AND c.active = 1 AND (lower(c.title) LIKE ? OR lower(COALESCE(c.note,'')) LIKE ?) LIMIT 10
   `).all(fid, like, like), (r) => ({ id: r.id, title: r.title, sub: [r.cadence, r.who].filter(Boolean).join(' · ') }));
 
+  add('todo', 'chores', db.prepare(`
+    SELECT t.id, t.title, t.done, t.due_date, t.note, u.name AS who FROM todos t LEFT JOIN users u ON u.id = t.user_id
+    WHERE t.family_id = ? AND (lower(t.title) LIKE ? OR lower(COALESCE(t.note,'')) LIKE ?) ORDER BY t.done, t.id LIMIT 10
+  `).all(fid, like, like), (r) => ({ id: r.id, title: r.title, sub: [r.who, r.done ? 'done' : null].filter(Boolean).join(' · '), date: r.due_date }));
+
+  // a loan is findable by the person holding the money — that is the only name anyone remembers
+  add('loan', 'money', db.prepare(`
+    SELECT l.id, l.person, l.amount, l.date, l.due_date, l.note FROM personal_loans l
+    WHERE l.family_id = ? AND (lower(l.person) LIKE ? OR lower(COALESCE(l.note,'')) LIKE ?) ORDER BY l.date DESC LIMIT 10
+  `).all(fid, like, like), (r) => ({ id: r.id, title: r.person, sub: r.note || '', date: r.due_date || r.date, amount: r.amount }));
+
   add('goal', 'money', db.prepare(`
     SELECT g.id, g.title, g.target, u.name AS who FROM savings_goals g LEFT JOIN users u ON u.id = g.user_id
     WHERE g.family_id = ? AND lower(g.title) LIKE ? LIMIT 10
@@ -1157,6 +1168,86 @@ app.delete('/api/credits/:id/payments/:pid', auth, canWrite, (req, res) => {
     unlogCreditPaymentExpense(payment);
     db.prepare('DELETE FROM credit_payments WHERE id = ?').run(payment.id);
   })();
+  res.json({ ok: true });
+});
+
+/* ---------- money lent to people ----------
+   The other direction of debt. A bank loan needs an amortisation schedule; lending a friend 2.000 lei
+   needs a name, an amount, and a record of what came back — so this is its own small thing rather
+   than a credit with the interesting parts nulled out. The balance is always derived from the
+   repayment rows, never stored, so a repayment deleted by mistake puts the debt back exactly. */
+const LOAN_SELECT = `
+  SELECT l.*, u.name AS user_name,
+         COALESCE((SELECT SUM(p.amount) FROM personal_loan_payments p WHERE p.loan_id = l.id), 0) AS repaid
+  FROM personal_loans l LEFT JOIN users u ON u.id = l.user_id`;
+const loanRow = (r) => {
+  const balance = Math.round((Number(r.amount) - Number(r.repaid)) * 100) / 100;
+  return { ...r, repaid: Math.round(Number(r.repaid) * 100) / 100, balance, settled: balance <= 0.005 };
+};
+function validateLoan(b) {
+  if (!str(b.person)) return 'Say who the money went to';
+  const amount = Number(b.amount);
+  if (!(amount > 0)) return 'Amount must be greater than zero';
+  if (!isDate(b.date)) return 'Pick the date the money was handed over';
+  if (b.due_date && !isDate(b.due_date)) return 'Due date must be a real date';
+  if (b.due_date && b.due_date < b.date) return 'The money cannot be due back before it was lent';
+  return null;
+}
+app.get('/api/loans', auth, (req, res) => {
+  res.json(db.prepare(`${LOAN_SELECT} WHERE l.family_id = ? ORDER BY l.date DESC, l.id DESC`)
+    .all(req.user.family_id).map(loanRow));
+});
+app.post('/api/loans', auth, canWrite, (req, res) => {
+  const b = req.body || {};
+  const err = validateLoan(b);
+  if (err) return res.status(400).json({ error: err });
+  const uid = num(b.user_id);
+  if (uid != null && !db.prepare('SELECT id FROM users WHERE id = ? AND family_id = ?').get(uid, req.user.family_id)) {
+    return res.status(400).json({ error: 'Person must be a member of the family' });
+  }
+  const info = db.prepare('INSERT INTO personal_loans (family_id, person, amount, date, due_date, user_id, note) VALUES (?,?,?,?,?,?,?)')
+    .run(req.user.family_id, str(b.person), Number(b.amount), b.date, b.due_date || null, uid, str(b.note));
+  res.json(loanRow(db.prepare(`${LOAN_SELECT} WHERE l.id = ?`).get(info.lastInsertRowid)));
+});
+app.put('/api/loans/:id', auth, canWrite, (req, res) => {
+  const row = db.prepare('SELECT * FROM personal_loans WHERE id = ? AND family_id = ?').get(req.params.id, req.user.family_id);
+  if (!row) return res.status(404).json({ error: 'Not found' });
+  const b = req.body || {};
+  const err = validateLoan(b);
+  if (err) return res.status(400).json({ error: err });
+  const uid = num(b.user_id);
+  if (uid != null && !db.prepare('SELECT id FROM users WHERE id = ? AND family_id = ?').get(uid, req.user.family_id)) {
+    return res.status(400).json({ error: 'Person must be a member of the family' });
+  }
+  db.prepare('UPDATE personal_loans SET person = ?, amount = ?, date = ?, due_date = ?, user_id = ?, note = ? WHERE id = ?')
+    .run(str(b.person), Number(b.amount), b.date, b.due_date || null, uid, str(b.note), row.id);
+  res.json(loanRow(db.prepare(`${LOAN_SELECT} WHERE l.id = ?`).get(row.id)));
+});
+app.delete('/api/loans/:id', auth, canWrite, (req, res) => {
+  db.prepare('DELETE FROM personal_loans WHERE id = ? AND family_id = ?').run(req.params.id, req.user.family_id);
+  res.json({ ok: true });
+});
+app.get('/api/loans/:id/payments', auth, (req, res) => {
+  const loan = db.prepare('SELECT id FROM personal_loans WHERE id = ? AND family_id = ?').get(req.params.id, req.user.family_id);
+  if (!loan) return res.status(404).json({ error: 'Not found' });
+  res.json(db.prepare('SELECT * FROM personal_loan_payments WHERE loan_id = ? ORDER BY date DESC, id DESC').all(loan.id));
+});
+app.post('/api/loans/:id/payments', auth, canWrite, (req, res) => {
+  const loan = db.prepare(`${LOAN_SELECT} WHERE l.id = ? AND l.family_id = ?`).get(req.params.id, req.user.family_id);
+  if (!loan) return res.status(404).json({ error: 'Not found' });
+  const b = req.body || {};
+  const amount = Number(b.amount);
+  if (!(amount > 0)) return res.status(400).json({ error: 'Amount must be greater than zero' });
+  if (!isDate(b.date)) return res.status(400).json({ error: 'Pick a date' });
+  // paying back more than was lent is a data-entry slip, not a generous friend
+  if (amount > loanRow(loan).balance + 0.005) return res.status(400).json({ error: 'That is more than is still owed' });
+  db.prepare('INSERT INTO personal_loan_payments (loan_id, family_id, amount, date, note) VALUES (?,?,?,?,?)')
+    .run(loan.id, req.user.family_id, amount, b.date, str(b.note));
+  res.json(loanRow(db.prepare(`${LOAN_SELECT} WHERE l.id = ?`).get(loan.id)));
+});
+app.delete('/api/loans/:id/payments/:pid', auth, canWrite, (req, res) => {
+  db.prepare('DELETE FROM personal_loan_payments WHERE id = ? AND loan_id = ? AND family_id = ?')
+    .run(req.params.pid, req.params.id, req.user.family_id);
   res.json({ ok: true });
 });
 
@@ -2221,6 +2312,67 @@ app.post('/api/chores/:id/toggle', auth, canWrite, (req, res) => {
 });
 app.delete('/api/chores/:id', auth, canWrite, (req, res) => {
   db.prepare('DELETE FROM chores WHERE id = ? AND family_id = ?').run(req.params.id, req.user.family_id);
+  res.json({ ok: true });
+});
+
+/* ---------- todos: the jobs with no cadence ----------
+   A chore comes back because ticking it writes a completion for the current period. A todo has no
+   period, so it just carries a flag: ticked once, done for good. That difference is why it is a
+   separate table rather than a third cadence — a one-off with a period key would either reappear
+   tomorrow or need a period that means "never", and both are lies about what the row is. */
+const TODO_SELECT = `
+  SELECT t.*, u.name AS user_name, du.name AS done_by_name
+  FROM todos t LEFT JOIN users u ON u.id = t.user_id LEFT JOIN users du ON du.id = t.done_by`;
+function validateTodo(b) {
+  if (!str(b.title)) return 'Give the task a name';
+  if (b.due_date && !isDate(b.due_date)) return 'Due date must be a real date';
+  return null;
+}
+app.get('/api/todos', auth, (req, res) => {
+  // open first, then by due date with the undated at the back, so the list reads as a plan
+  res.json(db.prepare(`${TODO_SELECT} WHERE t.family_id = ?
+    ORDER BY t.done, CASE WHEN t.due_date IS NULL THEN 1 ELSE 0 END, t.due_date, t.id`).all(req.user.family_id));
+});
+app.post('/api/todos', auth, canWrite, (req, res) => {
+  const b = req.body || {};
+  const err = validateTodo(b);
+  if (err) return res.status(400).json({ error: err });
+  const uid = num(b.user_id);
+  if (uid != null && !db.prepare('SELECT id FROM users WHERE id = ? AND family_id = ?').get(uid, req.user.family_id)) {
+    return res.status(400).json({ error: 'Person must be a member of the family' });
+  }
+  const info = db.prepare('INSERT INTO todos (family_id, title, user_id, note, due_date) VALUES (?,?,?,?,?)')
+    .run(req.user.family_id, str(b.title), uid, str(b.note), b.due_date || null);
+  res.json(db.prepare(`${TODO_SELECT} WHERE t.id = ?`).get(info.lastInsertRowid));
+});
+app.put('/api/todos/:id', auth, canWrite, (req, res) => {
+  const row = db.prepare('SELECT * FROM todos WHERE id = ? AND family_id = ?').get(req.params.id, req.user.family_id);
+  if (!row) return res.status(404).json({ error: 'Not found' });
+  const b = req.body || {};
+  const err = validateTodo(b);
+  if (err) return res.status(400).json({ error: err });
+  const uid = num(b.user_id);
+  if (uid != null && !db.prepare('SELECT id FROM users WHERE id = ? AND family_id = ?').get(uid, req.user.family_id)) {
+    return res.status(400).json({ error: 'Person must be a member of the family' });
+  }
+  db.prepare('UPDATE todos SET title = ?, user_id = ?, note = ?, due_date = ? WHERE id = ?')
+    .run(str(b.title), uid, str(b.note), b.due_date || null, row.id);
+  res.json(db.prepare(`${TODO_SELECT} WHERE t.id = ?`).get(row.id));
+});
+// Unticking clears who did it and when: leaving that behind would have the list claim a task was
+// finished by someone at a time when it demonstrably was not.
+app.post('/api/todos/:id/toggle', auth, canWrite, (req, res) => {
+  const row = db.prepare('SELECT * FROM todos WHERE id = ? AND family_id = ?').get(req.params.id, req.user.family_id);
+  if (!row) return res.status(404).json({ error: 'Not found' });
+  if (row.done) {
+    db.prepare('UPDATE todos SET done = 0, done_at = NULL, done_by = NULL WHERE id = ?').run(row.id);
+    return res.json({ ok: true, done: false });
+  }
+  db.prepare("UPDATE todos SET done = 1, done_at = datetime('now'), done_by = ? WHERE id = ?").run(req.user.id, row.id);
+  res.json({ ok: true, done: true, by: req.user.name });
+});
+app.delete('/api/todos/:id', auth, canWrite, (req, res) => {
+  db.prepare('DELETE FROM todos WHERE id = ? AND family_id = ?').run(req.params.id, req.user.family_id);
   res.json({ ok: true });
 });
 
