@@ -235,7 +235,7 @@ tr.guest-no > td { opacity: .5; }
 .quickadd .qgo { flex: 0 0 auto; white-space: nowrap; }
 .quickadd .qmore-btn { margin-top: 8px; padding-left: 0; border: 0; background: none; color: var(--accent); }
 .quickadd .qmore { margin-top: 10px; }
-/* .qmore is a .formgrid, whose display:grid would otherwise beat the [hidden] attribute */
+/* Kept for clarity; the global [hidden] rule at the end of this file now covers it. */
 .quickadd .qmore[hidden] { display: none; }
 @media (max-width: 860px) {
   /* on a phone the deadlines go back to a swipeable strip — sideways is the natural gesture there */
@@ -1058,3 +1058,10 @@ th[data-sort="desc"]::after { content: " ▼"; }
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
 }
+
+/* The browser's own [hidden] rule is display:none at author-beaten priority, so ANY class that sets
+   display — .formgrid, .toast, .modalwrap, .sheet — silently un-hides an element the markup says is
+   hidden. That trap had been patched five separate times, once per component, each after someone hit
+   it. This is the general fix: last rule in the file, !important, so `hidden` means hidden whatever
+   classes the element carries. */
+[hidden] { display: none !important; }

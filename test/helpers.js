@@ -3,16 +3,30 @@
    to catch were in validation and in what actually gets written, not in arithmetic in isolation. */
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
+const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
 
 const ROOT = path.join(__dirname, '..');
 
+// Ask the OS for a free port and hand it straight to the child. A random number in a range looks
+// equivalent but is not: test files run in parallel, and two of them drawing the same number meant
+// the second one talked to the first one's server — which surfaced as a mystifying "email already
+// exists" from register, in whichever unlucky test happened to lose the race.
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const srv = net.createServer();
+    srv.once('error', reject);
+    srv.listen(0, '127.0.0.1', () => {
+      const { port } = srv.address();
+      srv.close(() => resolve(port));
+    });
+  });
+}
+
 async function startServer() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fh-test-'));
-  // port 0 would be ideal but the server picks its own, so take a high random one and retry-proof
-  // it by failing loudly rather than silently testing an older instance still holding the port
-  const port = 3400 + Math.floor(Math.random() * 500);
+  const port = await freePort();
   const proc = spawn(process.execPath, ['server.js'], {
     cwd: ROOT,
     env: { ...process.env, DATA_DIR: dir, PORT: String(port), SESSION_SECRET: 'test-secret', NODE_ENV: 'test' },
@@ -63,6 +77,9 @@ async function startServer() {
   const reg = await client.post('/api/auth/register', {
     familyName: 'Test', name: 'Raul', email: `t${port}@test.ro`, password: 'Parola12345',
   });
+  // a 409 here would mean we reached someone else's server: this database was created empty seconds
+  // ago, so nothing in it can already hold that address
+  if (reg.status === 409) throw new Error(`port ${port} is serving another instance — got: ${reg.text}`);
   if (reg.status !== 200) throw new Error(`register failed: ${reg.status} ${reg.text}`);
   return client;
 }
