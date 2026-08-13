@@ -2610,6 +2610,14 @@ const MAIL_LABELS_RO = {
   'ITP inspection': 'Inspecție ITP', 'Vehicle tax': 'Taxă auto', 'Property insurance (PAD)': 'Asigurare locuință (PAD)',
   'Additional home insurance': 'Asigurare facultativă locuință', 'Property tax': 'Impozit proprietate',
 };
+// expense categories are stored as English keys and translated in the browser; the report writes
+// sentences around them, so the server needs the same table (mirrors CATEGORIES_RO in app.js).
+// 'Credit' is the same word in both languages and is deliberately absent.
+const MAIL_CATEGORIES_RO = {
+  Groceries: 'Alimente', Utilities: 'Utilități', Transportation: 'Transport', Entertainment: 'Divertisment',
+  Healthcare: 'Sănătate', Education: 'Educație', Taxes: 'Taxe', Subscriptions: 'Abonamente', Other: 'Altele',
+};
+const catLabel = (lang, cat) => (lang === 'ro' && MAIL_CATEGORIES_RO[cat]) || cat;
 const mailDate = (iso) => { const p = String(iso).slice(0, 10).split('-'); return p.length === 3 ? `${p[2]}/${p[1]}/${p[0]}` : String(iso); };
 // Romanian takes "de" from 20 upwards — "3 zile" but "24 de zile". Small thing, reads wrong without it.
 const roDays = (n) => (n === 1 ? 'o zi' : `${n}${n % 100 >= 20 || n % 100 === 0 ? ' de' : ''} zile`);
@@ -2779,6 +2787,188 @@ async function runEmailReminders() {
   }
   return { sent, errors };
 }
+// ---------- the month in words ----------
+// The report was a table: right numbers, no story. These two functions add the story, and the split
+// between them is the whole point. monthlyFacts does every calculation in SQL; narrate only chooses
+// sentences from numbers already computed and never derives one of its own. A sentence can therefore
+// be wrong about what mattered — it cannot be wrong about an amount.
+//
+// Month names are spelled out rather than taken from toLocaleDateString: shared hosting can ship a
+// Node built without full ICU, and a report that says "M07" is worse than 24 hardcoded strings.
+const MONTH_NAMES = {
+  ro: ['ianuarie', 'februarie', 'martie', 'aprilie', 'mai', 'iunie', 'iulie', 'august', 'septembrie', 'octombrie', 'noiembrie', 'decembrie'],
+  en: ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'],
+};
+const monthName = (lang, month) => MONTH_NAMES[lang === 'ro' ? 'ro' : 'en'][Number(String(month).slice(5, 7)) - 1] || String(month);
+const shiftMonth = (month, n) => {
+  const [y, m] = String(month).split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1 + n, 1)).toISOString().slice(0, 7);
+};
+
+function monthlyFacts(famId, month) {
+  const prevMonth = shiftMonth(month, -1);
+  const one = (sql, ...args) => db.prepare(sql).get(...args).t;
+  const spentIn = (mm) => one('SELECT COALESCE(SUM(amount),0) t FROM expenses WHERE family_id = ? AND substr(date,1,7) = ?', famId, mm);
+  const spentCat = (cat, mm) => one('SELECT COALESCE(SUM(amount),0) t FROM expenses WHERE family_id = ? AND category = ? AND substr(date,1,7) = ?', famId, cat, mm);
+
+  const spent = spentIn(month);
+  const prevSpent = spentIn(prevMonth);
+  const income = one('SELECT COALESCE(SUM(amount),0) t FROM incomes WHERE family_id = ? AND substr(date,1,7) = ?', famId, month);
+  // the average only counts months that had activity: a family three months old should not read as
+  // having halved its spending against two empty months
+  const past = [1, 2, 3].map((n) => spentIn(shiftMonth(month, -n))).filter((v) => v > 0);
+  const avg3 = past.length ? past.reduce((a, b) => a + b, 0) / past.length : null;
+
+  const prevCats = Object.fromEntries(db.prepare(
+    'SELECT category, SUM(amount) t FROM expenses WHERE family_id = ? AND substr(date,1,7) = ? GROUP BY category',
+  ).all(famId, prevMonth).map((c) => [c.category, c.t]));
+  const categories = db.prepare(
+    'SELECT category, SUM(amount) t FROM expenses WHERE family_id = ? AND substr(date,1,7) = ? GROUP BY category ORDER BY t DESC',
+  ).all(famId, month).map((c) => ({
+    category: c.category,
+    total: c.t,
+    prev: prevCats[c.category] ?? null,
+    delta: prevCats[c.category] != null ? c.t - prevCats[c.category] : null,
+  }));
+  // a category that existed last month and is simply gone this month still counts as a drop
+  for (const [cat, prev] of Object.entries(prevCats)) {
+    if (!categories.some((c) => c.category === cat)) categories.push({ category: cat, total: 0, prev, delta: -prev });
+  }
+
+  const budgets = db.prepare('SELECT category, amount FROM budgets WHERE family_id = ? AND month = ?').all(famId, month)
+    .map((b) => {
+      const s = spentCat(b.category, month);
+      return { category: b.category, budget: b.amount, spent: s, kept: s <= b.amount, over: Math.max(0, s - b.amount) };
+    });
+  // how many months in a row, ending with this one, a category stayed inside a budget that existed.
+  // A month with no budget for it breaks the run — an unmeasured month is not a kept promise.
+  const streakFor = (category) => {
+    let n = 0;
+    for (let i = 0; i < 24; i++) {
+      const mm = shiftMonth(month, -i);
+      const b = db.prepare('SELECT amount FROM budgets WHERE family_id = ? AND category = ? AND month = ?').get(famId, category, mm);
+      if (!b || spentCat(category, mm) > b.amount) break;
+      n++;
+    }
+    return n;
+  };
+  const streak = budgets.filter((b) => b.kept)
+    .map((b) => ({ category: b.category, months: streakFor(b.category) }))
+    .sort((a, b) => b.months - a.months)[0] || null;
+
+  const savedMonth = one("SELECT COALESCE(SUM(CASE WHEN kind='deposit' THEN amount ELSE -amount END),0) t FROM savings WHERE family_id = ? AND substr(date,1,7) = ?", famId, month);
+  const savedTotal = one("SELECT COALESCE(SUM(CASE WHEN kind='deposit' THEN amount ELSE -amount END),0) t FROM savings WHERE family_id = ? AND substr(date,1,7) <= ?", famId, month);
+  const goals = db.prepare('SELECT id, title, target FROM savings_goals WHERE family_id = ? AND done = 0').all(famId).map((g) => {
+    const at = (mm) => one("SELECT COALESCE(SUM(CASE WHEN kind='deposit' THEN amount ELSE -amount END),0) t FROM savings WHERE goal_id = ? AND substr(date,1,7) <= ?", g.id, mm);
+    const saved = at(month);
+    return {
+      title: g.title, target: g.target, saved, gained: saved - at(prevMonth),
+      pct: g.target > 0 ? Math.round((saved / g.target) * 100) : null,
+      left: Math.max(0, g.target - saved),
+    };
+  }).sort((a, b) => b.gained - a.gained);
+
+  const creditPaid = one('SELECT COALESCE(SUM(amount),0) t FROM credit_payments WHERE family_id = ? AND substr(date,1,7) = ?', famId, month);
+  const monthsAhead = one('SELECT COALESCE(SUM(months),0) t FROM credit_payments WHERE family_id = ? AND substr(date,1,7) = ? AND months IS NOT NULL', famId, month);
+
+  return {
+    month, prevMonth, spent, prevSpent, income, avg3, avgMonths: past.length,
+    categories, budgets, streak, savedMonth, savedTotal, goals, creditPaid, monthsAhead,
+  };
+}
+
+// Picks at most four sentences: how the month went, one thing that went well, one to watch, one small
+// next step. Every slot may come up empty — a family with nothing to report gets the table and no
+// invented encouragement, because a compliment for something that did not happen makes the next
+// month's report worth ignoring.
+function narrate(f, lang, m) {
+  const ro = lang === 'ro';
+  const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+  const M = (mm) => monthName(lang, mm);
+  const C = (c) => catLabel(lang, c);
+  const out = [];
+  if (!f.spent && !f.income && !f.savedMonth) return out;
+
+  // 1 — how the month went. A change is worth naming only if it is both material and not rounding.
+  const d = f.prevSpent > 0 ? f.spent - f.prevSpent : null;
+  const moved = d != null && Math.abs(d) >= 50 && Math.abs(d) >= f.prevSpent * 0.03;
+  if (f.spent > 0) {
+    const change = moved
+      ? (ro ? `, cu ${m(Math.abs(d))} mai ${d < 0 ? 'puțin' : 'mult'} decât în ${M(f.prevMonth)}` : `, ${m(Math.abs(d))} ${d < 0 ? 'less' : 'more'} than in ${M(f.prevMonth)}`)
+      : '';
+    out.push(ro ? `${cap(M(f.month))} s-a închis pe ${m(f.spent)}${change}.` : `${M(f.month)} closed at ${m(f.spent)}${change}.`);
+  } else if (f.income > 0) {
+    out.push(ro ? `În ${M(f.month)} nu ați notat nicio cheltuială.` : `No expenses were logged in ${M(f.month)}.`);
+  }
+
+  // 2 — one thing that went well, in order of how much it says about the month
+  const left = f.income - f.spent;
+  const drop = f.categories.filter((c) => c.delta != null && c.delta < -50).sort((a, b) => a.delta - b.delta)[0];
+  const goal = f.goals.find((g) => g.gained > 0);
+  const wins = [
+    f.streak && f.streak.months >= 2 && (ro
+      ? `A ${f.streak.months}-a lună la rând sub buget la ${C(f.streak.category)}.`
+      : `${f.streak.months} months in a row inside the ${C(f.streak.category)} budget.`),
+    f.budgets.length >= 2 && f.budgets.every((b) => b.kept) && (ro
+      ? `Toate cele ${f.budgets.length} bugete au fost respectate.`
+      : `All ${f.budgets.length} budgets held.`),
+    drop && (ro
+      ? `${C(drop.category)} a scăzut cu ${m(-drop.delta)} față de ${M(f.prevMonth)}.`
+      : `${C(drop.category)} came down by ${m(-drop.delta)} from ${M(f.prevMonth)}.`),
+    f.savedMonth > 0 && (ro
+      ? `Ați pus deoparte ${m(f.savedMonth)}, iar fondul ajunge la ${m(f.savedTotal)}.`
+      : `You put ${m(f.savedMonth)} aside, taking the fund to ${m(f.savedTotal)}.`),
+    goal && goal.pct != null && (ro
+      ? `Obiectivul ${goal.title} a urcat la ${goal.pct}%.`
+      : `The ${goal.title} goal moved up to ${goal.pct}%.`),
+    f.monthsAhead > 0 && (ro
+      ? `Ați plătit ${m(f.creditPaid)} la credit, ${f.monthsAhead} ${f.monthsAhead === 1 ? 'rată' : 'rate'} în avans.`
+      : `You paid ${m(f.creditPaid)} on the loan, ${f.monthsAhead} instalment${f.monthsAhead === 1 ? '' : 's'} ahead.`),
+    f.income > 0 && left > 0 && (ro
+      ? `Din venituri v-au rămas ${m(left)}.`
+      : `That leaves ${m(left)} of what came in.`),
+  ].filter(Boolean);
+  if (wins.length) out.push(wins[0]);
+
+  // 3 — one thing to watch. A finding, not a telling-off: no "should", no "too much".
+  const overrun = f.budgets.filter((b) => !b.kept).sort((a, b) => b.over - a.over)[0];
+  const rise = f.categories.filter((c) => c.delta != null && c.delta > 50).sort((a, b) => b.delta - a.delta)[0];
+  const aboveAvg = f.avg3 && f.spent > f.avg3 * 1.15 ? Math.round((f.spent / f.avg3 - 1) * 100) : null;
+  let watch = null;
+  if (f.income > 0 && left < 0) {
+    watch = { kind: 'over', text: ro ? `Ați cheltuit cu ${m(-left)} mai mult decât ați încasat.` : `Spending ran ${m(-left)} past what came in.` };
+  } else if (overrun) {
+    watch = { kind: 'budget', text: ro ? `${C(overrun.category)} a trecut de buget cu ${m(overrun.over)}.` : `${C(overrun.category)} went ${m(overrun.over)} past its budget.`, on: overrun };
+  } else if (rise) {
+    watch = { kind: 'rise', text: ro ? `${C(rise.category)} a urcat cu ${m(rise.delta)} față de ${M(f.prevMonth)}.` : `${C(rise.category)} rose by ${m(rise.delta)} from ${M(f.prevMonth)}.`, on: rise };
+  } else if (aboveAvg) {
+    watch = { kind: 'avg', text: ro ? `Luna a fost cu ${aboveAvg}% peste media ultimelor ${f.avgMonths} luni.` : `The month ran ${aboveAvg}% above the last ${f.avgMonths} months.` };
+  }
+  if (watch) out.push(watch.text);
+
+  // 4 — one small next step, and only one that follows from what was just said
+  const budgeted = new Set(f.budgets.map((b) => b.category));
+  const near = f.goals.filter((g) => g.pct != null && g.pct >= 60 && g.left > 0).sort((a, b) => a.left - b.left)[0];
+  let step = null;
+  if (watch?.kind === 'budget') {
+    step = ro ? `Dacă ${C(watch.on.category)} stă sub ${m(watch.on.budget)} luna asta, reveniți pe plan.`
+      : `Hold ${C(watch.on.category)} under ${m(watch.on.budget)} this month and you are back on plan.`;
+  } else if (watch?.kind === 'rise' && !budgeted.has(watch.on.category)) {
+    step = ro ? `Un buget pe ${C(watch.on.category)} v-ar arăta din timp când o ia razna.`
+      : `A budget on ${C(watch.on.category)} would show you early when it drifts.`;
+  } else if (watch?.kind === 'over' || watch?.kind === 'avg') {
+    const top = f.categories.filter((c) => c.total > 0).slice(0, 2).map((c) => C(c.category));
+    if (top.length === 2) {
+      step = ro ? `Un plan pentru luna asta ar începe cu ${top[0]} și ${top[1]}.`
+        : `A plan for this month starts with ${top[0]} and ${top[1]}.`;
+    }
+  } else if (near) {
+    step = ro ? `${near.title} mai are ${m(near.left)} până la țintă.` : `${near.title} is ${m(near.left)} short of its target.`;
+  }
+  if (step) out.push(step);
+  return out;
+}
+
 // ---------- monthly email report ----------
 // sent once per family at the start of each month, summarizing the month that just ended
 async function runMonthlyReports() {
@@ -2788,10 +2978,11 @@ async function runMonthlyReports() {
   for (const fam of db.prepare('SELECT * FROM families').all()) {
     const key = `report:${fam.id}:${prev}`;
     if (!claimKeys([key]).length) continue;
-    const to = db.prepare("SELECT email FROM users WHERE family_id = ? AND role IN ('admin','adult') AND email IS NOT NULL").all(fam.id).map((u) => u.email);
-    if (!to.length) { releaseKeys([key]); continue; }
+    const groups = byLanguage(db.prepare("SELECT email, lang FROM users WHERE family_id = ? AND role IN ('admin','adult') AND email IS NOT NULL").all(fam.id));
+    if (!Object.keys(groups).length) { releaseKeys([key]); continue; }
     const cur = curSymbol(fam.currency);
     const m = (n) => `${Number(n || 0).toFixed(2)} ${cur}`;
+    const facts = monthlyFacts(fam.id, prev);
     const income = db.prepare("SELECT COALESCE(SUM(amount),0) t FROM incomes WHERE family_id = ? AND substr(date,1,7) = ?").get(fam.id, prev).t;
     const spent = db.prepare("SELECT COALESCE(SUM(amount),0) t FROM expenses WHERE family_id = ? AND substr(date,1,7) = ?").get(fam.id, prev).t;
     const cats = db.prepare("SELECT category, SUM(amount) t FROM expenses WHERE family_id = ? AND substr(date,1,7) = ? GROUP BY category ORDER BY t DESC LIMIT 6").all(fam.id, prev);
@@ -2803,38 +2994,74 @@ async function runMonthlyReports() {
       const s = db.prepare('SELECT COALESCE(SUM(amount),0) t FROM expenses WHERE family_id = ? AND category = ? AND substr(date,1,7) = ?').get(fam.id, b.category, prev).t;
       return { category: b.category, spent: s, amount: b.amount, over: s > b.amount };
     });
-    const budgetLines = budgetData.map((b) => `  ${b.category}: ${m(b.spent)} / ${m(b.amount)}${b.over ? '  (over!)' : ''}`);
     const savBal = db.prepare("SELECT COALESCE(SUM(CASE WHEN kind='deposit' THEN amount ELSE -amount END),0) t FROM savings WHERE family_id = ?").get(fam.id).t;
     const savMonth = db.prepare("SELECT COALESCE(SUM(CASE WHEN kind='deposit' THEN amount ELSE -amount END),0) t FROM savings WHERE family_id = ? AND substr(date,1,7) = ?").get(fam.id, prev).t;
-    const text = [
-      `Hello,`, '',
-      `Here is ${fam.name}'s money summary for ${prev}:`, '',
-      `Income:   ${m(income)}`,
-      `Spent:    ${m(spent)}`,
-      `Left over: ${m(income - spent)}`, '',
-      cats.length ? `Top spending categories:\n${cats.map((c) => `  ${c.category}: ${m(c.t)}`).join('\n')}` : 'No expenses were logged.',
-      byMember.length ? `\nSpending per person:\n${byMember.map((x) => `  ${x.name}: ${m(x.t)}`).join('\n')}` : '',
-      budgetLines.length ? `\nBudgets vs actual:\n${budgetLines.join('\n')}` : '',
-      `\nEconomy account: ${m(savBal)} (${savMonth >= 0 ? '+' : ''}${m(savMonth)} in ${prev})`, '',
-      `Open Family Hub for the full picture.`,
-    ].filter((s) => s !== '').join('\n');
-    // a "spent vs budget" line: green under budget, red over it
-    const list = (arr, fmt) => arr.map(fmt).join('');
-    const kvRow = (label, val, strong) => `<div style="display:flex;justify-content:space-between;font-size:14px;padding:3px 0;${strong ? 'font-weight:600' : ''}"><span>${htmlEsc(label)}</span><span style="font-family:monospace">${val}</span></div>`;
-    const html = htmlEmail(`
-      <p>Hello,</p>
-      <p>Here is <b>${htmlEsc(fam.name)}</b>'s money summary for <b>${prev}</b>:</p>
-      <div style="margin:14px 0;padding:12px 14px;background:#eff2f1;border-radius:8px;">
-        ${kvRow('Income', m(income))}${kvRow('Spent', m(spent))}${kvRow('Left over', m(income - spent), true)}
-      </div>
-      ${cats.length ? `<p style="font-weight:600;margin:12px 0 2px">Top spending categories</p>${list(cats, (c) => kvRow(c.category, m(c.t)))}` : '<p style="color:#45565f">No expenses were logged.</p>'}
-      ${byMember.length ? `<p style="font-weight:600;margin:14px 0 2px">Spending per person</p>${list(byMember, (x) => kvRow(x.name, m(x.t)))}` : ''}
-      ${budgetData.length ? `<p style="font-weight:600;margin:14px 0 2px">Budgets vs actual</p>${list(budgetData, (b) => `<div style="display:flex;justify-content:space-between;font-size:14px;padding:3px 0"><span>${htmlEsc(b.category)}</span><span style="font-family:monospace;color:${b.over ? '#b23a2e' : '#2f6b5a'}">${m(b.spent)} / ${m(b.amount)}${b.over ? ' ⚠' : ''}</span></div>`)}` : ''}
-      <p style="margin-top:14px">Economy account: <b>${m(savBal)}</b> <span style="color:#45565f">(${savMonth >= 0 ? '+' : ''}${m(savMonth)} in ${prev})</span></p>
-      <p>${htmlButton(`${siteBase()}/#dashboard`, 'Open Family Hub')}</p>`);
-    try { await sendMail(to, `Family Hub — ${prev} monthly report`, text + '\n', undefined, html); }
-    catch (err) { releaseKeys([key]); console.error('monthly report:', err.message); }
+    const data = { income, spent, cats, byMember, budgetData, savBal, savMonth };
+    // the narrative is written per language, from the same facts — so nobody reads a summary in one
+    // language over a table in another
+    let anySent = false;
+    for (const [lang, addrs] of Object.entries(groups)) {
+      const { subject, text, html } = monthlyReportMail(lang, fam, prev, data, narrate(facts, lang, m), m);
+      try { await sendMail(addrs, subject, text, undefined, html); anySent = true; }
+      catch (err) { console.error('monthly report:', err.message); }
+    }
+    if (!anySent) releaseKeys([key]);
   }
+}
+function monthlyReportMail(lang, fam, prev, d, lines, m) {
+  const ro = lang === 'ro';
+  const { income, spent, cats, byMember, budgetData, savBal, savMonth } = d;
+  const C = (c) => catLabel(lang, c);
+  const budgetLines = budgetData.map((b) => `  ${C(b.category)}: ${m(b.spent)} / ${m(b.amount)}`
+    + (b.over ? (ro ? '  (depășit!)' : '  (over!)') : ''));
+  const t = ro ? {
+    greet: 'Bună,', intro: `Cum au stat banii familiei ${fam.name} în ${monthName('ro', prev)}:`,
+    income: 'Încasat', spent: 'Cheltuit', left: 'A rămas',
+    topCats: 'Cele mai mari categorii', none: 'Nu a fost notată nicio cheltuială.',
+    perPerson: 'Cheltuieli pe persoană', budgets: 'Bugete față de realitate',
+    savings: 'Fond de economii', open: 'Deschide Family Hub',
+    foot: 'Deschide Family Hub pentru imaginea completă.',
+    subject: `Family Hub — raportul pe ${monthName('ro', prev)}`,
+  } : {
+    greet: 'Hello,', intro: `Here is ${fam.name}'s money summary for ${prev}:`,
+    income: 'Income', spent: 'Spent', left: 'Left over',
+    topCats: 'Top spending categories', none: 'No expenses were logged.',
+    perPerson: 'Spending per person', budgets: 'Budgets vs actual',
+    savings: 'Economy account', open: 'Open Family Hub',
+    foot: 'Open Family Hub for the full picture.',
+    subject: `Family Hub — ${prev} monthly report`,
+  };
+  // null drops a section that has nothing in it; '' is a blank line someone asked for. Filtering on
+  // '' collapsed both, so the plain-text email arrived as one unbroken block.
+  const text = [
+    t.greet, '',
+    t.intro, '',
+    lines.length ? `${lines.join(' ')}` : null, lines.length ? '' : null,
+    `${t.income}:  ${m(income)}`,
+    `${t.spent}:  ${m(spent)}`,
+    `${t.left}:  ${m(income - spent)}`, '',
+    cats.length ? `${t.topCats}:\n${cats.map((c) => `  ${C(c.category)}: ${m(c.t)}`).join('\n')}` : t.none,
+    byMember.length ? `\n${t.perPerson}:\n${byMember.map((x) => `  ${x.name}: ${m(x.t)}`).join('\n')}` : null,
+    budgetLines.length ? `\n${t.budgets}:\n${budgetLines.join('\n')}` : null,
+    `\n${t.savings}: ${m(savBal)} (${savMonth >= 0 ? '+' : ''}${m(savMonth)})`, '',
+    t.foot,
+  ].filter((s) => s !== null).join('\n');
+  // a "spent vs budget" line: green under budget, red over it
+  const list = (arr, fmt) => arr.map(fmt).join('');
+  const kvRow = (label, val, strong) => `<div style="display:flex;justify-content:space-between;font-size:14px;padding:3px 0;${strong ? 'font-weight:600' : ''}"><span>${htmlEsc(label)}</span><span style="font-family:monospace">${val}</span></div>`;
+  const html = htmlEmail(`
+      <p>${t.greet}</p>
+      <p>${htmlEsc(t.intro)}</p>
+      ${lines.length ? `<p style="margin:14px 0;padding:12px 14px;background:#e6efe9;border-left:3px solid #2f6b5a;border-radius:6px;font-size:15px;line-height:1.55;">${htmlEsc(lines.join(' '))}</p>` : ''}
+      <div style="margin:14px 0;padding:12px 14px;background:#eff2f1;border-radius:8px;">
+        ${kvRow(t.income, m(income))}${kvRow(t.spent, m(spent))}${kvRow(t.left, m(income - spent), true)}
+      </div>
+      ${cats.length ? `<p style="font-weight:600;margin:12px 0 2px">${t.topCats}</p>${list(cats, (c) => kvRow(C(c.category), m(c.t)))}` : `<p style="color:#45565f">${t.none}</p>`}
+      ${byMember.length ? `<p style="font-weight:600;margin:14px 0 2px">${t.perPerson}</p>${list(byMember, (x) => kvRow(x.name, m(x.t)))}` : ''}
+      ${budgetData.length ? `<p style="font-weight:600;margin:14px 0 2px">${t.budgets}</p>${list(budgetData, (b) => `<div style="display:flex;justify-content:space-between;font-size:14px;padding:3px 0"><span>${htmlEsc(C(b.category))}</span><span style="font-family:monospace;color:${b.over ? '#b23a2e' : '#2f6b5a'}">${m(b.spent)} / ${m(b.amount)}${b.over ? ' ⚠' : ''}</span></div>`)}` : ''}
+      <p style="margin-top:14px">${t.savings}: <b>${m(savBal)}</b> <span style="color:#45565f">(${savMonth >= 0 ? '+' : ''}${m(savMonth)})</span></p>
+      <p>${htmlButton(`${siteBase()}/#dashboard`, t.open)}</p>`);
+  return { subject: t.subject, text: text + '\n', html };
 }
 
 // ---------- weekly backup by email ----------
@@ -3038,6 +3265,16 @@ app.post('/api/import/transactions', auth, canWrite, (req, res) => {
 const CATEGORY_SET = new Set(['Groceries', 'Utilities', 'Transportation', 'Entertainment', 'Healthcare', 'Education', 'Taxes', 'Credit', 'Subscriptions', 'Other']);
 
 // ---------- dashboard stats ----------
+// the same month-in-words the report emails, readable from the app so the two can never disagree.
+// Defaults to the month that just ended — the current one is only half a story.
+app.get('/api/report', auth, (req, res) => {
+  const month = /^\d{4}-\d{2}$/.test(String(req.query.month || '')) ? req.query.month
+    : new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth() - 1, 1)).toISOString().slice(0, 7);
+  const cur = curSymbol(db.prepare('SELECT currency FROM families WHERE id = ?').get(req.user.family_id)?.currency);
+  const facts = monthlyFacts(req.user.family_id, month);
+  const lines = narrate(facts, req.user.lang, (n) => `${Number(n || 0).toFixed(2)} ${cur}`);
+  res.json({ month, lines, facts });
+});
 app.get('/api/stats', auth, (req, res) => {
   autoPayBills(); autoLogCreditExpenses(); autoLogIncomes(); autoLogRecurringExpenses();
   const fid = req.user.family_id;
