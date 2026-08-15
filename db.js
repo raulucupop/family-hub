@@ -402,6 +402,19 @@ CREATE TABLE IF NOT EXISTS imported_tx (
   UNIQUE(family_id, hash)
 );
 
+-- Tables at an event, and which invitation sits at which. The unit that moves is the invitation,
+-- not the person: "Familia Popescu" is 2 adults + 1 child and they sit together, so a party occupies
+-- adults + kids + seats chairs at one table. capacity is what the venue gave you per table.
+CREATE TABLE IF NOT EXISTS event_tables (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  family_id INTEGER NOT NULL REFERENCES families(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  capacity INTEGER NOT NULL,
+  sort INTEGER NOT NULL DEFAULT 0,   -- display order, so the plan matches the room
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_event_tables_family ON event_tables(family_id, sort);
+
 -- money lent to somebody outside the family. Deliberately not a credit: there is no interest, no
 -- schedule and no amortisation to compute, just an amount handed over and whatever comes back. It is
 -- also not an expense — the money is expected back, so counting it as spending would misstate the
@@ -581,6 +594,13 @@ if (!liCols.includes('adults')) {
 // have just replaced the table, and that older shape has no `seats`.
 if (!db.prepare('PRAGMA table_info(list_items)').all().some((c) => c.name === 'seats')) {
   db.exec('ALTER TABLE list_items ADD COLUMN seats INTEGER');
+}
+// Which table an invitation sits at. Declared as a reference for documentation, but the deletion of
+// a table clears this column explicitly in the endpoint rather than leaning on ON DELETE SET NULL —
+// a column added by ALTER TABLE is an awkward place to rely on cascade behaviour, and "delete the
+// table, the guests go back to the pool" is worth being able to read in the code that does it.
+if (!db.prepare('PRAGMA table_info(list_items)').all().some((c) => c.name === 'table_id')) {
+  db.exec('ALTER TABLE list_items ADD COLUMN table_id INTEGER REFERENCES event_tables(id) ON DELETE SET NULL');
 }
 
 // an anticipated payment made at the bank counter knocks a known number of instalments off the

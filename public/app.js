@@ -164,6 +164,16 @@ const RO = {
   'No invitations yet': 'Nicio invitație încă', 'leave empty to clear': 'lasă gol ca să ștergi',
   'No answer yet': 'Fără răspuns încă',
   'Seats': 'Scaun', 'Seats only, no menu': 'Doar scaun, fără meniu', 'seats only': 'doar scaun',
+  // seating plan: who sits at which table
+  'Invitations': 'Invitați', 'Seating': 'Așezare la mese', 'Confirmed': 'Confirmați',
+  'invitation': 'invitație', 'invitations': 'invitații', 'table': 'masă', 'tables': 'mese',
+  'Seats in the room': 'Locuri în sală', 'Still to seat': 'Rămași de așezat',
+  'more than the room holds': 'peste cât încape în sală', 'spare': 'libere',
+  'Not seated yet': 'Neașezați', 'Everyone has a chair.': 'Toată lumea are loc.',
+  'Confirmed guests show up here.': 'Invitații confirmați apar aici.',
+  'Table': 'Masa', 'empty': 'goală', 'over capacity': 'peste capacitate',
+  'Add tables': 'Adaugă mese', 'How many': 'Câte', 'Seats each': 'Locuri la fiecare',
+  'Drag a guest onto a table, or tap the guest and then the table.': 'Trage un invitat pe o masă, sau apasă invitatul și apoi masa.',
   // charts & insights
   'What you kept': 'Ce ai păstrat', 'Kept': 'Păstrat',
   // chores
@@ -805,7 +815,14 @@ async function api(path, opts = {}) {
     body: opts.body instanceof FormData ? opts.body : (opts.body ? JSON.stringify(opts.body) : undefined),
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || 'Request failed');
+  if (!res.ok) {
+    // Keep the whole body on the error, not just the sentence. A message with numbers in it cannot
+    // go through the RO dictionary (which matches whole strings), so the caller needs the parts to
+    // build that sentence in the reader's own language.
+    const err = new Error(data.error || 'Request failed');
+    err.data = data;
+    throw err;
+  }
   return data;
 }
 /* An "Add …" form sitting open at the top of a page pushes the actual data below the fold — on a
@@ -3948,6 +3965,178 @@ async function viewChores(el, tab = 'daily') {
     catch (err) { toast(err.message, 'error'); }
   });
 }
+/* ---------- seating plan ----------
+   Built on Pointer Events rather than HTML5 drag-and-drop, which does not fire on touch at all —
+   this app is used mostly on a phone, so a desktop-only drag would have been a decoration. Every
+   drag is also a tap: press a guest to pick them up, press a table to put them down. That is not
+   only a fallback for accessibility, it is the easier gesture on a small screen with a long list,
+   and it is what keyboard users get for free since the chips are buttons. */
+let SEAT_PICKED = null; // guest id held by the tap-to-place path, across re-renders
+
+function seatingPlan(host, state) {
+  const t = state.totals;
+  const short = t.capacity - t.confirmed;
+  const chip = (g) => `<button type="button" class="seatchip${SEAT_PICKED === g.id ? ' is-picked' : ''}"
+      data-guest="${g.id}" data-size="${g.size}" aria-pressed="${SEAT_PICKED === g.id}">
+      <span class="seatname">${esc(g.title)}</span><span class="seatnum">${g.size}</span></button>`;
+
+  host.innerHTML = `
+    <section class="kpi" style="margin:14px 0 4px">
+      <div class="card"><div class="label">${tr('Confirmed')}</div><div class="value">${t.confirmed}</div>
+        <div class="muted" style="font-size:12.5px">${t.parties} ${tr(t.parties === 1 ? 'invitation' : 'invitations')}</div></div>
+      <div class="card"><div class="label">${tr('Seats in the room')}</div><div class="value">${t.capacity}</div>
+        <div class="muted" style="font-size:12.5px">${state.tables.length} ${tr(state.tables.length === 1 ? 'table' : 'tables')}</div></div>
+      <div class="card"><div class="label">${tr('Still to seat')}</div>
+        <div class="value${state.unseated.length ? ' neg' : ''}">${state.unseated.reduce((s, g) => s + g.size, 0)}</div>
+        <div class="muted" style="font-size:12.5px">${short < 0
+          ? `<span style="color:var(--red)">${-short} ${tr('more than the room holds')}</span>`
+          : `${short} ${tr('spare')}`}</div></div>
+    </section>
+
+    <div class="seatzone pool" data-zone="" ${canWrite() ? '' : 'data-locked="1"'}>
+      <div class="seathead"><b>${tr('Not seated yet')}</b><span class="muted">${state.unseated.length}</span></div>
+      <div class="seatchips">${state.unseated.map(chip).join('')
+    || `<span class="muted seatempty">${t.parties ? tr('Everyone has a chair.') : tr('Confirmed guests show up here.')}</span>`}</div>
+    </div>
+
+    <div class="seatgrid">
+      ${state.tables.map((tb) => `<div class="seatzone${tb.over ? ' is-over' : ''}${tb.free === 0 && !tb.over ? ' is-full' : ''}" data-zone="${tb.id}" data-free="${tb.free}">
+        <div class="seathead">
+          <b>${tr('Table')} ${esc(tb.name)}</b>
+          <span class="seatcount${tb.over ? ' over' : ''}">${tb.taken}/${tb.capacity}</span>
+          ${canWrite() ? `<button class="btn danger tiny" data-tdel="${tb.id}" aria-label="${tr('Delete')}">✕</button>` : ''}
+        </div>
+        <div class="seatchips">${tb.guests.map(chip).join('') || `<span class="muted seatempty">${tr('empty')}</span>`}</div>
+        ${tb.over ? `<div class="badge warn" style="margin:8px 10px 10px">${tb.taken - tb.capacity} ${tr('over capacity')}</div>` : ''}
+      </div>`).join('')}
+    </div>
+
+    ${canWrite() ? `<div class="card" style="margin-top:14px">
+      <div class="subform" style="margin-top:0;padding-top:0;border-top:0">
+        <h4>${tr('Add tables')}</h4>
+        <form id="seatform" class="formgrid">
+          <div><label>${tr('How many')}</label><input name="count" type="number" min="1" max="50" step="1" value="1" required></div>
+          <div><label>${tr('Seats each')}</label><input name="capacity" type="number" min="1" step="1" required></div>
+          <button class="btn small">${tr('Add tables')}</button>
+        </form>
+        <p class="muted" style="margin:10px 0 0;font-size:12.5px">${tr('Drag a guest onto a table, or tap the guest and then the table.')}</p>
+      </div>
+    </div>` : ''}`;
+
+  if (!canWrite()) return;
+  wireSeating(host, () => refreshSeating(host));
+  host.querySelector('#seatform').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      const next = await api('/seating/tables', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) });
+      seatingPlan(host, next);
+    } catch (err) { toast(err.message, 'error'); }
+  });
+  host.querySelectorAll('[data-tdel]').forEach((b) => (b.onclick = async () => {
+    try { seatingPlan(host, await api('/seating/tables/' + b.dataset.tdel, { method: 'DELETE' })); }
+    catch (err) { toast(err.message, 'error'); }
+  }));
+}
+async function refreshSeating(host) {
+  try { seatingPlan(host, await api('/seating')); } catch (err) { toast(err.message, 'error'); }
+}
+// Assign, then redraw from what the server says rather than from what we hoped — a rejected move
+// (the table is full) has to leave the guest visibly where they were.
+async function seatAssign(host, itemId, zone) {
+  try {
+    SEAT_PICKED = null;
+    seatingPlan(host, await api('/seating/assign', { method: 'POST', body: { item_id: itemId, table_id: zone === '' ? null : zone } }));
+  } catch (err) {
+    const d = err.data || {};
+    // "does not fit" is the one refusal a user will actually hit, and it is only useful with the
+    // numbers in it — so it is written here, per language, rather than translated from the server.
+    toast(d.capacity != null
+      ? (LANG === 'ro'
+        ? `Nu încap la masa ${d.table}: are ${d.capacity} locuri, ${d.taken} ocupate, iar invitația asta cere ${d.needs}.`
+        : `They do not fit at table ${d.table}: ${d.capacity} seats, ${d.taken} taken, this invitation needs ${d.needs}.`)
+      : err.message, 'error');
+    refreshSeating(host);
+  }
+}
+/* The pointer listeners go on the container, which survives every re-render — so they are attached
+   exactly once. Binding them per render instead stacked a fresh set on each redraw: one tap then ran
+   the handler N times, and since a tap toggles the selection, an even N picked the guest up and put
+   them straight back down. It looked like the tap simply stopped working after a few moves. The zone
+   clicks are re-bound every render because those elements are rebuilt, and `onclick =` replaces
+   rather than accumulates. */
+function wireSeating(host, _refresh) {
+  const DRAG_SLOP = 6; // below this a press is a tap, not a drag — thumbs are never still
+  const zoneAt = (x, y) => document.elementFromPoint(x, y)?.closest('.seatzone');
+  const clearHover = () => host.querySelectorAll('.seatzone').forEach((z) => z.classList.remove('is-hover', 'is-reject'));
+  // the second half of tap-to-place, re-bound each render
+  host.querySelectorAll('.seatzone').forEach((z) => (z.onclick = (e) => {
+    if (SEAT_PICKED == null || e.target.closest('[data-guest]') || e.target.closest('button.btn')) return;
+    seatAssign(host, SEAT_PICKED, z.dataset.zone);
+  }));
+  if (host._seatWired) return;
+  host._seatWired = true;
+  let drag = null;
+
+  host.addEventListener('pointerdown', (e) => {
+    const el = e.target.closest('[data-guest]');
+    if (!el || e.button > 0) return;
+    e.preventDefault();
+    drag = { el, id: Number(el.dataset.guest), size: Number(el.dataset.size), x: e.clientX, y: e.clientY, moved: false, ghost: null };
+    el.setPointerCapture(e.pointerId);
+  });
+  host.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    if (!drag.moved && Math.hypot(e.clientX - drag.x, e.clientY - drag.y) < DRAG_SLOP) return;
+    if (!drag.moved) {
+      drag.moved = true;
+      const r = drag.el.getBoundingClientRect();
+      drag.dx = drag.x - r.left; drag.dy = drag.y - r.top;
+      drag.ghost = drag.el.cloneNode(true);
+      drag.ghost.className = 'seatchip seatghost';
+      drag.ghost.style.width = `${r.width}px`;
+      document.body.appendChild(drag.ghost);
+      drag.el.classList.add('is-dragging');
+      document.body.classList.add('seat-dragging');
+    }
+    drag.ghost.style.transform = `translate(${e.clientX - drag.dx}px, ${e.clientY - drag.dy}px)`;
+    clearHover();
+    const z = zoneAt(e.clientX, e.clientY);
+    // free is absent on the pool, which always has room
+    if (z) z.classList.add(z.dataset.free !== undefined && Number(z.dataset.free) < drag.size ? 'is-reject' : 'is-hover');
+  });
+  const finish = (e) => {
+    if (!drag) return;
+    const d = drag; drag = null;
+    document.body.classList.remove('seat-dragging');
+    d.ghost?.remove();
+    d.el.classList.remove('is-dragging');
+    clearHover();
+    if (!d.moved) { // a tap: pick up, or put down where it already is
+      SEAT_PICKED = SEAT_PICKED === d.id ? null : d.id;
+      host.querySelectorAll('[data-guest]').forEach((c) => {
+        const on = Number(c.dataset.guest) === SEAT_PICKED;
+        c.classList.toggle('is-picked', on);
+        c.setAttribute('aria-pressed', on);
+      });
+      return;
+    }
+    const z = zoneAt(e.clientX, e.clientY);
+    if (!z) return;                                   // dropped outside: nothing moves
+    if (z.dataset.zone === String(d.el.closest('.seatzone')?.dataset.zone)) return; // same place
+    seatAssign(host, d.id, z.dataset.zone);
+  };
+  host.addEventListener('pointerup', finish);
+  host.addEventListener('pointercancel', () => {
+    if (!drag) return;
+    document.body.classList.remove('seat-dragging');
+    drag.ghost?.remove();
+    drag.el.classList.remove('is-dragging');
+    clearHover();
+    drag = null;
+  });
+}
+
+let BAPTISM_VIEW = 'guests';
 async function viewLists(el, tab = 'buy') {
   const [items, members] = await Promise.all([api('/lists'), api('/family/members')]);
   const def = LIST_DEFS.find((d) => d[0] === tab);
@@ -3955,6 +4144,11 @@ async function viewLists(el, tab = 'buy') {
   const openCount = rows.filter((i) => !i.done).length;
   el.innerHTML = `<div class="pagehead"><div><h1>Lists</h1><p>Wishlists, groceries and personal goals for the whole family.</p></div></div>
     <div class="tabs" style="max-width:680px">${LIST_DEFS.map(([k, l]) => `<button data-t="${k}" class="${k === tab ? 'active' : ''}">${l}</button>`).join('')}</div>
+    ${tab === 'baptism' ? `<div class="tabs" style="max-width:360px;margin-top:-4px">
+      ${[['guests', 'Invitations'], ['seating', 'Seating']].map(([k, l]) =>
+    `<button data-sub="${k}" class="${k === BAPTISM_VIEW ? 'active' : ''}">${tr(l)}</button>`).join('')}
+    </div>` : ''}
+    ${tab === 'baptism' && BAPTISM_VIEW === 'seating' ? '<div id="seatplan">…</div>' : `
     <div class="card">
       ${canWrite() ? `<form id="listform" class="formgrid">
         <div><label>${tab === 'baptism' ? tr('Invitation') : tab === 'targets' ? 'Target' : 'Item'}</label><input name="title" placeholder="${esc(def[2])}" required></div>
@@ -3978,8 +4172,13 @@ async function viewLists(el, tab = 'buy') {
           <td class="right amount">${i.amount ? money(i.amount) : ''}</td>
           <td class="right">${canWrite() ? `<button class="btn danger small" data-del="${i.id}">✕</button>` : ''}</td></tr>`).join('')}
       </tbody></table>` : `<div class="empty" style="margin-top:10px"><b>Nothing here yet</b>Add the first item above.</div>`}
-    </div>`;
-  el.querySelectorAll('.tabs button').forEach((b) => (b.onclick = () => viewLists(el, b.dataset.t)));
+    </div>`}`;
+  el.querySelectorAll('.tabs button[data-t]').forEach((b) => (b.onclick = () => viewLists(el, b.dataset.t)));
+  el.querySelectorAll('.tabs button[data-sub]').forEach((b) => (b.onclick = () => {
+    BAPTISM_VIEW = b.dataset.sub; SEAT_PICKED = null; viewLists(el, tab);
+  }));
+  const plan = el.querySelector('#seatplan');
+  if (plan) { refreshSeating(plan); return; }
   $('#listform')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     try { await api('/lists', { method: 'POST', body: { ...Object.fromEntries(new FormData(e.target)), list: tab } }); viewLists(el, tab); }

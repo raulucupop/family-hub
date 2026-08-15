@@ -2186,7 +2186,10 @@ app.post('/api/lists/:id/rsvp', auth, canWrite, (req, res) => {
   if (!row) return res.status(404).json({ error: 'Not found' });
   const want = ['yes', 'no'].includes(req.body?.rsvp) ? req.body.rsvp : null;
   const next = row.rsvp === want ? null : want;
-  db.prepare('UPDATE list_items SET rsvp = ? WHERE id = ?').run(next, row.id);
+  // Taking back a yes takes back the chair. Leaving them seated would keep a person in the plan the
+  // venue is given after they said they are not coming — the kind of error nobody re-checks.
+  db.prepare('UPDATE list_items SET rsvp = ?, table_id = CASE WHEN ? = \'yes\' THEN table_id ELSE NULL END WHERE id = ?')
+    .run(next, next, row.id);
   res.json({ ok: true, rsvp: next });
 });
 // How many are actually coming, which is rarely how many you invited — a family of four answers
@@ -2222,6 +2225,105 @@ app.post('/api/lists/:id/toggle', auth, canWrite, (req, res) => {
   if (!info.changes) return res.status(404).json({ error: 'Not found' });
   res.json({ ok: true });
 });
+/* ---------- seating plan ----------
+   What moves is the invitation, not the person: the data has head counts, not names, so "Familia
+   Popescu" is four chairs that sit together. Capacity is checked when you place a party — a plan the
+   room cannot hold is worse than no plan, since it gets handed to the venue. It is NOT checked when
+   you later edit head counts: if two more say yes, the truth is that two more are coming, and the
+   table showing as over capacity is the useful outcome rather than a rejected edit. */
+const partySize = (r) => (Number(r.adults) || 0) + (Number(r.kids) || 0) + (Number(r.seats) || 0);
+const GUEST_COLS = 'id, title, note, adults, kids, seats, table_id';
+function seatingState(fid) {
+  const tables = db.prepare('SELECT * FROM event_tables WHERE family_id = ? ORDER BY sort, id').all(fid);
+  const guests = db.prepare(`SELECT ${GUEST_COLS} FROM list_items
+    WHERE family_id = ? AND list = 'baptism' AND rsvp = 'yes' ORDER BY title`).all(fid)
+    .map((g) => ({ ...g, size: partySize(g) }));
+  const seated = (tid) => guests.filter((g) => g.table_id === tid);
+  return {
+    tables: tables.map((t) => {
+      const at = seated(t.id);
+      const taken = at.reduce((s, g) => s + g.size, 0);
+      return { ...t, guests: at, taken, free: t.capacity - taken, over: taken > t.capacity };
+    }),
+    unseated: guests.filter((g) => g.table_id == null),
+    totals: {
+      confirmed: guests.reduce((s, g) => s + g.size, 0),
+      capacity: tables.reduce((s, t) => s + t.capacity, 0),
+      parties: guests.length,
+    },
+  };
+}
+app.get('/api/seating', auth, (req, res) => res.json(seatingState(req.user.family_id)));
+
+app.post('/api/seating/tables', auth, canWrite, (req, res) => {
+  const b = req.body || {};
+  const capacity = Math.round(Number(b.capacity));
+  if (!(capacity > 0)) return res.status(400).json({ error: 'A table needs at least one seat' });
+  // count lets "two tables of five" be one action instead of two identical forms
+  const count = b.count == null || b.count === '' ? 1 : Math.round(Number(b.count));
+  if (!(count > 0 && count <= 50)) return res.status(400).json({ error: 'Add between 1 and 50 tables at a time' });
+  const last = db.prepare('SELECT COALESCE(MAX(sort), 0) s, COUNT(*) n FROM event_tables WHERE family_id = ?').get(req.user.family_id);
+  const ins = db.prepare('INSERT INTO event_tables (family_id, name, capacity, sort) VALUES (?,?,?,?)');
+  db.transaction(() => {
+    for (let i = 0; i < count; i++) {
+      // an unnamed table is numbered by position, which is how everyone refers to them anyway
+      const name = str(b.name) && count === 1 ? str(b.name) : `${last.n + i + 1}`;
+      ins.run(req.user.family_id, name, capacity, last.s + i + 1);
+    }
+  })();
+  res.json(seatingState(req.user.family_id));
+});
+app.put('/api/seating/tables/:id', auth, canWrite, (req, res) => {
+  const row = db.prepare('SELECT * FROM event_tables WHERE id = ? AND family_id = ?').get(req.params.id, req.user.family_id);
+  if (!row) return res.status(404).json({ error: 'Not found' });
+  const b = req.body || {};
+  const capacity = b.capacity === undefined ? row.capacity : Math.round(Number(b.capacity));
+  if (!(capacity > 0)) return res.status(400).json({ error: 'A table needs at least one seat' });
+  db.prepare('UPDATE event_tables SET name = ?, capacity = ? WHERE id = ?')
+    .run(b.name === undefined ? row.name : (str(b.name) || row.name), capacity, row.id);
+  res.json(seatingState(req.user.family_id));
+});
+// Deleting a table sends its guests back to the pool rather than deleting them with it — losing an
+// invitation because a table was removed would be a quiet, expensive mistake.
+app.delete('/api/seating/tables/:id', auth, canWrite, (req, res) => {
+  const row = db.prepare('SELECT id FROM event_tables WHERE id = ? AND family_id = ?').get(req.params.id, req.user.family_id);
+  if (!row) return res.json(seatingState(req.user.family_id));
+  db.transaction(() => {
+    db.prepare('UPDATE list_items SET table_id = NULL WHERE table_id = ? AND family_id = ?').run(row.id, req.user.family_id);
+    db.prepare('DELETE FROM event_tables WHERE id = ?').run(row.id);
+  })();
+  res.json(seatingState(req.user.family_id));
+});
+app.post('/api/seating/assign', auth, canWrite, (req, res) => {
+  const b = req.body || {};
+  const guest = db.prepare("SELECT * FROM list_items WHERE id = ? AND family_id = ? AND list = 'baptism'")
+    .get(b.item_id, req.user.family_id);
+  if (!guest) return res.status(404).json({ error: 'Not found' });
+  // Only confirmed guests get a chair. Seating a maybe means the plan quietly counts someone who
+  // never said they were coming.
+  if (guest.rsvp !== 'yes') return res.status(400).json({ error: 'Only confirmed guests can be seated' });
+  if (b.table_id == null || b.table_id === '') {
+    db.prepare('UPDATE list_items SET table_id = NULL WHERE id = ?').run(guest.id);
+    return res.json(seatingState(req.user.family_id));
+  }
+  const table = db.prepare('SELECT * FROM event_tables WHERE id = ? AND family_id = ?').get(b.table_id, req.user.family_id);
+  if (!table) return res.status(404).json({ error: 'No such table' });
+  if (guest.table_id !== table.id) {
+    const taken = db.prepare(`SELECT COALESCE(SUM(COALESCE(adults,0) + COALESCE(kids,0) + COALESCE(seats,0)), 0) t
+      FROM list_items WHERE family_id = ? AND list = 'baptism' AND rsvp = 'yes' AND table_id = ?`)
+      .get(req.user.family_id, table.id).t;
+    const size = partySize(guest);
+    if (taken + size > table.capacity) {
+      return res.status(400).json({
+        error: `They do not fit: table ${table.name} seats ${table.capacity}, ${taken} taken, this invitation needs ${size}`,
+        table: table.name, capacity: table.capacity, taken, needs: size,
+      });
+    }
+  }
+  db.prepare('UPDATE list_items SET table_id = ? WHERE id = ?').run(table.id, guest.id);
+  res.json(seatingState(req.user.family_id));
+});
+
 app.delete('/api/lists/:id', auth, canWrite, (req, res) => {
   db.prepare('DELETE FROM list_items WHERE id = ? AND family_id = ?').run(req.params.id, req.user.family_id);
   res.json({ ok: true });

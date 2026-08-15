@@ -1059,6 +1059,38 @@ th[data-sort="desc"]::after { content: " ▼"; }
   * { animation: none !important; transition: none !important; }
 }
 
+/* ---------- seating plan ----------
+   touch-action:none on the chips is what makes a drag work on a phone: without it the browser claims
+   the gesture for scrolling and pointermove stops arriving mid-drag. It is scoped to the chips, so
+   the page still scrolls normally when you push anywhere else. */
+.seatgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; margin-top: 12px; }
+.seatzone { background: var(--card); border: 1px solid var(--line); border-radius: 12px; min-height: 92px; transition: border-color .15s, background .15s; }
+.seatzone.pool { margin-top: 12px; background: var(--paper); }
+.seathead { display: flex; align-items: center; gap: 8px; padding: 10px 12px 0; }
+.seathead b { flex: 1 1 auto; min-width: 0; }
+.seatcount { font-family: ui-monospace, monospace; font-size: 13px; color: var(--ink-soft); }
+.seatcount.over { color: var(--red); font-weight: 700; }
+.seatchips { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 12px 12px; }
+.seatempty { font-size: 12.5px; font-style: italic; }
+.seatchip {
+  display: inline-flex; align-items: center; gap: 7px; max-width: 100%;
+  padding: 7px 10px; border: 1px solid var(--line); border-radius: 999px;
+  background: var(--card); color: inherit; font: inherit; font-size: 13.5px; text-align: left;
+  cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none;
+}
+.seatname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.seatnum { flex: 0 0 auto; min-width: 20px; padding: 1px 6px; border-radius: 999px; background: var(--rule); color: var(--card); font-size: 12px; font-weight: 700; text-align: center; }
+.seatchip.is-picked { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent); }
+.seatchip.is-dragging { opacity: .35; }
+.seatghost { position: fixed; top: 0; left: 0; z-index: 90; pointer-events: none; box-shadow: 0 8px 20px rgb(0 0 0 / .28); cursor: grabbing; }
+/* while a drag is in flight nothing else should look interactive or select under the finger */
+body.seat-dragging { cursor: grabbing; user-select: none; -webkit-user-select: none; }
+.seatzone.is-hover { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 9%, var(--card)); }
+.seatzone.is-reject { border-color: var(--red); background: color-mix(in srgb, var(--red) 8%, var(--card)); }
+.seatzone.is-full { border-style: dashed; }
+.seatzone.is-over { border-color: var(--red); }
+@media (max-width: 560px) { .seatgrid { grid-template-columns: 1fr; } }
+
 /* The browser's own [hidden] rule is display:none at author-beaten priority, so ANY class that sets
    display — .formgrid, .toast, .modalwrap, .sheet — silently un-hides an element the markup says is
    hidden. That trap had been patched five separate times, once per component, each after someone hit
