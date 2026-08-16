@@ -173,6 +173,8 @@ const RO = {
   'Confirmed guests show up here.': 'Invitații confirmați apar aici.',
   'Table': 'Masa', 'empty': 'goală', 'over capacity': 'peste capacitate',
   'Add tables': 'Adaugă mese', 'How many': 'Câte', 'Seats each': 'Locuri la fiecare',
+  'Rename this table': 'Redenumește masa', 'Name for this table': 'Numele mesei',
+  'How many seats does it have?': 'Câte locuri are?', 'Cancel': 'Renunță',
   'Drag a guest onto a table, or tap the guest and then the table.': 'Trage un invitat pe o masă, sau apasă invitatul și apoi masa.',
   // charts & insights
   'What you kept': 'Ce ai păstrat', 'Kept': 'Păstrat',
@@ -3973,6 +3975,10 @@ async function viewChores(el, tab = 'daily') {
    and it is what keyboard users get for free since the chips are buttons. */
 let SEAT_PICKED = null; // guest id held by the tap-to-place path, across re-renders
 
+/* "Table" belongs in front of a number, not in front of a name somebody chose: table 4 reads right,
+   "Table Top table" does not. So the word is added only when the name is bare digits. */
+const tableLabel = (name) => (/^\d+$/.test(String(name)) ? `${tr('Table')} ${name}` : String(name));
+
 function seatingPlan(host, state) {
   const t = state.totals;
   const short = t.capacity - t.confirmed;
@@ -4002,10 +4008,18 @@ function seatingPlan(host, state) {
     <div class="seatgrid">
       ${state.tables.map((tb) => `<div class="seatzone${tb.over ? ' is-over' : ''}${tb.free === 0 && !tb.over ? ' is-full' : ''}" data-zone="${tb.id}" data-free="${tb.free}">
         <div class="seathead">
-          <b>${tr('Table')} ${esc(tb.name)}</b>
+          ${canWrite()
+    ? `<button type="button" class="seatrename" data-trename="${tb.id}" title="${tr('Rename this table')}"><b>${esc(tableLabel(tb.name))}</b></button>`
+    : `<b>${esc(tableLabel(tb.name))}</b>`}
           <span class="seatcount${tb.over ? ' over' : ''}">${tb.taken}/${tb.capacity}</span>
           ${canWrite() ? `<button class="btn danger tiny" data-tdel="${tb.id}" aria-label="${tr('Delete')}">✕</button>` : ''}
         </div>
+        ${canWrite() ? `<form class="seatedit" data-tedit="${tb.id}" hidden>
+          <input name="name" value="${esc(tb.name)}" aria-label="${tr('Name for this table')}" required>
+          <input name="capacity" type="number" min="1" step="1" value="${tb.capacity}" aria-label="${tr('How many seats does it have?')}">
+          <button class="btn small" type="submit">${tr('Save')}</button>
+          <button class="btn ghost small" type="button" data-tcancel="${tb.id}">${tr('Cancel')}</button>
+        </form>` : ''}
         <div class="seatchips">${tb.guests.map(chip).join('') || `<span class="muted seatempty">${tr('empty')}</span>`}</div>
         ${tb.over ? `<div class="badge warn" style="margin:8px 10px 10px">${tb.taken - tb.capacity} ${tr('over capacity')}</div>` : ''}
       </div>`).join('')}
@@ -4036,6 +4050,32 @@ function seatingPlan(host, state) {
     try { seatingPlan(host, await api('/seating/tables/' + b.dataset.tdel, { method: 'DELETE' })); }
     catch (err) { toast(err.message, 'error'); }
   }));
+  /* Rename and resize together: both are corrections to the same thing — what the venue actually
+     gave you — and they get noticed at the same moment. Edited in place rather than through a
+     native prompt(): this is a surface you manipulate directly, and a modal dialog interrupting it
+     reads as a different application, most of all on a phone. */
+  const closeEdits = () => host.querySelectorAll('.seatedit').forEach((f) => { f.hidden = true; f.reset(); });
+  host.querySelectorAll('[data-trename]').forEach((b) => (b.onclick = () => {
+    const form = host.querySelector(`[data-tedit="${b.dataset.trename}"]`);
+    const wasOpen = !form.hidden;
+    closeEdits();
+    if (wasOpen) return;
+    form.hidden = false;
+    const input = form.querySelector('[name=name]');
+    input.focus();
+    input.select();
+  }));
+  host.querySelectorAll('[data-tcancel]').forEach((b) => (b.onclick = closeEdits));
+  host.querySelectorAll('[data-tedit]').forEach((f) => {
+    f.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const body = Object.fromEntries(new FormData(f));
+      try { seatingPlan(host, await api('/seating/tables/' + f.dataset.tedit, { method: 'PUT', body })); }
+      catch (err) { toast(err.message, 'error'); }
+    });
+    // Escape backs out without saving, which is the only way out people try first
+    f.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); closeEdits(); } });
+  });
 }
 async function refreshSeating(host) {
   try { seatingPlan(host, await api('/seating')); } catch (err) { toast(err.message, 'error'); }
@@ -4052,8 +4092,8 @@ async function seatAssign(host, itemId, zone) {
     // numbers in it — so it is written here, per language, rather than translated from the server.
     toast(d.capacity != null
       ? (LANG === 'ro'
-        ? `Nu încap la masa ${d.table}: are ${d.capacity} locuri, ${d.taken} ocupate, iar invitația asta cere ${d.needs}.`
-        : `They do not fit at table ${d.table}: ${d.capacity} seats, ${d.taken} taken, this invitation needs ${d.needs}.`)
+        ? `Nu încap la ${tableLabel(d.table).toLowerCase()}: are ${d.capacity} locuri, ${d.taken} ocupate, iar invitația asta cere ${d.needs}.`
+        : `They do not fit at ${tableLabel(d.table).toLowerCase()}: ${d.capacity} seats, ${d.taken} taken, this invitation needs ${d.needs}.`)
       : err.message, 'error');
     refreshSeating(host);
   }

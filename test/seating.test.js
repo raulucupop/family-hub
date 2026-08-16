@@ -27,6 +27,94 @@ test('the room is described by its tables, and counted against who is coming', a
     'unnamed tables are numbered by position, which is how people refer to them');
 });
 
+test('numbering counts up from the highest used, so a deletion never makes two tables share a name', async (t) => {
+  const api = await startServer();
+  t.after(() => api.stop());
+  await api.post('/api/seating/tables', { count: 5, capacity: 6 });   // 1 2 3 4 5
+  const s0 = await seating(api);
+  // delete one from the MIDDLE: that is the case that used to collide, because counting what was
+  // left gave 4, and 4 + 1 is a name still painted on a table nobody removed
+  await api.del(`/api/seating/tables/${s0.tables.find((x) => x.name === '3').id}`);
+  await api.post('/api/seating/tables', { count: 1, capacity: 10 });
+
+  const names = (await seating(api)).tables.map((x) => x.name);
+  assert.deepEqual(names, ['1', '2', '4', '5', '6'],
+    'counting the tables instead named the new one 5, beside the 5 still on the wall');
+  assert.equal(new Set(names).size, names.length);
+
+  await t.test('the number of a table that is gone can be handed out again', async () => {
+    // nothing in the room carries that number any more, so filling the gap is right
+    const before = (await seating(api)).tables.map((x) => x.name);
+    assert.ok(!before.includes('3'));
+    await api.post('/api/seating/tables', { count: 1, capacity: 6, name: '3' });
+    const after = (await seating(api)).tables.map((x) => x.name);
+    assert.ok(after.includes('3'));
+    assert.equal(new Set(after).size, after.length);
+  });
+
+  await t.test('and it steps over a number a custom name happens to occupy', async () => {
+    const cur = await seating(api);
+    await api.put(`/api/seating/tables/${cur.tables[0].id}`, { name: '7' });
+    await api.post('/api/seating/tables', { count: 2, capacity: 6 });
+    const after = (await seating(api)).tables.map((x) => x.name);
+    assert.equal(new Set(after).size, after.length, after.join(','));
+    assert.ok(after.includes('8') && after.includes('9'), after.join(','));
+  });
+
+  await t.test('a custom name is left alone by later numbering', async () => {
+    const cur = await seating(api);
+    await api.put(`/api/seating/tables/${cur.tables[1].id}`, { name: 'Masa mirilor' });
+    await api.post('/api/seating/tables', { count: 1, capacity: 6 });
+    const after = (await seating(api)).tables.map((x) => x.name);
+    assert.ok(after.includes('Masa mirilor'), 'a name someone chose is not renumbered away');
+    assert.equal(new Set(after).size, after.length, after.join(','));
+  });
+});
+
+test('tables can be renamed and resized, but not into a name already in use', async (t) => {
+  const api = await startServer();
+  t.after(() => api.stop());
+  await api.post('/api/seating/tables', { count: 2, capacity: 6 });
+  const s0 = await seating(api);
+  const [one, two] = s0.tables;
+
+  await t.test('renaming keeps everything else about the table', async () => {
+    const g = (await guest(api, 'Familia Pop', 4)).body;
+    await api.post('/api/seating/assign', { item_id: g.id, table_id: one.id });
+    const s = (await api.put(`/api/seating/tables/${one.id}`, { name: 'Masa mirilor' })).body;
+    const t1 = s.tables.find((x) => x.id === one.id);
+    assert.equal(t1.name, 'Masa mirilor');
+    assert.equal(t1.capacity, 6);
+    assert.deepEqual(t1.guests.map((x) => x.title), ['Familia Pop'], 'the guests do not move because the sign did');
+  });
+
+  await t.test('the seat count can be corrected too', async () => {
+    const s = (await api.put(`/api/seating/tables/${one.id}`, { capacity: 8 })).body;
+    assert.equal(s.tables.find((x) => x.id === one.id).capacity, 8);
+    assert.equal(s.tables.find((x) => x.id === one.id).name, 'Masa mirilor', 'and the name survives a resize');
+    assert.equal(s.totals.capacity, 14);
+  });
+
+  await t.test('a duplicate name is refused', async () => {
+    const r = await api.put(`/api/seating/tables/${two.id}`, { name: 'Masa mirilor' });
+    assert.equal(r.status, 400, r.text);
+    assert.match(r.body.error, /already a table called Masa mirilor/);
+    assert.equal((await seating(api)).tables.find((x) => x.id === two.id).name, '2', 'and nothing changed');
+  });
+
+  await t.test('renaming a table to what it is already called is not a clash with itself', async () => {
+    const r = await api.put(`/api/seating/tables/${two.id}`, { name: '2', capacity: 9 });
+    assert.equal(r.status, 200, r.text);
+    assert.equal(r.body.tables.find((x) => x.id === two.id).capacity, 9);
+  });
+
+  await t.test('an empty name leaves the old one rather than blanking the table', async () => {
+    const r = await api.put(`/api/seating/tables/${two.id}`, { name: '   ' });
+    assert.equal(r.status, 200, r.text);
+    assert.equal(r.body.tables.find((x) => x.id === two.id).name, '2');
+  });
+});
+
 test('a party is seated whole, and a table cannot be overfilled', async (t) => {
   const api = await startServer();
   t.after(() => api.stop());

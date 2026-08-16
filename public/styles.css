@@ -1068,6 +1068,13 @@ th[data-sort="desc"]::after { content: " ▼"; }
 .seatzone.pool { margin-top: 12px; background: var(--paper); }
 .seathead { display: flex; align-items: center; gap: 8px; padding: 10px 12px 0; }
 .seathead b { flex: 1 1 auto; min-width: 0; }
+/* the name is the rename control; it should read as a heading until you go near it */
+.seatrename { flex: 1 1 auto; min-width: 0; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: text; }
+.seatrename b { border-bottom: 1px dashed transparent; }
+.seatrename:hover b, .seatrename:focus-visible b { border-bottom-color: var(--rule); }
+.seatedit { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 12px 0; }
+.seatedit input[name="name"] { flex: 1 1 120px; min-width: 0; }
+.seatedit input[name="capacity"] { flex: 0 0 72px; }
 .seatcount { font-family: ui-monospace, monospace; font-size: 13px; color: var(--ink-soft); }
 .seatcount.over { color: var(--red); font-weight: 700; }
 .seatchips { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 12px 12px; }

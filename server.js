@@ -2255,6 +2255,26 @@ function seatingState(fid) {
 }
 app.get('/api/seating', auth, (req, res) => res.json(seatingState(req.user.family_id)));
 
+/* Numbering counts up from the highest number already used, never from how many tables exist. Using
+   the count meant that deleting one made the next table reuse a name still painted on another: add
+   five, delete one, add one more and you had two tables called 6 and no table called 5. Custom names
+   are skipped over rather than counted, and a name already taken is stepped past. */
+function nextTableNames(fid, count, alsoTaken = []) {
+  const taken = new Set([...db.prepare('SELECT name FROM event_tables WHERE family_id = ?').all(fid).map((r) => r.name), ...alsoTaken]);
+  let n = 0;
+  for (const name of taken) {
+    const v = Number(name);
+    if (Number.isInteger(v) && v > n) n = v;
+  }
+  const out = [];
+  for (let i = 0; i < count; i++) {
+    let candidate = String(++n);
+    while (taken.has(candidate)) candidate = String(++n);
+    taken.add(candidate);
+    out.push(candidate);
+  }
+  return out;
+}
 app.post('/api/seating/tables', auth, canWrite, (req, res) => {
   const b = req.body || {};
   const capacity = Math.round(Number(b.capacity));
@@ -2262,16 +2282,16 @@ app.post('/api/seating/tables', auth, canWrite, (req, res) => {
   // count lets "two tables of five" be one action instead of two identical forms
   const count = b.count == null || b.count === '' ? 1 : Math.round(Number(b.count));
   if (!(count > 0 && count <= 50)) return res.status(400).json({ error: 'Add between 1 and 50 tables at a time' });
-  const last = db.prepare('SELECT COALESCE(MAX(sort), 0) s, COUNT(*) n FROM event_tables WHERE family_id = ?').get(req.user.family_id);
+  const fid = req.user.family_id;
+  const wanted = str(b.name);
+  if (wanted && count === 1 && db.prepare('SELECT id FROM event_tables WHERE family_id = ? AND name = ?').get(fid, wanted)) {
+    return res.status(400).json({ error: `There is already a table called ${wanted}` });
+  }
+  const names = wanted && count === 1 ? [wanted] : nextTableNames(fid, count);
+  const last = db.prepare('SELECT COALESCE(MAX(sort), 0) s FROM event_tables WHERE family_id = ?').get(fid).s;
   const ins = db.prepare('INSERT INTO event_tables (family_id, name, capacity, sort) VALUES (?,?,?,?)');
-  db.transaction(() => {
-    for (let i = 0; i < count; i++) {
-      // an unnamed table is numbered by position, which is how everyone refers to them anyway
-      const name = str(b.name) && count === 1 ? str(b.name) : `${last.n + i + 1}`;
-      ins.run(req.user.family_id, name, capacity, last.s + i + 1);
-    }
-  })();
-  res.json(seatingState(req.user.family_id));
+  db.transaction(() => names.forEach((name, i) => ins.run(fid, name, capacity, last + i + 1)))();
+  res.json(seatingState(fid));
 });
 app.put('/api/seating/tables/:id', auth, canWrite, (req, res) => {
   const row = db.prepare('SELECT * FROM event_tables WHERE id = ? AND family_id = ?').get(req.params.id, req.user.family_id);
@@ -2279,8 +2299,13 @@ app.put('/api/seating/tables/:id', auth, canWrite, (req, res) => {
   const b = req.body || {};
   const capacity = b.capacity === undefined ? row.capacity : Math.round(Number(b.capacity));
   if (!(capacity > 0)) return res.status(400).json({ error: 'A table needs at least one seat' });
-  db.prepare('UPDATE event_tables SET name = ?, capacity = ? WHERE id = ?')
-    .run(b.name === undefined ? row.name : (str(b.name) || row.name), capacity, row.id);
+  const name = b.name === undefined ? row.name : (str(b.name) || row.name);
+  // Two tables with the same name make the plan ambiguous for the one person it is written for —
+  // whoever is carrying it around the room on the day.
+  if (name !== row.name && db.prepare('SELECT id FROM event_tables WHERE family_id = ? AND name = ? AND id != ?').get(req.user.family_id, name, row.id)) {
+    return res.status(400).json({ error: `There is already a table called ${name}`, name });
+  }
+  db.prepare('UPDATE event_tables SET name = ?, capacity = ? WHERE id = ?').run(name, capacity, row.id);
   res.json(seatingState(req.user.family_id));
 });
 // Deleting a table sends its guests back to the pool rather than deleting them with it — losing an
