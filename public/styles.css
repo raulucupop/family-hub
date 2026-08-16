@@ -1077,6 +1077,7 @@ th[data-sort="desc"]::after { content: " ▼"; }
 .seatedit input[name="capacity"] { flex: 0 0 72px; }
 .seatcount { font-family: ui-monospace, monospace; font-size: 13px; color: var(--ink-soft); }
 .seatcount.over { color: var(--red); font-weight: 700; }
+.seatheads { padding: 3px 12px 0; color: var(--ink-soft); font-size: 12.5px; }
 .seatchips { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 12px 12px; }
 .seatempty { font-size: 12.5px; font-style: italic; }
 .seatchip {

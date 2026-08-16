@@ -165,6 +165,40 @@ test('a party is seated whole, and a table cannot be overfilled', async (t) => {
   });
 });
 
+test('a table reports what is sitting at it, not just how many chairs are gone', async (t) => {
+  const api = await startServer();
+  t.after(() => api.stop());
+  await api.post('/api/seating/tables', { count: 1, capacity: 10 });
+  const tid = (await seating(api)).tables[0].id;
+  const a = (await guest(api, 'Familia Popescu', 2, 3, 1)).body;  // 2 adults, 3 children, 1 seat-only
+  const b = (await guest(api, 'Nașii', 2, 0, 0)).body;
+  await api.post('/api/seating/assign', { item_id: a.id, table_id: tid });
+  await api.post('/api/seating/assign', { item_id: b.id, table_id: tid });
+
+  const s = await seating(api);
+  assert.deepEqual(s.tables[0].heads, { adults: 4, kids: 3, seats: 1 });
+  assert.equal(s.tables[0].taken, 8, 'and the breakdown still adds up to the chairs used');
+  assert.equal(s.tables[0].heads.adults + s.tables[0].heads.kids + s.tables[0].heads.seats, s.tables[0].taken);
+
+  await t.test('the room total is broken out the same way', async () => {
+    await guest(api, 'Verii', 1, 1, 0);   // left unseated
+    const s2 = await seating(api);
+    assert.deepEqual(s2.totals.heads, { adults: 5, kids: 4, seats: 1 });
+    assert.equal(s2.totals.confirmed, 10);
+  });
+
+  await t.test('an empty table reports zeroes rather than nothing', async () => {
+    await api.post('/api/seating/tables', { count: 1, capacity: 6 });
+    const empty = (await seating(api)).tables.find((x) => x.taken === 0);
+    assert.deepEqual(empty.heads, { adults: 0, kids: 0, seats: 0 });
+  });
+
+  await t.test('moving someone away moves their make-up with them', async () => {
+    const s3 = (await api.post('/api/seating/assign', { item_id: a.id, table_id: null })).body;
+    assert.deepEqual(s3.tables.find((x) => x.id === tid).heads, { adults: 2, kids: 0, seats: 0 });
+  });
+});
+
 test('taking back a yes takes back the chair', async (t) => {
   const api = await startServer();
   t.after(() => api.stop());

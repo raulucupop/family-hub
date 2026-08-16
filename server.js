@@ -2232,6 +2232,14 @@ app.post('/api/lists/:id/toggle', auth, canWrite, (req, res) => {
    you later edit head counts: if two more say yes, the truth is that two more are coming, and the
    table showing as over capacity is the useful outcome rather than a rejected edit. */
 const partySize = (r) => (Number(r.adults) || 0) + (Number(r.kids) || 0) + (Number(r.seats) || 0);
+// A chair count is what the room has to hold; the caterer needs the same number broken out, because
+// a child and a seat-only guest are billed differently from an adult with a menu. Summed here rather
+// than in the browser so the table, the room total and anything else read from one definition.
+const headBreakdown = (rows) => rows.reduce((h, r) => ({
+  adults: h.adults + (Number(r.adults) || 0),
+  kids: h.kids + (Number(r.kids) || 0),
+  seats: h.seats + (Number(r.seats) || 0),
+}), { adults: 0, kids: 0, seats: 0 });
 const GUEST_COLS = 'id, title, note, adults, kids, seats, table_id';
 function seatingState(fid) {
   const tables = db.prepare('SELECT * FROM event_tables WHERE family_id = ? ORDER BY sort, id').all(fid);
@@ -2243,13 +2251,14 @@ function seatingState(fid) {
     tables: tables.map((t) => {
       const at = seated(t.id);
       const taken = at.reduce((s, g) => s + g.size, 0);
-      return { ...t, guests: at, taken, free: t.capacity - taken, over: taken > t.capacity };
+      return { ...t, guests: at, taken, free: t.capacity - taken, over: taken > t.capacity, heads: headBreakdown(at) };
     }),
     unseated: guests.filter((g) => g.table_id == null),
     totals: {
       confirmed: guests.reduce((s, g) => s + g.size, 0),
       capacity: tables.reduce((s, t) => s + t.capacity, 0),
       parties: guests.length,
+      heads: headBreakdown(guests),
     },
   };
 }

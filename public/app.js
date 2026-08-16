@@ -175,6 +175,7 @@ const RO = {
   'Add tables': 'Adaugă mese', 'How many': 'Câte', 'Seats each': 'Locuri la fiecare',
   'Rename this table': 'Redenumește masa', 'Name for this table': 'Numele mesei',
   'How many seats does it have?': 'Câte locuri are?', 'Cancel': 'Renunță',
+  'seat': 'scaun', 'seats': 'scaune',
   'Drag a guest onto a table, or tap the guest and then the table.': 'Trage un invitat pe o masă, sau apasă invitatul și apoi masa.',
   // charts & insights
   'What you kept': 'Ce ai păstrat', 'Kept': 'Păstrat',
@@ -3979,6 +3980,19 @@ let SEAT_PICKED = null; // guest id held by the tap-to-place path, across re-ren
    "Table Top table" does not. So the word is added only when the name is bare digits. */
 const tableLabel = (name) => (/^\d+$/.test(String(name)) ? `${tr('Table')} ${name}` : String(name));
 
+/* "6/6" says the table is full; it does not say what the kitchen has to cook. A child and a
+   seat-only guest are billed differently from an adult with a menu, so the same six chairs are
+   listed by what is actually sitting in them. Zeroes are dropped — "2 adults · 0 children · 0 seats"
+   is noise on a table that is simply two adults. */
+function headLine(h) {
+  if (!h) return '';
+  return [
+    h.adults ? `${h.adults} ${tr(h.adults === 1 ? 'adult' : 'adults')}` : null,
+    h.kids ? `${h.kids} ${tr(h.kids === 1 ? 'child' : 'children')}` : null,
+    h.seats ? `${h.seats} ${tr(h.seats === 1 ? 'seat' : 'seats')}` : null,
+  ].filter(Boolean).join(' · ');
+}
+
 function seatingPlan(host, state) {
   const t = state.totals;
   const short = t.capacity - t.confirmed;
@@ -3989,7 +4003,7 @@ function seatingPlan(host, state) {
   host.innerHTML = `
     <section class="kpi" style="margin:14px 0 4px">
       <div class="card"><div class="label">${tr('Confirmed')}</div><div class="value">${t.confirmed}</div>
-        <div class="muted" style="font-size:12.5px">${t.parties} ${tr(t.parties === 1 ? 'invitation' : 'invitations')}</div></div>
+        <div class="muted" style="font-size:12.5px">${headLine(t.heads) || `${t.parties} ${tr(t.parties === 1 ? 'invitation' : 'invitations')}`}</div></div>
       <div class="card"><div class="label">${tr('Seats in the room')}</div><div class="value">${t.capacity}</div>
         <div class="muted" style="font-size:12.5px">${state.tables.length} ${tr(state.tables.length === 1 ? 'table' : 'tables')}</div></div>
       <div class="card"><div class="label">${tr('Still to seat')}</div>
@@ -4014,6 +4028,7 @@ function seatingPlan(host, state) {
           <span class="seatcount${tb.over ? ' over' : ''}">${tb.taken}/${tb.capacity}</span>
           ${canWrite() ? `<button class="btn danger tiny" data-tdel="${tb.id}" aria-label="${tr('Delete')}">✕</button>` : ''}
         </div>
+        ${tb.taken ? `<div class="seatheads">${headLine(tb.heads)}</div>` : ''}
         ${canWrite() ? `<form class="seatedit" data-tedit="${tb.id}" hidden>
           <input name="name" value="${esc(tb.name)}" aria-label="${tr('Name for this table')}" required>
           <input name="capacity" type="number" min="1" step="1" value="${tb.capacity}" aria-label="${tr('How many seats does it have?')}">
