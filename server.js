@@ -2876,6 +2876,20 @@ function watchMail(lang, items) {
 
 // Checks every active site of every family. Safe to call often — that is the point: a notice posted
 // on Monday about a Thursday auction is only useful if you hear about it on Monday.
+/* Telling people, once, in one way. This lived inside the automatic sweep, which meant a manual
+   "check now" that found something raised the alert but sent no email: the person who pressed the
+   button knew and nobody else in the house did. Both paths come through here now. */
+async function announceFindings(fid, items) {
+  try { generateNotifications(fid); } catch (err) { console.error('watch alerts:', err.message); }
+  if (!items.length || !process.env.MAIL_FROM) return;
+  const groups = byLanguage(db.prepare("SELECT email, lang FROM users WHERE family_id = ? AND role IN ('admin','adult') AND email IS NOT NULL").all(fid));
+  for (const [lang, addrs] of Object.entries(groups)) {
+    const { subject, text, html } = watchMail(lang, items);
+    try { await sendMail(addrs, subject, text, undefined, html); }
+    catch (err) { console.error('watch mail:', err.message); }
+  }
+}
+
 async function runWatchers() {
   const byFamily = new Map();
   for (const site of db.prepare('SELECT * FROM watched_sites WHERE active = 1').all()) {
@@ -2886,15 +2900,7 @@ async function runWatchers() {
     list.push(...out.fresh.map((f) => ({ ...f, source: site.label })));
     byFamily.set(site.family_id, list);
   }
-  for (const [fid, items] of byFamily) {
-    try { generateNotifications(fid); } catch (err) { console.error('watch alerts:', err.message); }
-    if (!process.env.MAIL_FROM) continue;
-    const groups = byLanguage(db.prepare("SELECT email, lang FROM users WHERE family_id = ? AND role IN ('admin','adult') AND email IS NOT NULL").all(fid));
-    for (const [lang, addrs] of Object.entries(groups)) {
-      const { subject, text, html } = watchMail(lang, items);
-      try { await sendMail(addrs, subject, text, undefined, html); } catch (err) { console.error('watch mail:', err.message); }
-    }
-  }
+  for (const [fid, items] of byFamily) await announceFindings(fid, items);
   return { families: byFamily.size, items: [...byFamily.values()].reduce((s, a) => s + a.length, 0) };
 }
 
@@ -2974,14 +2980,19 @@ app.post('/api/watch/:id/check', auth, canWrite, async (req, res) => {
   const site = db.prepare('SELECT * FROM watched_sites WHERE id = ? AND family_id = ?').get(req.params.id, req.user.family_id);
   if (!site) return res.status(404).json({ error: 'Not found' });
   const out = await checkWatchedSite(site);
-  if (out.fresh.length) { try { generateNotifications(site.family_id); } catch { /* the alert is a bonus here */ } }
+  // pressing the button is not a different kind of discovery: it tells everyone, the same way
+  if (out.fresh.length) await announceFindings(site.family_id, out.fresh.map((f) => ({ ...f, source: site.label })));
   res.json({ ...watchState(req.user.family_id), checked: { error: out.error, found: out.fresh.length, seeded: out.seeded, total: out.total } });
 });
 app.post('/api/watch/check-all', auth, canWrite, async (req, res) => {
+  const found = [];
   for (const site of db.prepare('SELECT * FROM watched_sites WHERE family_id = ? AND active = 1').all(req.user.family_id)) {
-    try { await checkWatchedSite(site); } catch (err) { console.error('watch:', err.message); }
+    try {
+      const out = await checkWatchedSite(site);
+      found.push(...out.fresh.map((f) => ({ ...f, source: site.label })));
+    } catch (err) { console.error('watch:', err.message); }
   }
-  try { generateNotifications(req.user.family_id); } catch { /* ignore */ }
+  await announceFindings(req.user.family_id, found);
   res.json(watchState(req.user.family_id));
 });
 
