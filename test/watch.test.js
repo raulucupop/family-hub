@@ -207,6 +207,31 @@ test('the app checks by itself, and opening it repeatedly does not hammer the si
     assert.equal(r.status, 200, 'the check must never make the badge slow or fail');
   });
 });
+
+test('the cron answer says what it did, not just whether it found something', async (t) => {
+  const site = await stubSite();
+  const api = await startServer();
+  t.after(async () => { await api.stop(); await site.stop(); });
+
+  await t.test('with nothing set up it says so, instead of looking like a quiet success', async () => {
+    const r = await api.get('/api/cron/watch?token=' + (process.env.CRON_TOKEN || 'x'));
+    assert.equal(r.status, 403, 'no token configured on a test server, which is itself the honest answer');
+  });
+
+  await t.test('a check that finds nothing is distinguishable from a check that did not happen', async () => {
+    site.items = [{ guid: 'a', title: 'Anunț dezinsecție' }];
+    const created = await api.post('/api/watch', { url: 'https://comunabucovat.ro/feed/', label: 'Comuna' });
+    const id = created.body.sites[0].id;
+    pointAt(api, id, site.realBase + '/feed/');
+    await api.post('/api/watch/check-all');
+
+    const quiet = (await api.post('/api/watch/check-all')).body;
+    assert.ok(quiet.sites.length, 'a site is being watched');
+    const row = quiet.sites[0];
+    assert.equal(row.last_check_by, 'manual', 'the row records which trigger did the looking');
+    assert.equal(row.fail_count, 0);
+  });
+});
 test('watched sites belong to one family', async (t) => {
   const api = await startServer();
   const other = await startServer();

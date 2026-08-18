@@ -480,6 +480,7 @@ CREATE TABLE IF NOT EXISTS watched_sites (
   snapshot TEXT,
   seeded INTEGER NOT NULL DEFAULT 0,   -- the first check records what is there and stays quiet
   last_checked_at TEXT,
+  last_check_by TEXT,                 -- 'cron' | 'app' | 'timer' | 'manual' | 'daily': answers 'did the cron actually run'
   last_change_at TEXT,
   fail_count INTEGER NOT NULL DEFAULT 0,
   last_error TEXT,
@@ -648,6 +649,11 @@ if (!db.prepare('PRAGMA table_info(list_items)').all().some((c) => c.name === 's
 // table, the guests go back to the pool" is worth being able to read in the code that does it.
 // Money lent abroad or to somebody who deals in euro is not household currency. Rows written
 // before this existed are household currency, which is what NULL means here.
+// Without this the page cannot tell a check the cron did from one your own visit caused, which
+// is exactly the question somebody asks after setting a cron up.
+if (!db.prepare('PRAGMA table_info(watched_sites)').all().some((c) => c.name === 'last_check_by')) {
+  db.exec('ALTER TABLE watched_sites ADD COLUMN last_check_by TEXT');
+}
 if (!db.prepare('PRAGMA table_info(personal_loans)').all().some((c) => c.name === 'currency')) {
   db.exec('ALTER TABLE personal_loans ADD COLUMN currency TEXT');
 }

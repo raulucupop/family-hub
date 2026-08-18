@@ -202,6 +202,9 @@ const RO = {
   'Chores today': 'Treburi azi', 'All chores done for today': 'Toate treburile pe azi sunt gata',
   'See all': 'Vezi toate',
   'Everyone': 'Toată lumea', 'Nobody in particular': 'Fără responsabil', 'Anyone': 'Oricine', 'anyone': 'oricine',
+  'by the hourly job': 'de cron-ul orar', 'when you opened the app': 'la deschiderea aplicației',
+  'by itself': 'singură', 'because you pressed check': 'fiindcă ai apăsat verifică',
+  'by the daily round': 'la rondul zilnic',
   'Watch Comuna Bucovăț': 'Urmărește Comuna Bucovăț',
   'Adds comunabucovat.ro with licitatie, teren, concesiune and vanzare as keywords.': 'Adaugă comunabucovat.ro cu licitatie, teren, concesiune și vanzare drept cuvinte cheie.',
   'Set up. From now on you only have to look here.': 'Gata. De acum trebuie doar să te uiți aici.',
@@ -3886,8 +3889,15 @@ function lastLook(sites) {
   const mins = Math.max(0, Math.round((Date.now() - new Date(stamps[stamps.length - 1].replace(' ', 'T') + 'Z')) / 60000));
   const ago = mins < 2 ? tr('just now') : mins < 60 ? `${mins} ${tr('min ago')}`
     : mins < 1500 ? `${Math.round(mins / 60)} ${tr('h ago')}` : `${Math.round(mins / 1440)} ${tr('days ago')}`;
-  return `${tr('Checked')} ${ago} · ${tr('checks itself, nothing for you to press')}`;
+  const by = sites.map((x) => x.last_check_by).filter(Boolean).pop();
+  return `${tr('Checked')} ${ago}${by ? ` · ${tr(WATCH_BY[by] || by)}` : ''}`;
 }
+/* Who did the looking. The first thing anybody wants to know after setting a cron up is whether
+   it is the cron doing this or their own visit, and there was no way at all to tell them apart. */
+const WATCH_BY = {
+  cron: 'by the hourly job', app: 'when you opened the app', timer: 'by itself',
+  manual: 'because you pressed check', daily: 'by the daily round',
+};
 let WATCH_TAB = 'news';
 async function viewWatch(el, tab = WATCH_TAB) {
   WATCH_TAB = tab;
@@ -3945,6 +3955,7 @@ function renderWatch(el, state) {
             ${s.keywords ? `<br><span class="muted" style="font-size:12.5px">${tr('Keywords')}: ${esc(s.keywords)}</span>` : ''}
             ${s.kind === 'page' ? `<br><span class="badge">${tr('text of the page')}</span>` : ''}</td>
           <td data-label="${tr('Checked')}">${s.last_checked_at ? fdate(String(s.last_checked_at).slice(0, 10)) : tr('not yet')}
+            ${s.last_check_by ? `<br><span class="muted" style="font-size:12.5px">${tr(WATCH_BY[s.last_check_by] || s.last_check_by)}</span>` : ''}
             ${s.last_error ? `<br><span class="muted" style="color:var(--red);font-size:12.5px">${esc(s.last_error)}</span>` : ''}</td>
           <td class="right" data-label="${tr('Seen')}">${s.items_total}</td>
           <td class="right">${canWrite() ? `<button class="btn ghost small" data-wcheck="${s.id}">${tr('Check now')}</button>

@@ -2815,7 +2815,7 @@ const isoOrNull = (s) => {
 /* Returns the items seen for the first time. The FIRST check of a site is a baseline: everything on
    the page is recorded and nothing is announced, because ten historical notices arriving at once as
    ten alerts is how somebody learns to ignore the alerts. */
-async function checkWatchedSite(site) {
+async function checkWatchedSite(site, source = 'manual') {
   let found = [];
   try {
     const text = await fetchWatched(site.url);
@@ -2835,8 +2835,8 @@ async function checkWatchedSite(site) {
       db.prepare('UPDATE watched_sites SET snapshot = ? WHERE id = ?').run(lines.join('\n'), site.id);
     }
   } catch (err) {
-    db.prepare("UPDATE watched_sites SET last_checked_at = datetime('now'), fail_count = fail_count + 1, last_error = ? WHERE id = ?")
-      .run(String(err.message || err).slice(0, 300), site.id);
+    db.prepare("UPDATE watched_sites SET last_checked_at = datetime('now'), last_check_by = ?, fail_count = fail_count + 1, last_error = ? WHERE id = ?")
+      .run(source, String(err.message || err).slice(0, 300), site.id);
     return { error: String(err.message || err), fresh: [], total: 0 };
   }
 
@@ -2850,8 +2850,8 @@ async function checkWatchedSite(site) {
     if (info.changes > 0) fresh.push({ ...it, hit, id: info.lastInsertRowid });
   }
   const announce = site.seeded ? fresh : [];
-  db.prepare(`UPDATE watched_sites SET last_checked_at = datetime('now'), seeded = 1, fail_count = 0, last_error = NULL${
-    announce.length ? ", last_change_at = datetime('now')" : ''} WHERE id = ?`).run(site.id);
+  db.prepare(`UPDATE watched_sites SET last_checked_at = datetime('now'), last_check_by = ?, seeded = 1, fail_count = 0, last_error = NULL${
+    announce.length ? ", last_change_at = datetime('now')" : ''} WHERE id = ?`).run(source, site.id);
   return { error: null, fresh: announce, seeded: !site.seeded, total: found.length };
 }
 
@@ -2890,18 +2890,31 @@ async function announceFindings(fid, items) {
   }
 }
 
-async function runWatchers() {
+async function runWatchers(source = 'timer') {
   const byFamily = new Map();
-  for (const site of db.prepare('SELECT * FROM watched_sites WHERE active = 1').all()) {
+  let checked = 0;
+  let failed = 0;
+  const sites = db.prepare('SELECT * FROM watched_sites WHERE active = 1').all();
+  for (const site of sites) {
     let out;
-    try { out = await checkWatchedSite(site); } catch (err) { console.error('watch:', site.url, err.message); continue; }
+    try { out = await checkWatchedSite(site, source); } catch (err) { console.error('watch:', site.url, err.message); failed++; continue; }
+    if (out.error) failed++; else checked++;
     if (!out.fresh.length) continue;
     const list = byFamily.get(site.family_id) || [];
     list.push(...out.fresh.map((f) => ({ ...f, source: site.label })));
     byFamily.set(site.family_id, list);
   }
   for (const [fid, items] of byFamily) await announceFindings(fid, items);
-  return { families: byFamily.size, items: [...byFamily.values()].reduce((s, a) => s + a.length, 0) };
+  /* Reported in full because this is what somebody reads out of a cron job at 3am, and
+     "families: 0, items: 0" looks identical whether every page was quiet or no page is being
+     watched at all — which is exactly the wrong two things to make indistinguishable. */
+  return {
+    watching: sites.length,
+    checked,
+    failed,
+    families: byFamily.size,
+    items: [...byFamily.values()].reduce((s, a) => s + a.length, 0),
+  };
 }
 
 /* Checking without being asked. A cron job on the host is one more thing to set up and one more
@@ -2922,7 +2935,7 @@ function autoWatchTick(reason) {
   watchLastRun = Date.now();
   watchRunning = true;
   // deliberately not awaited: nobody should wait on somebody else's website to see their own page
-  runWatchers()
+  runWatchers(reason === 'timer' ? 'timer' : 'app')
     .catch((err) => console.error('auto watch (' + reason + '):', err.message))
     .finally(() => { watchRunning = false; });
 }
@@ -2979,7 +2992,7 @@ app.delete('/api/watch/:id', auth, canWrite, (req, res) => {
 app.post('/api/watch/:id/check', auth, canWrite, async (req, res) => {
   const site = db.prepare('SELECT * FROM watched_sites WHERE id = ? AND family_id = ?').get(req.params.id, req.user.family_id);
   if (!site) return res.status(404).json({ error: 'Not found' });
-  const out = await checkWatchedSite(site);
+  const out = await checkWatchedSite(site, 'manual');
   // pressing the button is not a different kind of discovery: it tells everyone, the same way
   if (out.fresh.length) await announceFindings(site.family_id, out.fresh.map((f) => ({ ...f, source: site.label })));
   res.json({ ...watchState(req.user.family_id), checked: { error: out.error, found: out.fresh.length, seeded: out.seeded, total: out.total } });
@@ -2988,7 +3001,7 @@ app.post('/api/watch/check-all', auth, canWrite, async (req, res) => {
   const found = [];
   for (const site of db.prepare('SELECT * FROM watched_sites WHERE family_id = ? AND active = 1').all(req.user.family_id)) {
     try {
-      const out = await checkWatchedSite(site);
+      const out = await checkWatchedSite(site, 'manual');
       found.push(...out.fresh.map((f) => ({ ...f, source: site.label })));
     } catch (err) { console.error('watch:', err.message); }
   }
@@ -3820,7 +3833,7 @@ async function emailReminderTick() {
   try { await runEmailReminders(); } catch (err) { console.error('email reminders:', err.message); }
   try { await runMonthlyReports(); } catch (err) { console.error('monthly report:', err.message); }
   // belt and braces: if the hourly /api/cron/watch was never wired up, at least check once a day
-  try { await runWatchers(); } catch (err) { console.error('page watch:', err.message); }
+  try { await runWatchers('daily'); } catch (err) { console.error('page watch:', err.message); }
   try { await runWeeklyBackup(); } catch (err) { console.error('weekly backup:', err.message); }
   try { sweepOrphanUploads(); } catch (err) { console.error('orphan sweep:', err.message); }
   // spent reset links have no further use — stop the table growing a row per request
@@ -3841,7 +3854,7 @@ app.get('/api/cron/watch', async (req, res) => {
   const token = process.env.CRON_TOKEN;
   if (!token) return res.status(403).json({ error: 'CRON_TOKEN is not configured on this server' });
   if (req.query.token !== token) return res.status(403).json({ error: 'Bad token' });
-  try { res.json(await runWatchers()); }
+  try { res.json(await runWatchers('cron')); }
   catch (err) { console.error('watch cron:', err.message); res.status(500).json({ error: err.message }); }
 });
 app.get('/api/cron/email-reminders', async (req, res) => {
