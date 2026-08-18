@@ -15,6 +15,7 @@ const BILL_CATS = { electricity: 'Electricity', gas: 'Gas', internet: 'Internet'
 const ICON = {
   grid: '<rect x="3" y="3" width="7.5" height="7.5" rx="1.6"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.6"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1.6"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.6"/>',
   search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.6-3.6"/>',
+  radar: '<circle cx="12" cy="12" r="3"/><path d="M12 12 19 5"/><path d="M16.9 7.1a7 7 0 1 1-9.8 0"/><path d="M19.8 4.2a11 11 0 1 1-15.6 0"/>',
   wallet: '<path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H18a1 1 0 0 1 1 1v1.5"/><rect x="3" y="7.5" width="18" height="12" rx="2.5"/><path d="M16.5 13.5h2.5"/>',
   coins: '<ellipse cx="12" cy="6.5" rx="7" ry="3"/><path d="M5 6.5v5c0 1.66 3.13 3 7 3s7-1.34 7-3v-5"/><path d="M5 11.5v5c0 1.66 3.13 3 7 3s7-1.34 7-3v-5"/>',
   // a chore is a task that comes back, so: the repeat arc with a tick inside it
@@ -201,6 +202,25 @@ const RO = {
   'Chores today': 'Treburi azi', 'All chores done for today': 'Toate treburile pe azi sunt gata',
   'See all': 'Vezi toate',
   'Everyone': 'Toată lumea', 'Nobody in particular': 'Fără responsabil', 'Anyone': 'Oricine', 'anyone': 'oricine',
+  // watched public pages
+  'Watched pages': 'Pagini urmărite',
+  'Public pages checked for you, so an announcement does not go by unnoticed.': 'Pagini publice verificate în locul tău, ca să nu-ți mai scape un anunț.',
+  'Announcements': 'Anunțuri', 'Pages': 'Pagini', 'Check now': 'Verifică acum', 'Checking…': 'Verific…', 'Checked': 'Verificat',
+  'Not able to check': 'Nu am putut verifica', 'Nothing new': 'Nimic nou', 'new': 'nou',
+  'matches your keywords': 'se potrivește cu cuvintele tale', 'Open the notice': 'Deschide anunțul',
+  'Nothing spotted yet': 'Nimic găsit încă',
+  'The pages are being watched. Anything new will show up here and in your email.': 'Paginile sunt urmărite. Orice apare nou ajunge aici și pe email.',
+  'Add the page of your commune below and anything new posted there lands here.': 'Adaugă mai jos pagina comunei, iar orice se publică acolo ajunge aici.',
+  'No pages watched yet': 'Nicio pagină urmărită încă', 'Add one below.': 'Adaugă una mai jos.',
+  'Page': 'Pagina', 'Seen': 'Văzute', 'not yet': 'încă niciodată', 'text of the page': 'textul paginii',
+  'Watch a page': 'Urmărește o pagină', 'Watch it': 'Urmărește',
+  'What to read': 'Ce să citească', 'The site feed (recommended)': 'Fluxul site-ului (recomandat)',
+  'The text of the page': 'Textul paginii', 'Keywords': 'Cuvinte cheie',
+  'licitatie, teren, concesiune': 'licitatie, teren, concesiune', 'Comuna Bucovăț': 'Comuna Bucovăț',
+  'new notice': 'anunț nou', 'new notices': 'anunțuri noi',
+  'Noted what is there now — you will hear about anything new.': 'Am notat ce e acum — o să afli despre orice apare nou.',
+  'Watching. The first check records what is already there, quietly.': 'Urmăresc. Prima verificare notează în tăcere ce e deja acolo.',
+  'Most councils run WordPress: add /feed/ to the address and every notice arrives with its own title and link. Keywords only highlight — everything new is reported either way.': 'Majoritatea primăriilor au WordPress: adaugă /feed/ la adresă și fiecare anunț vine cu titlu și link. Cuvintele cheie doar evidențiază — orice e nou apare oricum.',
   'done by': 'făcut de', 'Feed the dogs': 'Dat de mâncare la câini',
   // the to-do list: jobs with no cadence, done once and then done
   'To-do': 'De făcut', 'Still to do': 'Rămase de făcut', 'Ticked off': 'Bifate',
@@ -921,7 +941,7 @@ function dayLabel(iso) {
 }
 
 /* ---------- router ---------- */
-const routes = { dashboard: viewDashboard, money: viewMoney, bills: viewBills, search: viewSearch, vehicles: viewVehicles, properties: viewProperties, tenants: viewTenants, property: viewProperty, acte: viewActe, lists: viewLists, chores: viewChores, import: viewImport, alerts: viewAlerts, family: viewFamily, settings: viewSettings };
+const routes = { dashboard: viewDashboard, money: viewMoney, bills: viewBills, search: viewSearch, vehicles: viewVehicles, properties: viewProperties, tenants: viewTenants, property: viewProperty, acte: viewActe, lists: viewLists, chores: viewChores, watch: viewWatch, import: viewImport, alerts: viewAlerts, family: viewFamily, settings: viewSettings };
 // Page changes cross-fade where the browser supports it; plain render elsewhere.
 //
 // The cross-fade is decoration — the render is the point — so nothing about the transition may be
@@ -1067,7 +1087,7 @@ const NAV = [
   [null, 'Property & things'],
   ['properties', 'home', 'Properties'], ['tenants', 'key', 'Tenants'], ['vehicles', 'car', 'Vehicles'], ['acte', 'file', 'Acte'],
   [null, 'Household'],
-  ['chores', 'chore', 'Chores'], ['lists', 'checklist', 'Lists'], ['alerts', 'bell', 'Alerts'], ['family', 'users', 'Family'], ['settings', 'gear', 'Settings'],
+  ['chores', 'chore', 'Chores'], ['lists', 'checklist', 'Lists'], ['watch', 'radar', 'Watched pages'], ['alerts', 'bell', 'Alerts'], ['family', 'users', 'Family'], ['settings', 'gear', 'Settings'],
 ];
 // the four that earn a permanent spot on a phone; everything else lives behind "More".
 // Alerts is here on purpose: its badge used to sit ~680px off-screen in the old scrolling strip,
@@ -3836,6 +3856,117 @@ function guestList(rows) {
       <td class="right">${canWrite() ? `<button class="btn danger small" data-del="${r.id}">✕</button>` : ''}</td></tr>`).join('')}
     </tbody></table>`;
 }
+/* ---------- watched pages ----------
+   Built after a land auction was posted, held and finished without anybody in the house hearing
+   about it. So the page leads with the notices themselves, newest first, and the plumbing — which
+   addresses are watched, when each was last checked, what broke — sits underneath. What you want on
+   opening it is "what have I missed", not "is the watcher healthy". */
+let WATCH_TAB = 'news';
+async function viewWatch(el, tab = WATCH_TAB) {
+  WATCH_TAB = tab;
+  const state = await api('/watch');
+  renderWatch(el, state);
+}
+function renderWatch(el, state) {
+  const { sites, items } = state;
+  const broken = sites.filter((s) => s.fail_count > 0);
+  const isNew = (i) => new Date(i.seen_at + 'Z') > new Date(Date.now() - 7 * 864e5);
+  const when = (i) => (i.published_at ? fdate(String(i.published_at).slice(0, 10)) : fdate(String(i.seen_at).slice(0, 10)));
+
+  el.innerHTML = `<div class="pagehead"><div><h1>${tr('Watched pages')}</h1>
+      <p>${tr('Public pages checked for you, so an announcement does not go by unnoticed.')}</p></div>
+      ${canWrite() ? `<button class="btn ghost small" id="wcheck">${tr('Check now')}</button>` : ''}</div>
+
+    ${broken.length ? `<div class="card warn" style="margin-bottom:14px">
+      <b>${tr('Not able to check')}</b>
+      ${broken.map((s) => `<div class="muted" style="font-size:13px">${esc(s.label)} — ${esc(s.last_error || '')}</div>`).join('')}
+    </div>` : ''}
+
+    <div class="tabs" style="max-width:420px">
+      ${[['news', 'Announcements'], ['sites', 'Pages']].map(([k, l]) =>
+    `<button data-w="${k}" class="${k === WATCH_TAB ? 'active' : ''}">${tr(l)}</button>`).join('')}
+    </div>
+
+    ${WATCH_TAB === 'news' ? `<div class="card">
+      ${items.length ? `<ul class="newslist">${items.map((i) => `<li class="newsrow${i.hit ? ' is-hit' : ''}">
+        <div class="row" style="justify-content:space-between;gap:10px;align-items:baseline;flex-wrap:wrap">
+          <b class="newstitle">${esc(i.title)}</b>
+          <span class="muted" style="font-size:12.5px;white-space:nowrap">${when(i)}</span>
+        </div>
+        <div class="muted newsmeta">${[
+    esc(i.source),
+    i.hit ? `<span class="badge warn">${tr('matches your keywords')}</span>` : '',
+    isNew(i) ? `<span class="badge">${tr('new')}</span>` : '',
+  ].filter(Boolean).join(' · ')}</div>
+        ${i.summary ? `<p class="muted newssum">${esc(String(i.summary).slice(0, 220))}${String(i.summary).length > 220 ? '…' : ''}</p>` : ''}
+        ${i.link ? `<a class="btn ghost small" href="${esc(i.link)}" target="_blank" rel="noopener noreferrer">${tr('Open the notice')}</a>` : ''}
+      </li>`).join('')}</ul>`
+    : `<div class="empty"><b>${tr('Nothing spotted yet')}</b>${sites.length
+      ? tr('The pages are being watched. Anything new will show up here and in your email.')
+      : tr('Add the page of your commune below and anything new posted there lands here.')}</div>`}
+    </div>` : `<div class="card">
+      ${sites.length ? `<table class="cards"><thead><tr>
+        <th>${tr('Page')}</th><th>${tr('Checked')}</th><th class="right">${tr('Seen')}</th><th></th></tr></thead><tbody>
+        ${sites.map((s) => `<tr>
+          <td data-label="${tr('Page')}"><b>${esc(s.label)}</b>
+            <br><span class="muted" style="font-size:12.5px;word-break:break-all">${esc(s.url)}</span>
+            ${s.keywords ? `<br><span class="muted" style="font-size:12.5px">${tr('Keywords')}: ${esc(s.keywords)}</span>` : ''}
+            ${s.kind === 'page' ? `<br><span class="badge">${tr('text of the page')}</span>` : ''}</td>
+          <td data-label="${tr('Checked')}">${s.last_checked_at ? fdate(String(s.last_checked_at).slice(0, 10)) : tr('not yet')}
+            ${s.last_error ? `<br><span class="muted" style="color:var(--red);font-size:12.5px">${esc(s.last_error)}</span>` : ''}</td>
+          <td class="right" data-label="${tr('Seen')}">${s.items_total}</td>
+          <td class="right">${canWrite() ? `<button class="btn ghost small" data-wcheck="${s.id}">${tr('Check now')}</button>
+            <button class="btn danger small" data-wdel="${s.id}">✕</button>` : ''}</td></tr>`).join('')}
+      </tbody></table>` : `<div class="empty"><b>${tr('No pages watched yet')}</b>${tr('Add one below.')}</div>`}
+
+      ${canWrite() ? `<div class="subform">
+        <h4>${tr('Watch a page')}</h4>
+        <form id="wform" class="formgrid">
+          <div><label>${tr('Name')}</label><input name="label" placeholder="${tr('Comuna Bucovăț')}"></div>
+          <div style="grid-column:1/-1"><label>${tr('Address')}</label>
+            <input name="url" type="url" placeholder="https://www.comunabucovat.ro/feed/" required></div>
+          <div><label>${tr('What to read')}</label><select name="kind">
+            <option value="feed">${tr('The site feed (recommended)')}</option>
+            <option value="page">${tr('The text of the page')}</option></select></div>
+          <div><label>${tr('Keywords')} <span class="muted">${tr('optional')}</span></label>
+            <input name="keywords" placeholder="${tr('licitatie, teren, concesiune')}"></div>
+          <button class="btn small">${tr('Watch it')}</button>
+        </form>
+        <p class="muted" style="margin:10px 0 0;font-size:12.5px">${tr('Most councils run WordPress: add /feed/ to the address and every notice arrives with its own title and link. Keywords only highlight — everything new is reported either way.')}</p>
+      </div>` : ''}
+    </div>`}`;
+
+  el.querySelectorAll('.tabs button[data-w]').forEach((b) => (b.onclick = () => { WATCH_TAB = b.dataset.w; renderWatch(el, state); }));
+  el.querySelector('#wcheck') && (el.querySelector('#wcheck').onclick = async (e) => {
+    e.target.disabled = true;
+    e.target.textContent = tr('Checking…');
+    try { renderWatch(el, await api('/watch/check-all', { method: 'POST' })); toast(tr('Checked'), 'success'); }
+    catch (err) { toast(err.message, 'error'); viewWatch(el); }
+  });
+  el.querySelectorAll('[data-wcheck]').forEach((b) => (b.onclick = async () => {
+    b.disabled = true;
+    try {
+      const next = await api(`/watch/${b.dataset.wcheck}/check`, { method: 'POST' });
+      renderWatch(el, next);
+      const c = next.checked;
+      toast(c.error ? c.error : c.seeded ? tr('Noted what is there now — you will hear about anything new.')
+        : c.found ? `${c.found} ${tr(c.found === 1 ? 'new notice' : 'new notices')}` : tr('Nothing new'),
+      c.error ? 'error' : 'success');
+    } catch (err) { toast(err.message, 'error'); }
+  }));
+  el.querySelectorAll('[data-wdel]').forEach((b) => (b.onclick = () => {
+    const { hide, restore } = rowHide(b);
+    undoableDelete({ hide, restore, commit: () => api('/watch/' + b.dataset.wdel, { method: 'DELETE' }).then(() => viewWatch(el)) });
+  }));
+  el.querySelector('#wform')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      renderWatch(el, await api('/watch', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) }));
+      toast(tr('Watching. The first check records what is already there, quietly.'), 'success');
+    } catch (err) { toast(err.message, 'error'); }
+  });
+}
+
 /* ---------- recurring chores ----------
    The list you actually look at every morning. Two things make it different from the checklists on
    the Lists page: a chore comes back (ticking it means "done for today", not "gone"), and it is

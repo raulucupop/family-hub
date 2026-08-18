@@ -461,6 +461,52 @@ CREATE TABLE IF NOT EXISTS todos (
 );
 CREATE INDEX IF NOT EXISTS idx_todos_family ON todos(family_id, done);
 
+-- Pages watched for changes. A commune publishes an auction with two weeks' notice and nothing
+-- tells you; this is the thing that tells you. Two kinds, because they need different treatment:
+-- 'feed' reads an RSS/Atom feed, which is what a site publishes *for* this purpose and gives a
+-- stable id per announcement; 'page' diffs the readable text of an ordinary page, for sites with
+-- no feed. Prefer feed wherever one exists — HTML diffing reports rotating banners as news.
+CREATE TABLE IF NOT EXISTS watched_sites (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  family_id INTEGER NOT NULL REFERENCES families(id) ON DELETE CASCADE,
+  label TEXT NOT NULL,
+  url TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'feed' CHECK (kind IN ('feed','page')),
+  keywords TEXT,                       -- comma separated; a match is flagged, it does not filter
+  active INTEGER NOT NULL DEFAULT 1,
+  -- 'page' kind only: the readable text as last seen, so the next check can say what was ADDED
+  -- rather than only that something moved
+  snapshot TEXT,
+  seeded INTEGER NOT NULL DEFAULT 0,   -- the first check records what is there and stays quiet
+  last_checked_at TEXT,
+  last_change_at TEXT,
+  fail_count INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_watched_sites_family ON watched_sites(family_id, active);
+
+-- One row per announcement ever seen. UNIQUE(site_id, guid) is what makes "what is new" a fact
+-- rather than a guess: the insert either lands or does nothing, so a re-check of the same feed
+-- cannot re-announce anything, and a crash mid-run cannot lose an item either.
+CREATE TABLE IF NOT EXISTS watched_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  site_id INTEGER NOT NULL REFERENCES watched_sites(id) ON DELETE CASCADE,
+  family_id INTEGER NOT NULL REFERENCES families(id) ON DELETE CASCADE,
+  guid TEXT NOT NULL,
+  title TEXT NOT NULL,
+  link TEXT,
+  summary TEXT,
+  published_at TEXT,
+  hit INTEGER NOT NULL DEFAULT 0,      -- matched one of the keywords
+  -- 0 for the baseline recorded on the first check: real notices, but not news to anybody, so
+  -- they are listed and never alerted. Without this the bell filled with the whole archive.
+  announced INTEGER NOT NULL DEFAULT 1,
+  seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (site_id, guid)
+);
+CREATE INDEX IF NOT EXISTS idx_watched_items_family ON watched_items(family_id, seen_at);
+
 -- site notifications, generated when a deadline crosses a threshold (30/14/7/1/0 days)
 CREATE TABLE IF NOT EXISTS notifications (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -599,6 +645,9 @@ if (!db.prepare('PRAGMA table_info(list_items)').all().some((c) => c.name === 's
 // a table clears this column explicitly in the endpoint rather than leaning on ON DELETE SET NULL —
 // a column added by ALTER TABLE is an awkward place to rely on cascade behaviour, and "delete the
 // table, the guests go back to the pool" is worth being able to read in the code that does it.
+if (!db.prepare('PRAGMA table_info(watched_items)').all().some((c) => c.name === 'announced')) {
+  db.exec('ALTER TABLE watched_items ADD COLUMN announced INTEGER NOT NULL DEFAULT 1');
+}
 if (!db.prepare('PRAGMA table_info(list_items)').all().some((c) => c.name === 'table_id')) {
   db.exec('ALTER TABLE list_items ADD COLUMN table_id INTEGER REFERENCES event_tables(id) ON DELETE SET NULL');
 }

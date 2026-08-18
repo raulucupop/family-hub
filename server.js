@@ -2688,6 +2688,265 @@ app.post('/api/push/test', auth, async (req, res) => {
   res.json({ ok: true });
 });
 
+/* ---------- watching public pages for changes ----------
+   A commune publishes a land auction with a fortnight's notice and nothing tells you; by the time
+   somebody mentions it, it has happened. This checks pages you nominate and reports what is NEW,
+   which is a different thing from "the page changed": a rotating banner, a visitor counter or a
+   footer year all change a page without announcing anything.
+
+   Two kinds, and the difference matters:
+     'feed' reads the RSS/Atom feed a site already publishes for exactly this purpose. Each entry
+            carries its own stable id, so "new" is a fact rather than a guess about text.
+     'page' diffs the readable text of an ordinary page, for sites with no feed. Weaker, and the
+            fallback rather than the default.
+   comunabucovat.ro runs WordPress, so it has /feed/ — that is the address to watch. */
+const WATCH_UA = 'FamilyHubPageWatch/1.0 (+https://lafamiliapop.ro)';
+const WATCH_TIMEOUT_MS = 20000;
+const WATCH_MAX_BYTES = 4000000;
+const WATCH_KEEP_DAYS = 21; // how long a spotted announcement stays in the bell
+
+// Anyone in a family can add a URL and the server fetches it, so the address has to be somewhere on
+// the public internet. Without this check, "watch http://127.0.0.1:9200" turns the feature into a
+// probe of whatever else happens to be running on the host.
+function validateWatchUrl(raw) {
+  let u;
+  try { u = new URL(String(raw).trim()); } catch { return { error: 'That is not a web address' }; }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return { error: 'Only http:// and https:// addresses can be watched' };
+  const h = u.hostname.toLowerCase();
+  const privateHost = h === 'localhost' || h.endsWith('.localhost') || h === '::1' || h === '0.0.0.0'
+    || /^127\./.test(h) || /^10\./.test(h) || /^192\.168\./.test(h) || /^169\.254\./.test(h)
+    || /^172\.(1[6-9]|2\d|3[01])\./.test(h) || /^\[?f[cd][0-9a-f]{2}:/.test(h) || !h.includes('.');
+  if (privateHost) return { error: 'Only addresses on the public internet can be watched' };
+  return { url: u.toString() };
+}
+
+async function fetchWatched(url) {
+  const res = await fetch(url, {
+    redirect: 'follow',
+    headers: {
+      'User-Agent': WATCH_UA,
+      Accept: 'application/rss+xml, application/atom+xml, application/xml;q=0.9, text/html;q=0.8, */*;q=0.5',
+    },
+    signal: AbortSignal.timeout(WATCH_TIMEOUT_MS),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const buf = Buffer.from(await res.arrayBuffer());
+  if (buf.byteLength > WATCH_MAX_BYTES) throw new Error('The page is too large to check');
+  return buf.toString('utf8');
+}
+
+// &amp; is decoded last on purpose: doing it first turns "&amp;lt;" into "<" instead of "&lt;".
+const NAMED_ENTITIES = {
+  lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', laquo: '«', raquo: '»', hellip: '…', ndash: '–', mdash: '—',
+};
+const decodeEntities = (s) => String(s)
+  .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
+  .replace(/&#(\d+);/g, (m, d) => { try { return String.fromCodePoint(Number(d)); } catch { return m; } })
+  .replace(/&#x([0-9a-fA-F]+);/g, (m, h) => { try { return String.fromCodePoint(parseInt(h, 16)); } catch { return m; } })
+  .replace(/&([a-zA-Z]+);/g, (m, e) => (NAMED_ENTITIES[e.toLowerCase()] !== undefined ? NAMED_ENTITIES[e.toLowerCase()] : m))
+  .replace(/&amp;/g, '&');
+const stripTags = (html) => decodeEntities(String(html).replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim();
+
+// One line per visible block. Chrome (menus, scripts, styles) goes first, because a nav that
+// re-renders would otherwise read as a page full of new announcements.
+function readableLines(html) {
+  const body = String(html)
+    .replace(/<(script|style|noscript|svg|template|head)\b[\s\S]*?<\/\1>/gi, ' ')
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/<(nav|header|footer|form)\b[\s\S]*?<\/\1>/gi, ' ');
+  return decodeEntities(body
+    .replace(/<(br|hr)[^>]*>/gi, '\n')
+    .replace(/<\/(p|div|li|h[1-6]|tr|section|article|td)>/gi, '\n')
+    .replace(/<[^>]+>/g, ' '))
+    .split('\n').map((l) => l.replace(/\s+/g, ' ').trim())
+    .filter((l) => l.length > 3);
+}
+
+function parseFeed(xml) {
+  const blocks = String(xml).match(/<item[\s>][\s\S]*?<\/item>|<entry[\s>][\s\S]*?<\/entry>/gi) || [];
+  return blocks.map((b) => {
+    const tag = (name) => {
+      const m = b.match(new RegExp(`<${name}(?:\\s[^>]*)?>([\\s\\S]*?)</${name}>`, 'i'));
+      return m ? decodeEntities(m[1]).trim() : '';
+    };
+    let link = tag('link');
+    if (!link) { const m = b.match(/<link[^>]*href=["']([^"']+)["']/i); link = m ? decodeEntities(m[1]) : ''; }
+    const title = stripTags(tag('title'));
+    return {
+      // guid before link: a site that edits a post keeps the guid, so it stays one item rather than
+      // arriving again as news
+      guid: tag('guid') || tag('id') || link || title,
+      title,
+      link,
+      published: tag('pubDate') || tag('published') || tag('updated') || '',
+      summary: stripTags(tag('description') || tag('summary') || '').slice(0, 500),
+    };
+  }).filter((i) => i.title || i.link);
+}
+
+const deaccent = (s) => String(s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+// Keywords flag an item; they never hide one. Missing an auction because the site wrote "licitatie"
+// and the keyword said "licitație" is the exact failure this feature exists to prevent, so
+// everything new is reported and a match only decides what gets shouted about.
+function keywordHit(text, keywords) {
+  const list = String(keywords || '').split(',').map((k) => deaccent(k).trim()).filter(Boolean);
+  if (!list.length) return false;
+  const hay = deaccent(text);
+  return list.some((k) => hay.includes(k));
+}
+const isoOrNull = (s) => {
+  if (!s) return null;
+  const d = new Date(s);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 19).replace('T', ' ');
+};
+
+/* Returns the items seen for the first time. The FIRST check of a site is a baseline: everything on
+   the page is recorded and nothing is announced, because ten historical notices arriving at once as
+   ten alerts is how somebody learns to ignore the alerts. */
+async function checkWatchedSite(site) {
+  let found = [];
+  try {
+    const text = await fetchWatched(site.url);
+    if (site.kind === 'feed') {
+      found = parseFeed(text);
+      if (!found.length && /<html/i.test(text)) throw new Error('No feed entries here — is this the feed address?');
+    } else {
+      const lines = readableLines(text);
+      const before = new Set(String(site.snapshot || '').split('\n').filter(Boolean));
+      found = (site.seeded ? lines.filter((l) => !before.has(l)) : []).map((line) => ({
+        guid: `ln:${crypto.createHash('sha1').update(line).digest('hex').slice(0, 16)}`,
+        title: line.slice(0, 300),
+        link: site.url,
+        published: '',
+        summary: '',
+      }));
+      db.prepare('UPDATE watched_sites SET snapshot = ? WHERE id = ?').run(lines.join('\n'), site.id);
+    }
+  } catch (err) {
+    db.prepare("UPDATE watched_sites SET last_checked_at = datetime('now'), fail_count = fail_count + 1, last_error = ? WHERE id = ?")
+      .run(String(err.message || err).slice(0, 300), site.id);
+    return { error: String(err.message || err), fresh: [], total: 0 };
+  }
+
+  const ins = db.prepare(`INSERT OR IGNORE INTO watched_items
+    (site_id, family_id, guid, title, link, summary, published_at, hit, announced) VALUES (?,?,?,?,?,?,?,?,?)`);
+  const fresh = [];
+  for (const it of found) {
+    const hit = keywordHit(`${it.title} ${it.summary}`, site.keywords) ? 1 : 0;
+    const info = ins.run(site.id, site.family_id, it.guid, it.title || '(untitled)', it.link || null,
+      it.summary || null, isoOrNull(it.published), hit, site.seeded ? 1 : 0);
+    if (info.changes > 0) fresh.push({ ...it, hit, id: info.lastInsertRowid });
+  }
+  const announce = site.seeded ? fresh : [];
+  db.prepare(`UPDATE watched_sites SET last_checked_at = datetime('now'), seeded = 1, fail_count = 0, last_error = NULL${
+    announce.length ? ", last_change_at = datetime('now')" : ''} WHERE id = ?`).run(site.id);
+  return { error: null, fresh: announce, seeded: !site.seeded, total: found.length };
+}
+
+function watchMail(lang, items) {
+  const ro = lang === 'ro';
+  const one = (i) => `- ${i.title}${i.link ? `\n  ${i.link}` : ''}`;
+  const row = (i) => `<div style="margin:8px 0;padding:10px 14px;background:${i.hit ? '#f7edd9' : '#eff2f1'};border-radius:8px;">
+      <b>${htmlEsc(i.title)}</b>${i.source ? `<br><span style="font-size:13px;color:#45565f;">${htmlEsc(i.source)}</span>` : ''}
+      ${i.link ? `<br><a href="${htmlEsc(i.link)}" style="font-size:13px;">${ro ? 'Deschide anunțul' : 'Open the notice'}</a>` : ''}
+    </div>`;
+  const n = items.length;
+  return {
+    subject: ro ? `Family Hub — ${n} ${n === 1 ? 'anunț nou' : 'anunțuri noi'}`
+      : `Family Hub — ${n} new ${n === 1 ? 'notice' : 'notices'}`,
+    text: `${ro ? 'Bună,' : 'Hello,'}\n\n${ro ? 'A apărut ceva nou pe paginile urmărite:' : 'Something new has appeared on the pages you watch:'}\n\n${items.map(one).join('\n\n')}\n`,
+    html: htmlEmail(`<p>${ro ? 'Bună,' : 'Hello,'}</p>
+      <p>${ro ? 'A apărut ceva nou pe paginile urmărite:' : 'Something new has appeared on the pages you watch:'}</p>
+      ${items.map(row).join('')}
+      <p>${htmlButton(`${siteBase()}/#watch`, ro ? 'Deschide Family Hub' : 'Open Family Hub')}</p>`),
+  };
+}
+
+// Checks every active site of every family. Safe to call often — that is the point: a notice posted
+// on Monday about a Thursday auction is only useful if you hear about it on Monday.
+async function runWatchers() {
+  const byFamily = new Map();
+  for (const site of db.prepare('SELECT * FROM watched_sites WHERE active = 1').all()) {
+    let out;
+    try { out = await checkWatchedSite(site); } catch (err) { console.error('watch:', site.url, err.message); continue; }
+    if (!out.fresh.length) continue;
+    const list = byFamily.get(site.family_id) || [];
+    list.push(...out.fresh.map((f) => ({ ...f, source: site.label })));
+    byFamily.set(site.family_id, list);
+  }
+  for (const [fid, items] of byFamily) {
+    try { generateNotifications(fid); } catch (err) { console.error('watch alerts:', err.message); }
+    if (!process.env.MAIL_FROM) continue;
+    const groups = byLanguage(db.prepare("SELECT email, lang FROM users WHERE family_id = ? AND role IN ('admin','adult') AND email IS NOT NULL").all(fid));
+    for (const [lang, addrs] of Object.entries(groups)) {
+      const { subject, text, html } = watchMail(lang, items);
+      try { await sendMail(addrs, subject, text, undefined, html); } catch (err) { console.error('watch mail:', err.message); }
+    }
+  }
+  return { families: byFamily.size, items: [...byFamily.values()].reduce((s, a) => s + a.length, 0) };
+}
+
+const watchSites = (fid) => db.prepare(`SELECT s.*,
+    (SELECT COUNT(*) FROM watched_items i WHERE i.site_id = s.id) AS items_total
+  FROM watched_sites s WHERE s.family_id = ? ORDER BY s.id`).all(fid);
+const watchItems = (fid, limit = 60) => db.prepare(`SELECT i.*, s.label AS source, s.url AS source_url
+  FROM watched_items i JOIN watched_sites s ON s.id = i.site_id
+  WHERE i.family_id = ? ORDER BY COALESCE(i.published_at, i.seen_at) DESC, i.id DESC LIMIT ?`).all(fid, limit);
+const watchState = (fid) => ({ sites: watchSites(fid), items: watchItems(fid) });
+
+app.get('/api/watch', auth, (req, res) => res.json(watchState(req.user.family_id)));
+app.post('/api/watch', auth, canWrite, (req, res) => {
+  const b = req.body || {};
+  const v = validateWatchUrl(b.url);
+  if (v.error) return res.status(400).json({ error: v.error });
+  if (db.prepare('SELECT id FROM watched_sites WHERE family_id = ? AND url = ?').get(req.user.family_id, v.url)) {
+    return res.status(400).json({ error: 'That address is already being watched' });
+  }
+  const label = str(b.label) || new URL(v.url).hostname.replace(/^www\./, '');
+  db.prepare('INSERT INTO watched_sites (family_id, label, url, kind, keywords) VALUES (?,?,?,?,?)')
+    .run(req.user.family_id, label, v.url, b.kind === 'page' ? 'page' : 'feed', str(b.keywords));
+  res.json(watchState(req.user.family_id));
+});
+app.put('/api/watch/:id', auth, canWrite, (req, res) => {
+  const row = db.prepare('SELECT * FROM watched_sites WHERE id = ? AND family_id = ?').get(req.params.id, req.user.family_id);
+  if (!row) return res.status(404).json({ error: 'Not found' });
+  const b = req.body || {};
+  let url = row.url;
+  if (b.url !== undefined && str(b.url) && str(b.url) !== row.url) {
+    const v = validateWatchUrl(b.url);
+    if (v.error) return res.status(400).json({ error: v.error });
+    url = v.url;
+  }
+  // A changed address is a different page: its baseline no longer applies, so it re-seeds quietly
+  // rather than announcing everything on the new page as news.
+  const moved = url !== row.url;
+  db.prepare(`UPDATE watched_sites SET label = ?, url = ?, kind = ?, keywords = ?, active = ?${
+    moved ? ', seeded = 0, snapshot = NULL, last_error = NULL, fail_count = 0' : ''} WHERE id = ?`)
+    .run(str(b.label) || row.label, url, b.kind === 'page' || b.kind === 'feed' ? b.kind : row.kind,
+      b.keywords === undefined ? row.keywords : str(b.keywords),
+      b.active === false || b.active === 0 ? 0 : 1, row.id);
+  res.json(watchState(req.user.family_id));
+});
+app.delete('/api/watch/:id', auth, canWrite, (req, res) => {
+  db.prepare('DELETE FROM watched_sites WHERE id = ? AND family_id = ?').run(req.params.id, req.user.family_id);
+  res.json(watchState(req.user.family_id));
+});
+// "check now", for when you have reason to think something should be there
+app.post('/api/watch/:id/check', auth, canWrite, async (req, res) => {
+  const site = db.prepare('SELECT * FROM watched_sites WHERE id = ? AND family_id = ?').get(req.params.id, req.user.family_id);
+  if (!site) return res.status(404).json({ error: 'Not found' });
+  const out = await checkWatchedSite(site);
+  if (out.fresh.length) { try { generateNotifications(site.family_id); } catch { /* the alert is a bonus here */ } }
+  res.json({ ...watchState(req.user.family_id), checked: { error: out.error, found: out.fresh.length, seeded: out.seeded, total: out.total } });
+});
+app.post('/api/watch/check-all', auth, canWrite, async (req, res) => {
+  for (const site of db.prepare('SELECT * FROM watched_sites WHERE family_id = ? AND active = 1').all(req.user.family_id)) {
+    try { await checkWatchedSite(site); } catch (err) { console.error('watch:', err.message); }
+  }
+  try { generateNotifications(req.user.family_id); } catch { /* ignore */ }
+  res.json(watchState(req.user.family_id));
+});
+
 // ---------- site notifications ----------
 // ascending on purpose: the loop below breaks on the first threshold crossed, which must be the
 // TIGHTEST one. Descending order meant everything from 30 days down to 0 landed on the same key,
@@ -2723,7 +2982,7 @@ function inQuietHours(qs, qe, h = bucharestHour()) {
 const ALERT_PAGE = {
   rca: '/#vehicles', casco: '/#vehicles', vignette: '/#vehicles', itp: '/#vehicles', road_tax: '/#vehicles',
   property_insurance: '/#properties', tenant_unpaid: '/#properties', maintenance: '/#properties',
-  document: '/#acte', birthday: '/#family',
+  document: '/#acte', birthday: '/#family', watch: '/#watch',
 };
 function alertUrl(key) { return ALERT_PAGE[String(key).split(':')[0]] || '/#alerts'; }
 // the thing an alert is about, without the threshold: "rca:3:2026-08-16:14" -> "rca:3:2026-08-16".
@@ -2742,6 +3001,12 @@ function alertText(lang, p) {
   if (!p) return null;
   const ro = lang === 'ro';
   const days = (n) => (ro ? roDays(n) : `${n} day${n === 1 ? '' : 's'}`);
+  if (p.t === 'watch') {
+    return {
+      title: ro ? `Anunț nou: ${p.title}` : `New notice: ${p.title}`,
+      body: p.source || (ro ? "pagină urmărită" : "watched page"),
+    };
+  }
   if (p.t === 'maint') {
     const when = p.days <= 0 ? (ro ? 'azi' : 'today') : (ro ? `acum ${days(p.days)}` : `${days(p.days)} ago`);
     return {
@@ -2827,6 +3092,14 @@ function generateNotifications(fid) {
   }
   // Anything not regenerated above is solved — renewed deadline, paid charge, deleted item, or an
   // older threshold superseded by a tighter one. Solved alerts are deleted rather than left stale.
+  // Announcements spotted on watched pages. They are not deadlines, so they expire by age rather
+  // than by being solved: after WATCH_KEEP_DAYS the key stops being regenerated and the alert goes.
+  for (const it of db.prepare(`SELECT i.id, i.title, s.label FROM watched_items i
+    JOIN watched_sites s ON s.id = i.site_id
+    WHERE i.family_id = ? AND i.announced = 1 AND i.seen_at >= datetime('now', '-' || ? || ' days')
+    ORDER BY i.seen_at DESC, i.id DESC LIMIT 40`).all(fid, WATCH_KEEP_DAYS)) {
+    add(`watch:${it.id}:new`, { t: 'watch', title: it.title, source: it.label }, null);
+  }
   const keep = [...live];
   db.prepare(`DELETE FROM notifications WHERE family_id = ?${keep.length ? ` AND key NOT IN (${keep.map(() => '?').join(',')})` : ''}`)
     .run(fid, ...keep);
@@ -3496,6 +3769,8 @@ async function emailReminderTick() {
   try { for (const p of db.prepare('SELECT * FROM properties').all()) ensureMeterRequests(p); } catch (err) { console.error('meter schedule:', err.message); }
   try { await runEmailReminders(); } catch (err) { console.error('email reminders:', err.message); }
   try { await runMonthlyReports(); } catch (err) { console.error('monthly report:', err.message); }
+  // belt and braces: if the hourly /api/cron/watch was never wired up, at least check once a day
+  try { await runWatchers(); } catch (err) { console.error('page watch:', err.message); }
   try { await runWeeklyBackup(); } catch (err) { console.error('weekly backup:', err.message); }
   try { sweepOrphanUploads(); } catch (err) { console.error('orphan sweep:', err.message); }
   // spent reset links have no further use — stop the table growing a row per request
@@ -3509,6 +3784,13 @@ setInterval(emailReminderTick, 6 * 3600 * 1000);
 // This does real work (auto-pay, auto-log, sends mail), so it must not be world-callable.
 // A token is required; with none configured we fail closed in production rather than leaving a
 // fresh install open to anyone who guesses the URL. Locally it stays open for testing.
+app.get('/api/cron/watch', async (req, res) => {
+  const token = process.env.CRON_TOKEN;
+  if (!token) return res.status(403).json({ error: 'CRON_TOKEN is not configured on this server' });
+  if (req.query.token !== token) return res.status(403).json({ error: 'Bad token' });
+  try { res.json(await runWatchers()); }
+  catch (err) { console.error('watch cron:', err.message); res.status(500).json({ error: err.message }); }
+});
 app.get('/api/cron/email-reminders', async (req, res) => {
   const token = process.env.CRON_TOKEN;
   if (token) {

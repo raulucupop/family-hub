@@ -1059,6 +1059,17 @@ th[data-sort="desc"]::after { content: " ▼"; }
   * { animation: none !important; transition: none !important; }
 }
 
+/* ---------- watched pages ---------- */
+.newslist { list-style: none; margin: 0; padding: 0; }
+.newsrow { padding: 12px 0; border-bottom: 1px solid var(--line); }
+.newsrow:last-child { border-bottom: 0; }
+/* a keyword match is the one thing you asked to be told about, so it is marked rather than sorted */
+.newsrow.is-hit { border-left: 3px solid var(--amber); margin-left: -12px; padding-left: 9px; }
+.newstitle { font-size: 15px; line-height: 1.35; }
+.newsmeta { font-size: 12.5px; margin-top: 3px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.newssum { margin: 6px 0 8px; font-size: 13px; line-height: 1.5; }
+.card.warn { border-color: var(--amber); background: var(--amber-soft); }
+
 /* ---------- seating plan ----------
    touch-action:none on the chips is what makes a drag work on a phone: without it the browser claims
    the gesture for scrolling and pointermove stops arriving mid-drag. It is scoped to the chips, so
