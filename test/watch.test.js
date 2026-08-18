@@ -166,6 +166,47 @@ test('a page with no feed is diffed on its readable text', async (t) => {
   });
 });
 
+
+test('the app checks by itself, and opening it repeatedly does not hammer the site', async (t) => {
+  const site = await stubSite();
+  // WATCH_EVERY_MS is deliberately long: the point of the test is that the second, third and
+  // fourth page load do NOT each fetch the commune again.
+  const api = await startServer({ WATCH_AUTO: '1', WATCH_EVERY_MS: '600000' });
+  t.after(async () => { await api.stop(); await site.stop(); });
+  site.items = [{ guid: 'a', title: 'Anunț licitație terenuri' }];
+  // The id comes from the POST response rather than a GET: a GET is exactly what triggers the
+  // automatic check, and it would fetch the real commune before the row is pointed at the stub.
+  const created = await api.post('/api/watch', { url: 'https://comunabucovat.ro/feed/', label: 'Comuna' });
+  const id = created.body.sites[0].id;
+  pointAt(api, id, `${site.realBase}/feed/`);
+  site.hits = 0;
+
+  // just looking at the app is the whole interaction
+  await api.get('/api/watch');
+  const seen = async () => {
+    for (let i = 0; i < 40; i++) {
+      const r = (await api.get('/api/watch')).body.sites[0];
+      if (r.last_checked_at) return r;
+      await new Promise((x) => setTimeout(x, 100));
+    }
+    return null;
+  };
+  const row = await seen();
+  assert.ok(row, 'opening the page must be enough to get a check — that is the whole point');
+  assert.equal(row.items_total, 1);
+
+  await t.test('and four more visits inside the window fetch nothing further', async () => {
+    const after = site.hits;
+    for (let i = 0; i < 4; i++) await api.get('/api/watch');
+    await new Promise((x) => setTimeout(x, 400));
+    assert.equal(site.hits, after, 'a burst of page loads must not become a burst of requests at the commune');
+  });
+
+  await t.test('loading the alerts badge counts as a visit too, so any page of the app keeps it fresh', async () => {
+    const r = await api.get('/api/notifications');
+    assert.equal(r.status, 200, 'the check must never make the badge slow or fail');
+  });
+});
 test('watched sites belong to one family', async (t) => {
   const api = await startServer();
   const other = await startServer();

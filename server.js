@@ -2886,6 +2886,29 @@ async function runWatchers() {
   return { families: byFamily.size, items: [...byFamily.values()].reduce((s, a) => s + a.length, 0) };
 }
 
+/* Checking without being asked. A cron job on the host is one more thing to set up and one more
+   thing to silently stop working, and "press check to find out" is not a feature — so the app
+   checks when it is used, and on a timer while it is alive. Both go through one throttle: opening
+   the app fires at most one round of fetches per WATCH_EVERY_MS however many pages are loaded, so
+   a burst of requests here cannot become a burst of traffic at somebody else's website. */
+const WATCH_EVERY_MS = Number(process.env.WATCH_EVERY_MS) || 30 * 60 * 1000;
+// off under test, so a stubbed site is never fetched behind a test's back
+const WATCH_AUTO = process.env.WATCH_AUTO === '1'
+  || (process.env.WATCH_AUTO !== '0' && process.env.NODE_ENV !== 'test');
+let watchLastRun = 0;
+let watchRunning = false;
+function autoWatchTick(reason) {
+  if (!WATCH_AUTO || watchRunning) return;
+  if (Date.now() - watchLastRun < WATCH_EVERY_MS) return;
+  if (!db.prepare('SELECT 1 FROM watched_sites WHERE active = 1 LIMIT 1').get()) return;
+  watchLastRun = Date.now();
+  watchRunning = true;
+  // deliberately not awaited: nobody should wait on somebody else's website to see their own page
+  runWatchers()
+    .catch((err) => console.error('auto watch (' + reason + '):', err.message))
+    .finally(() => { watchRunning = false; });
+}
+
 const watchSites = (fid) => db.prepare(`SELECT s.*,
     (SELECT COUNT(*) FROM watched_items i WHERE i.site_id = s.id) AS items_total
   FROM watched_sites s WHERE s.family_id = ? ORDER BY s.id`).all(fid);
@@ -2894,7 +2917,10 @@ const watchItems = (fid, limit = 60) => db.prepare(`SELECT i.*, s.label AS sourc
   WHERE i.family_id = ? ORDER BY COALESCE(i.published_at, i.seen_at) DESC, i.id DESC LIMIT ?`).all(fid, limit);
 const watchState = (fid) => ({ sites: watchSites(fid), items: watchItems(fid) });
 
-app.get('/api/watch', auth, (req, res) => res.json(watchState(req.user.family_id)));
+app.get('/api/watch', auth, (req, res) => {
+  autoWatchTick('page opened');
+  res.json(watchState(req.user.family_id));
+});
 app.post('/api/watch', auth, canWrite, (req, res) => {
   const b = req.body || {};
   const v = validateWatchUrl(b.url);
@@ -3113,6 +3139,7 @@ function generateNotifications(fid) {
   for (const n of fresh) sendPushToFamily(fid, { i18n: n.params, url: alertUrl(n.key), kind: String(n.key).split(':')[0], item: alertItem(n.key) }, n.owner).catch(() => {});
 }
 app.get('/api/notifications', auth, (req, res) => {
+  autoWatchTick('alerts loaded');
   generateNotifications(req.user.family_id);
   // admins see every alert; other members only ones they're responsible for (plus family-wide)
   const isAdmin = req.user.role === 'admin';
@@ -3781,6 +3808,9 @@ async function emailReminderTick() {
 }
 setTimeout(emailReminderTick, 30 * 1000);
 setInterval(emailReminderTick, 6 * 3600 * 1000);
+// Six hours suits bills and renewals; it is far too slow for a notice about something happening
+// this week, which is the whole reason the watcher exists.
+if (WATCH_AUTO) setInterval(() => autoWatchTick('timer'), Math.min(WATCH_EVERY_MS, 30 * 60 * 1000)).unref();
 // This does real work (auto-pay, auto-log, sends mail), so it must not be world-callable.
 // A token is required; with none configured we fail closed in production rather than leaving a
 // fresh install open to anyone who guesses the URL. Locally it stays open for testing.

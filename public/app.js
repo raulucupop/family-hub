@@ -202,6 +202,12 @@ const RO = {
   'Chores today': 'Treburi azi', 'All chores done for today': 'Toate treburile pe azi sunt gata',
   'See all': 'Vezi toate',
   'Everyone': 'Toată lumea', 'Nobody in particular': 'Fără responsabil', 'Anyone': 'Oricine', 'anyone': 'oricine',
+  'Watch Comuna Bucovăț': 'Urmărește Comuna Bucovăț',
+  'Adds comunabucovat.ro with licitatie, teren, concesiune and vanzare as keywords.': 'Adaugă comunabucovat.ro cu licitatie, teren, concesiune și vanzare drept cuvinte cheie.',
+  'Set up. From now on you only have to look here.': 'Gata. De acum trebuie doar să te uiți aici.',
+  'Not checked yet — it will look shortly.': 'Încă neverificat — se uită în scurt timp.',
+  'checks itself, nothing for you to press': 'se verifică singură, nu ai ce apăsa',
+  'just now': 'chiar acum', 'min ago': 'min în urmă', 'h ago': 'h în urmă', 'days ago': 'zile în urmă',
   // watched public pages
   'Watched pages': 'Pagini urmărite',
   'Public pages checked for you, so an announcement does not go by unnoticed.': 'Pagini publice verificate în locul tău, ca să nu-ți mai scape un anunț.',
@@ -3861,6 +3867,16 @@ function guestList(rows) {
    about it. So the page leads with the notices themselves, newest first, and the plumbing — which
    addresses are watched, when each was last checked, what broke — sits underneath. What you want on
    opening it is "what have I missed", not "is the watcher healthy". */
+/* When it last looked. The one question a self-checking thing has to answer on sight, because
+   silence otherwise reads the same whether nothing has happened or nothing is running. */
+function lastLook(sites) {
+  const stamps = sites.map((s) => s.last_checked_at).filter(Boolean).sort();
+  if (!stamps.length) return tr('Not checked yet — it will look shortly.');
+  const mins = Math.max(0, Math.round((Date.now() - new Date(stamps[stamps.length - 1].replace(' ', 'T') + 'Z')) / 60000));
+  const ago = mins < 2 ? tr('just now') : mins < 60 ? `${mins} ${tr('min ago')}`
+    : mins < 1500 ? `${Math.round(mins / 60)} ${tr('h ago')}` : `${Math.round(mins / 1440)} ${tr('days ago')}`;
+  return `${tr('Checked')} ${ago} · ${tr('checks itself, nothing for you to press')}`;
+}
 let WATCH_TAB = 'news';
 async function viewWatch(el, tab = WATCH_TAB) {
   WATCH_TAB = tab;
@@ -3874,7 +3890,8 @@ function renderWatch(el, state) {
   const when = (i) => (i.published_at ? fdate(String(i.published_at).slice(0, 10)) : fdate(String(i.seen_at).slice(0, 10)));
 
   el.innerHTML = `<div class="pagehead"><div><h1>${tr('Watched pages')}</h1>
-      <p>${tr('Public pages checked for you, so an announcement does not go by unnoticed.')}</p></div>
+      <p>${tr('Public pages checked for you, so an announcement does not go by unnoticed.')}</p>
+      ${sites.length ? `<p class="muted" style="font-size:12.5px;margin-top:4px">${lastLook(sites)}</p>` : ''}</div>
       ${canWrite() ? `<button class="btn ghost small" id="wcheck">${tr('Check now')}</button>` : ''}</div>
 
     ${broken.length ? `<div class="card warn" style="margin-bottom:14px">
@@ -3903,7 +3920,11 @@ function renderWatch(el, state) {
       </li>`).join('')}</ul>`
     : `<div class="empty"><b>${tr('Nothing spotted yet')}</b>${sites.length
       ? tr('The pages are being watched. Anything new will show up here and in your email.')
-      : tr('Add the page of your commune below and anything new posted there lands here.')}</div>`}
+      : tr('Add the page of your commune below and anything new posted there lands here.')}
+      ${!sites.length && canWrite() ? `<div style="margin-top:12px">
+        <button class="btn" id="wquick">${tr('Watch Comuna Bucovăț')}</button>
+        <p class="muted" style="font-size:12.5px;margin:8px 0 0">${tr('Adds comunabucovat.ro with licitatie, teren, concesiune and vanzare as keywords.')}</p>
+      </div>` : ''}</div>`}
     </div>` : `<div class="card">
       ${sites.length ? `<table class="cards"><thead><tr>
         <th>${tr('Page')}</th><th>${tr('Checked')}</th><th class="right">${tr('Seen')}</th><th></th></tr></thead><tbody>
@@ -3958,6 +3979,19 @@ function renderWatch(el, state) {
     const { hide, restore } = rowHide(b);
     undoableDelete({ hide, restore, commit: () => api('/watch/' + b.dataset.wdel, { method: 'DELETE' }).then(() => viewWatch(el)) });
   }));
+  el.querySelector('#wquick') && (el.querySelector('#wquick').onclick = async (e) => {
+    e.target.disabled = true;
+    e.target.textContent = tr('Checking…');
+    try {
+      await api('/watch', { method: 'POST', body: {
+        label: 'Comuna Bucovăț', url: 'https://www.comunabucovat.ro/feed/', kind: 'feed',
+        keywords: 'licitatie, teren, concesiune, vanzare, achizitie, concurs',
+      } });
+      // check straight away so the baseline is taken now rather than at some later visit
+      renderWatch(el, await api('/watch/check-all', { method: 'POST' }));
+      toast(tr('Set up. From now on you only have to look here.'), 'success');
+    } catch (err) { toast(err.message, 'error'); viewWatch(el); }
+  });
   el.querySelector('#wform')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     try {

@@ -24,12 +24,12 @@ function freePort() {
   });
 }
 
-async function startServer() {
+async function startServer(extraEnv = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fh-test-'));
   const port = await freePort();
   const proc = spawn(process.execPath, ['server.js'], {
     cwd: ROOT,
-    env: { ...process.env, DATA_DIR: dir, PORT: String(port), SESSION_SECRET: 'test-secret', NODE_ENV: 'test' },
+    env: { ...process.env, DATA_DIR: dir, PORT: String(port), SESSION_SECRET: 'test-secret', NODE_ENV: 'test', ...extraEnv },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let log = '';
