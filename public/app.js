@@ -586,6 +586,10 @@ function translateSubtree(root) {
    the currency, and it keeps the amount parser and the table sorter working unchanged. */
 const CURRENCIES = { RON: 'RON', EUR: '€', GBP: '£' };
 const cur = () => CURRENCIES[FAMILY?.currency] || FAMILY?.currency || 'RON';
+// Same shape as money(), but for an amount that carries its own currency — a loan made in euro
+// is euro, and printing it with the household symbol would be a plain lie about the sum.
+const moneyIn = (n, code) => (n == null ? '—'
+  : `${Number(n).toLocaleString('ro-RO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${CURRENCIES[code] || code || cur()}`);
 const money = (n) => n == null ? '—' : `${Number(n).toLocaleString('ro-RO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${cur()}`;
 // Rounded, no currency — for places that repeat an amount many times in a tight space (the category
 // subtotal pills). The exact figure is always on the row or in the header next to it.
@@ -2118,7 +2122,12 @@ async function moneyDebt(body) {
 function renderLent(el, loans, members, refresh) {
   if (!el) return;
   const open = loans.filter((l) => !l.settled);
-  const outstanding = open.reduce((s, l) => s + Number(l.balance || 0), 0);
+  const outstanding = open.reduce((m, l) => {
+    const c = l.currency || FAMILY?.currency || 'RON';
+    m[c] = (m[c] || 0) + Number(l.balance || 0);
+    return m;
+  }, {});
+  const outstandingText = Object.entries(outstanding).map(([c, v]) => moneyIn(v, c)).join(' · ');
   const iso = new Date().toISOString().slice(0, 10);
   const overdue = open.filter((l) => l.due_date && l.due_date < iso);
 
@@ -2126,7 +2135,7 @@ function renderLent(el, loans, members, refresh) {
     <div class="row" style="justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap">
       <h3 style="margin:0">${tr('Money lent')}</h3>
       ${open.length ? `<div style="text-align:right"><div class="muted" style="font-size:12.5px">${tr('Still out with people')}</div>
-        <div class="amount"><b>${money(outstanding)}</b></div></div>` : ''}
+        <div class="amount"><b>${outstandingText}</b></div></div>` : ''}
     </div>
     ${overdue.length ? `<p class="badge warn" style="margin:10px 0 0">${overdue.length} ${tr(overdue.length === 1 ? 'is past its date' : 'are past their date')}</p>` : ''}
 
@@ -2136,13 +2145,13 @@ function renderLent(el, loans, members, refresh) {
     return `<li class="chorerow${l.settled ? ' is-done' : ''}" style="display:block">
       <div class="row" style="justify-content:space-between;gap:10px;align-items:baseline">
         <span class="choretitle">${esc(l.person)}</span>
-        <span class="amount"${late ? ' style="color:var(--red)"' : ''}>${l.settled ? tr('Settled') : money(l.balance)}</span>
+        <span class="amount"${late ? ' style="color:var(--red)"' : ''}>${l.settled ? tr('Settled') : moneyIn(l.balance, l.currency)}</span>
       </div>
       <div class="bar" style="margin-top:8px"><i style="width:${pct}%"></i></div>
       <div class="row" style="justify-content:space-between;margin-top:4px;gap:8px;flex-wrap:wrap">
         <span class="muted" style="font-size:12.5px">${[
-      `${tr('lent')} ${money(l.amount)}`,
-      Number(l.repaid) > 0 ? `${tr('back')} ${money(l.repaid)}` : null,
+      `${tr('lent')} ${moneyIn(l.amount, l.currency)}`,
+      Number(l.repaid) > 0 ? `${tr('back')} ${moneyIn(l.repaid, l.currency)}` : null,
       l.due_date ? `${tr('due back')} ${fdate(l.due_date)}` : tr('no date agreed'),
       l.user_name ? esc(l.user_name) : null,
       l.note ? esc(l.note) : null,
@@ -2152,7 +2161,7 @@ function renderLent(el, loans, members, refresh) {
           <button class="btn danger small" data-lendel="${l.id}" aria-label="${tr('Delete')}">✕</button></span>` : ''}
       </div>
       <form class="formgrid" data-lenform="${l.id}" hidden style="margin-top:10px">
-        <div><label>${tr('Amount')}</label><input name="amount" type="number" step="0.01" min="0.01" max="${l.balance}" required></div>
+        <div><label>${tr('Amount')} <span class="muted">${CURRENCIES[l.currency] || l.currency || cur()}</span></label><input name="amount" type="number" step="0.01" min="0.01" max="${l.balance}" required></div>
         <div><label>${tr('Date')}</label><input name="date" type="date" value="${iso}" required></div>
         <button class="btn small">${tr('Save')}</button>
       </form>
@@ -2165,6 +2174,8 @@ function renderLent(el, loans, members, refresh) {
       <form id="lentform" class="formgrid">
         <div><label>${tr('Who has it')}</label><input name="person" placeholder="Andrei" required></div>
         <div><label>${tr('Amount')}</label><input name="amount" type="number" step="0.01" min="0.01" required></div>
+        <div><label>${tr('Currency')}</label><select name="currency">${Object.entries(CURRENCIES).map(([code, sym]) =>
+    `<option value="${code}" ${code === FAMILY?.currency ? 'selected' : ''}>${code}${code === sym ? '' : ` (${sym})`}</option>`).join('')}</select></div>
         <div><label>${tr('Date')}</label><input name="date" type="date" value="${iso}" required></div>
         <div><label>${tr('Due back')} <span class="muted">${tr('optional')}</span></label><input name="due_date" type="date"></div>
         <div><label>${tr('Person')}</label><select name="user_id"><option value="">${tr('Anyone')}</option>

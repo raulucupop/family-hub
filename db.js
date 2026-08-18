@@ -424,6 +424,7 @@ CREATE TABLE IF NOT EXISTS personal_loans (
   family_id INTEGER NOT NULL REFERENCES families(id) ON DELETE CASCADE,
   person TEXT NOT NULL,        -- who is holding the money
   amount REAL NOT NULL,        -- what was handed over
+  currency TEXT,        -- the loan's own; NULL means it predates this column and is household currency
   date TEXT NOT NULL,
   due_date TEXT,               -- when it was promised back; NULL = no date was agreed
   user_id INTEGER REFERENCES users(id) ON DELETE SET NULL, -- who in the family lent it
@@ -645,6 +646,11 @@ if (!db.prepare('PRAGMA table_info(list_items)').all().some((c) => c.name === 's
 // a table clears this column explicitly in the endpoint rather than leaning on ON DELETE SET NULL —
 // a column added by ALTER TABLE is an awkward place to rely on cascade behaviour, and "delete the
 // table, the guests go back to the pool" is worth being able to read in the code that does it.
+// Money lent abroad or to somebody who deals in euro is not household currency. Rows written
+// before this existed are household currency, which is what NULL means here.
+if (!db.prepare('PRAGMA table_info(personal_loans)').all().some((c) => c.name === 'currency')) {
+  db.exec('ALTER TABLE personal_loans ADD COLUMN currency TEXT');
+}
 if (!db.prepare('PRAGMA table_info(watched_items)').all().some((c) => c.name === 'announced')) {
   db.exec('ALTER TABLE watched_items ADD COLUMN announced INTEGER NOT NULL DEFAULT 1');
 }

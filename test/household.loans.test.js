@@ -50,6 +50,45 @@ test('a loan to a person is tracked by what has come back', async (t) => {
   });
 });
 
+
+test('a loan can be in a currency the household does not report in', async (t) => {
+  const api = await startServer();
+  t.after(() => api.stop());
+
+  const ron = (await api.post('/api/loans', { person: 'Andrei', amount: 2000, date: today() })).body;
+  const eur = (await api.post('/api/loans', { person: 'Hans', amount: 500, date: today(), currency: 'EUR' })).body;
+
+  await t.test('an omitted currency is the household one, written down rather than assumed', () => {
+    assert.equal(ron.currency, 'RON', 'the household currency can change later; the loan did not');
+    assert.equal(eur.currency, 'EUR');
+  });
+
+  await t.test('the currency survives a repayment and a reload', async () => {
+    await api.post(`/api/loans/${eur.id}/payments`, { amount: 200, date: today() });
+    const row = (await api.get('/api/loans')).body.find((l) => l.id === eur.id);
+    assert.equal(row.currency, 'EUR');
+    assert.equal(row.balance, 300);
+    assert.equal(row.repaid, 200, 'a repayment is in the money that was lent');
+  });
+
+  await t.test('changing the household currency does not restate a loan', async () => {
+    await api.patch('/api/family', { currency: 'GBP' });
+    const rows = (await api.get('/api/loans')).body;
+    assert.equal(rows.find((l) => l.id === ron.id).currency, 'RON', '2.000 lei lent is 2.000 lei owed');
+    assert.equal(rows.find((l) => l.id === eur.id).currency, 'EUR');
+  });
+
+  await t.test('only the three known currencies are accepted', async () => {
+    assert.equal((await api.post('/api/loans', { person: 'X', amount: 1, date: today(), currency: 'USD' })).status, 400);
+    assert.equal((await api.post('/api/loans', { person: 'X', amount: 1, date: today(), currency: 'nope' })).status, 400);
+  });
+
+  await t.test('editing a loan without naming a currency keeps the one it had', async () => {
+    const r = await api.put(`/api/loans/${eur.id}`, { person: 'Hans', amount: 500, date: today() });
+    assert.equal(r.status, 200, r.text);
+    assert.equal(r.body.currency, 'EUR', 'an edit that says nothing about currency must not silently convert it');
+  });
+});
 test('a loan has to describe a real transfer', async (t) => {
   const api = await startServer();
   t.after(() => api.stop());

@@ -1176,13 +1176,21 @@ app.delete('/api/credits/:id/payments/:pid', auth, canWrite, (req, res) => {
    needs a name, an amount, and a record of what came back — so this is its own small thing rather
    than a credit with the interesting parts nulled out. The balance is always derived from the
    repayment rows, never stored, so a repayment deleted by mistake puts the debt back exactly. */
+const familyCurrencyCode = (fid) => db.prepare('SELECT currency FROM families WHERE id = ?').get(fid)?.currency || 'RON';
 const LOAN_SELECT = `
   SELECT l.*, u.name AS user_name,
          COALESCE((SELECT SUM(p.amount) FROM personal_loan_payments p WHERE p.loan_id = l.id), 0) AS repaid
   FROM personal_loans l LEFT JOIN users u ON u.id = l.user_id`;
-const loanRow = (r) => {
+// A loan the household did not make in its own money — €500 to somebody abroad — is €500, and
+// stays €500 however the household reports itself. NULL is a row written before this existed,
+// which was necessarily household currency.
+const loanCurrency = (r, famCurrency) => r.currency || famCurrency || 'RON';
+const loanRow = (r, famCurrency) => {
   const balance = Math.round((Number(r.amount) - Number(r.repaid)) * 100) / 100;
-  return { ...r, repaid: Math.round(Number(r.repaid) * 100) / 100, balance, settled: balance <= 0.005 };
+  return {
+    ...r, currency: loanCurrency(r, famCurrency),
+    repaid: Math.round(Number(r.repaid) * 100) / 100, balance, settled: balance <= 0.005,
+  };
 };
 function validateLoan(b) {
   if (!str(b.person)) return 'Say who the money went to';
@@ -1191,11 +1199,13 @@ function validateLoan(b) {
   if (!isDate(b.date)) return 'Pick the date the money was handed over';
   if (b.due_date && !isDate(b.due_date)) return 'Due date must be a real date';
   if (b.due_date && b.due_date < b.date) return 'The money cannot be due back before it was lent';
+  if (b.currency != null && b.currency !== '' && !CURRENCY_SYMBOL[b.currency]) return 'Currency must be RON, EUR or GBP';
   return null;
 }
 app.get('/api/loans', auth, (req, res) => {
+  const fam = familyCurrencyCode(req.user.family_id);
   res.json(db.prepare(`${LOAN_SELECT} WHERE l.family_id = ? ORDER BY l.date DESC, l.id DESC`)
-    .all(req.user.family_id).map(loanRow));
+    .all(req.user.family_id).map((r) => loanRow(r, fam)));
 });
 app.post('/api/loans', auth, canWrite, (req, res) => {
   const b = req.body || {};
@@ -1205,9 +1215,10 @@ app.post('/api/loans', auth, canWrite, (req, res) => {
   if (uid != null && !db.prepare('SELECT id FROM users WHERE id = ? AND family_id = ?').get(uid, req.user.family_id)) {
     return res.status(400).json({ error: 'Person must be a member of the family' });
   }
-  const info = db.prepare('INSERT INTO personal_loans (family_id, person, amount, date, due_date, user_id, note) VALUES (?,?,?,?,?,?,?)')
-    .run(req.user.family_id, str(b.person), Number(b.amount), b.date, b.due_date || null, uid, str(b.note));
-  res.json(loanRow(db.prepare(`${LOAN_SELECT} WHERE l.id = ?`).get(info.lastInsertRowid)));
+  const currency = b.currency || familyCurrencyCode(req.user.family_id);
+  const info = db.prepare('INSERT INTO personal_loans (family_id, person, amount, date, due_date, user_id, note, currency) VALUES (?,?,?,?,?,?,?,?)')
+    .run(req.user.family_id, str(b.person), Number(b.amount), b.date, b.due_date || null, uid, str(b.note), currency);
+  res.json(loanRow(db.prepare(`${LOAN_SELECT} WHERE l.id = ?`).get(info.lastInsertRowid), currency));
 });
 app.put('/api/loans/:id', auth, canWrite, (req, res) => {
   const row = db.prepare('SELECT * FROM personal_loans WHERE id = ? AND family_id = ?').get(req.params.id, req.user.family_id);
@@ -1219,9 +1230,10 @@ app.put('/api/loans/:id', auth, canWrite, (req, res) => {
   if (uid != null && !db.prepare('SELECT id FROM users WHERE id = ? AND family_id = ?').get(uid, req.user.family_id)) {
     return res.status(400).json({ error: 'Person must be a member of the family' });
   }
-  db.prepare('UPDATE personal_loans SET person = ?, amount = ?, date = ?, due_date = ?, user_id = ?, note = ? WHERE id = ?')
-    .run(str(b.person), Number(b.amount), b.date, b.due_date || null, uid, str(b.note), row.id);
-  res.json(loanRow(db.prepare(`${LOAN_SELECT} WHERE l.id = ?`).get(row.id)));
+  db.prepare('UPDATE personal_loans SET person = ?, amount = ?, date = ?, due_date = ?, user_id = ?, note = ?, currency = ? WHERE id = ?')
+    .run(str(b.person), Number(b.amount), b.date, b.due_date || null, uid, str(b.note),
+      b.currency || row.currency || familyCurrencyCode(req.user.family_id), row.id);
+  res.json(loanRow(db.prepare(`${LOAN_SELECT} WHERE l.id = ?`).get(row.id), familyCurrencyCode(req.user.family_id)));
 });
 app.delete('/api/loans/:id', auth, canWrite, (req, res) => {
   db.prepare('DELETE FROM personal_loans WHERE id = ? AND family_id = ?').run(req.params.id, req.user.family_id);
@@ -1243,7 +1255,7 @@ app.post('/api/loans/:id/payments', auth, canWrite, (req, res) => {
   if (amount > loanRow(loan).balance + 0.005) return res.status(400).json({ error: 'That is more than is still owed' });
   db.prepare('INSERT INTO personal_loan_payments (loan_id, family_id, amount, date, note) VALUES (?,?,?,?,?)')
     .run(loan.id, req.user.family_id, amount, b.date, str(b.note));
-  res.json(loanRow(db.prepare(`${LOAN_SELECT} WHERE l.id = ?`).get(loan.id)));
+  res.json(loanRow(db.prepare(`${LOAN_SELECT} WHERE l.id = ?`).get(loan.id), familyCurrencyCode(req.user.family_id)));
 });
 app.delete('/api/loans/:id/payments/:pid', auth, canWrite, (req, res) => {
   db.prepare('DELETE FROM personal_loan_payments WHERE id = ? AND loan_id = ? AND family_id = ?')
