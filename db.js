@@ -207,6 +207,7 @@ CREATE TABLE IF NOT EXISTS properties (
   mortgage_due_day INTEGER, -- day of month
   owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL, -- NULL = whole family
   rent_amount REAL,            -- monthly rent charged to the tenant
+  rent_currency TEXT,          -- what the lease is written in; NULL = the household's own
   rent_due_day INTEGER,        -- day of month rent is due (1-31; clamped to the last day in shorter months)
   lease_start TEXT,            -- tenancy: when the contract started
   lease_end TEXT,              -- ...and when it runs out
@@ -232,6 +233,8 @@ CREATE TABLE IF NOT EXISTS tenant_charges (
   due_date TEXT NOT NULL,
   period TEXT, -- YYYY-MM, used to generate each month's rent exactly once
   status TEXT NOT NULL DEFAULT 'unpaid' CHECK (status IN ('unpaid','pending','paid')),
+  currency TEXT,          -- copied from the property when raised, so a later change to the lease
+                          -- does not restate an invoice the tenant already has
   marked_paid_at TEXT,
   confirmed_at TEXT,
   attachment TEXT, -- invoice scan the owner attaches; visible to the tenant
@@ -603,6 +606,9 @@ if (!savCols.includes('goal_id')) db.exec('ALTER TABLE savings ADD COLUMN goal_i
 
 const tcCols = db.prepare('PRAGMA table_info(tenant_charges)').all().map((c) => c.name);
 if (!tcCols.includes('attachment')) db.exec('ALTER TABLE tenant_charges ADD COLUMN attachment TEXT');
+// A lease written in euro raises euro invoices. Copied onto the charge when it is raised, so a
+// later change to the lease cannot restate an invoice the tenant is already holding.
+if (!tcCols.includes('currency')) db.exec('ALTER TABLE tenant_charges ADD COLUMN currency TEXT');
 
 // The guest list needs head counts, an RSVP and a gift — and 'baptism' has to satisfy the `list`
 // CHECK constraint, which SQLite bakes into the table definition and no ALTER can widen. So the
@@ -711,6 +717,9 @@ if (!propCols4.includes('deposit_returned_at')) db.exec('ALTER TABLE properties 
 const propCols = db.prepare('PRAGMA table_info(properties)').all().map((c) => c.name);
 if (!propCols.includes('owner_id')) db.exec('ALTER TABLE properties ADD COLUMN owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL');
 if (!propCols.includes('rent_amount')) db.exec('ALTER TABLE properties ADD COLUMN rent_amount REAL');
+// Leases here are often written in euro while the household reports in lei. The rent is what the
+// lease says; NULL is a row from before this column, which was necessarily household currency.
+if (!propCols.includes('rent_currency')) db.exec('ALTER TABLE properties ADD COLUMN rent_currency TEXT');
 if (!propCols.includes('rent_due_day')) db.exec('ALTER TABLE properties ADD COLUMN rent_due_day INTEGER');
 if (!propCols.includes('tenant_invite_code')) db.exec('ALTER TABLE properties ADD COLUMN tenant_invite_code TEXT');
 if (!propCols.includes('managed')) db.exec('ALTER TABLE properties ADD COLUMN managed INTEGER NOT NULL DEFAULT 0');

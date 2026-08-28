@@ -789,10 +789,13 @@ crud({
 });
 crud({
   route: 'properties', table: 'properties',
-  fields: ['name', 'address', 'insurance_expiry', 'insurance2_expiry', 'property_tax_due', 'mortgage_lender', 'mortgage_payment', 'mortgage_due_day', 'owner_id', 'rent_amount', 'rent_due_day', 'reading_day', 'reading_utilities', 'payment_link', 'managed', 'lease_start', 'lease_end', 'notice_days', 'deposit_amount', 'deposit_returned_at', 'notes'],
+  fields: ['name', 'address', 'insurance_expiry', 'insurance2_expiry', 'property_tax_due', 'mortgage_lender', 'mortgage_payment', 'mortgage_due_day', 'owner_id', 'rent_amount', 'rent_currency', 'rent_due_day', 'reading_day', 'reading_utilities', 'payment_link', 'managed', 'lease_start', 'lease_end', 'notice_days', 'deposit_amount', 'deposit_returned_at', 'notes'],
   orderBy: 'name',
   validate: (b, req) => {
     if (!b.name) return 'Property name is required';
+    // A lease in euro is normal here; anything outside the three the app knows would print as a
+    // currency that does not exist.
+    if (b.rent_currency != null && b.rent_currency !== '' && !CURRENCY_SYMBOL[b.rent_currency]) return 'Currency must be RON, EUR or GBP';
     // crud() writes every field, so an omitted `managed` would insert NULL into a NOT NULL column.
     // Normalising here (validate receives the real body on create) keeps it a plain 0/1.
     if (b.managed != null && b.managed !== '' && ![0, 1, '0', '1', true, false].includes(b.managed)) return 'Managed must be 0 or 1';
@@ -1652,13 +1655,18 @@ app.delete('/api/properties/:pid/records/:rid', auth, canWrite, (req, res) => {
 
 // ---------- tenants & shared charges ----------
 // Rent is generated once per month automatically when the property has rent_amount set and a tenant.
+// What a charge is denominated in: the property's lease currency, or the household's if the lease
+// never said. Read once and copied onto the charge, never re-derived — an invoice the tenant is
+// holding must not change meaning because a setting moved.
+const chargeCurrency = (prop) => prop.rent_currency || familyCurrencyCode(prop.family_id);
 function ensureRentCharge(prop) {
   if (!(Number(prop.rent_amount) > 0)) return;
   if (!db.prepare("SELECT id FROM users WHERE role = 'tenant' AND tenant_property_id = ?").get(prop.id)) return;
   const period = new Date().toISOString().slice(0, 7);
   if (db.prepare("SELECT id FROM tenant_charges WHERE property_id = ? AND type = 'rent' AND period = ?").get(prop.id, period)) return;
-  db.prepare('INSERT INTO tenant_charges (family_id, property_id, type, title, amount, due_date, period) VALUES (?,?,?,?,?,?,?)')
-    .run(prop.family_id, prop.id, 'rent', `Rent ${period}`, Number(prop.rent_amount), monthDate(period, prop.rent_due_day), period);
+  db.prepare('INSERT INTO tenant_charges (family_id, property_id, type, title, amount, due_date, period, currency) VALUES (?,?,?,?,?,?,?,?)')
+    .run(prop.family_id, prop.id, 'rent', `Rent ${period}`, Number(prop.rent_amount),
+      monthDate(period, prop.rent_due_day), period, chargeCurrency(prop));
 }
 function familyProperty(req) {
   return db.prepare('SELECT * FROM properties WHERE id = ? AND family_id = ?').get(req.params.id, req.user.family_id);
@@ -1781,11 +1789,14 @@ app.post('/api/properties/:id/charges', auth, canWrite, (req, res) => {
   if (!b.title) return res.status(400).json({ error: 'Title is required' });
   if (!okAmount(b.amount)) return res.status(400).json({ error: 'Amount must be greater than 0' });
   if (!isDate(b.due_date)) return res.status(400).json({ error: 'Due date must be YYYY-MM-DD' });
-  const info = db.prepare('INSERT INTO tenant_charges (family_id, property_id, type, title, amount, due_date, note) VALUES (?,?,?,?,?,?,?)')
-    .run(prop.family_id, prop.id, b.type, str(b.title), Number(b.amount), b.due_date, str(b.note));
+  if (b.currency != null && b.currency !== '' && !CURRENCY_SYMBOL[b.currency]) return res.status(400).json({ error: 'Currency must be RON, EUR or GBP' });
+  // The lease currency is the default because most charges follow the rent; utilities billed in
+  // lei against a euro lease are the reason it can be overridden per charge.
+  const chargeCur = b.currency || chargeCurrency(prop);
+  const info = db.prepare('INSERT INTO tenant_charges (family_id, property_id, type, title, amount, due_date, note, currency) VALUES (?,?,?,?,?,?,?,?)')
+    .run(prop.family_id, prop.id, b.type, str(b.title), Number(b.amount), b.due_date, str(b.note), chargeCur);
   {
-    const cur = familyCurrency(prop.family_id);
-    const amountStr = `${Number(b.amount).toFixed(2)} ${cur}`;
+    const amountStr = `${Number(b.amount).toFixed(2)} ${curSymbol(chargeCur)}`;
     const dueStr = mailDate(b.due_date);
     const invoiceNote = b.type === 'invoice' ? ' and the invoice' : '';
     const site = siteBase();
@@ -3336,13 +3347,27 @@ function familyDigestMail(lang, famName, items, cur) {
 // the tenant's unpaid charges as a payable email — same Pay-via-Revolut + Check-invoice buttons the
 // new-charge email carries, so a reminder is as actionable as the original. Used by the daily digest
 // AND the owner's manual "Send reminder" (opts.manual just changes the intro line).
+/* Two currencies cannot be added without a rate this app has no source for, so what the tenant
+   owes is stated per currency: "1.200,00 € · 350,00 RON". One invented number would be wrong by
+   an unknown amount, which is worse than two true ones on a document somebody pays against. */
+function owedByCurrency(charges, fallback) {
+  const totals = {};
+  for (const c of charges) {
+    const code = c.currency || fallback;
+    totals[code] = (totals[code] || 0) + Number(c.amount || 0);
+  }
+  return totals;
+}
+const owedText = (charges, fallback) => Object.entries(owedByCurrency(charges, fallback))
+  .map(([code, v]) => `${v.toFixed(2)} ${curSymbol(code)}`).join(' · ') || `0.00 ${curSymbol(fallback)}`;
+
 function tenantChargesMail(lang, prop, charges, total, cur, opts = {}) {
   const ro = lang === 'ro';
   const site = siteBase();
   const dueW = ro ? 'scadent' : 'due';
-  const lines = charges.map((c) => `- ${c.title}: ${Number(c.amount).toFixed(2)} ${cur}, ${dueW} ${mailDate(c.due_date)}`).join('\n');
+  const lines = charges.map((c) => `- ${c.title}: ${Number(c.amount).toFixed(2)} ${curSymbol(c.currency || cur)}, ${dueW} ${mailDate(c.due_date)}`).join('\n');
   const rows = charges.map((c) => `<div style="margin:8px 0;padding:10px 14px;background:#eff2f1;border-radius:8px;">
-      <b>${htmlEsc(c.title)}</b><br><span style="font-family:monospace;font-size:15px;">${Number(c.amount).toFixed(2)} ${cur}</span> · ${dueW} ${mailDate(c.due_date)}
+      <b>${htmlEsc(c.title)}</b><br><span style="font-family:monospace;font-size:15px;">${Number(c.amount).toFixed(2)} ${curSymbol(c.currency || cur)}</span> · ${dueW} ${mailDate(c.due_date)}
     </div>`).join('');
   const t = {
     subject: ro ? `Plăți pentru ${prop.name} — scadente în curând` : `Payments for ${prop.name} — due soon`,
@@ -3361,10 +3386,10 @@ function tenantChargesMail(lang, prop, charges, total, cur, opts = {}) {
   };
   return {
     subject: t.subject,
-    text: `${t.greet}\n\n${t.introText}\n\n${lines}\n\n${t.totalW}: ${total.toFixed(2)} ${cur}\n\n`
+    text: `${t.greet}\n\n${t.introText}\n\n${lines}\n\n${t.totalW}: ${owedText(charges, cur)}\n\n`
       + `${prop.payment_link ? `${t.payW}: ${prop.payment_link}\n` : ''}${t.invW}: ${site}/\n\n${t.foot}\n`,
     html: htmlEmail(`<p>${t.greet}</p><p>${t.intro}</p>${rows}
-      <p style="font-weight:600;margin:12px 0 6px">${t.totalW}: <span style="font-family:monospace">${total.toFixed(2)} ${cur}</span></p>
+      <p style="font-weight:600;margin:12px 0 6px">${t.totalW}: <span style="font-family:monospace">${owedText(charges, cur)}</span></p>
       <p>${prop.payment_link ? htmlButton(htmlEsc(prop.payment_link), `${t.payW}${REVOLUT_BADGE}`, '#0666EB') : ''}${htmlButton(`${site}/`, t.invW)}</p>
       <p style="color:#45565f;font-size:13px;">${t.foot}</p>`),
   };

@@ -113,6 +113,64 @@ test('lending money is not spending it', async (t) => {
   assert.equal((await api.get('/api/expenses')).body.filter((e) => e.amount === 2000).length, 0);
 });
 
+test('rent can be agreed in euro while the household reports in lei', async (t) => {
+  const api = await startServer();
+  t.after(() => api.stop());
+  const prop = (await api.post('/api/properties', {
+    name: 'Apartament', rent_amount: 400, rent_currency: 'EUR', rent_due_day: 5,
+  })).body;
+
+  await t.test('the lease currency is stored on the property', async () => {
+    const row = (await api.get('/api/properties')).body.find((x) => x.id === prop.id);
+    assert.equal(row.rent_currency, 'EUR');
+  });
+
+  await t.test('a charge raised on the tenant inherits it', async () => {
+    const c = (await api.post(`/api/properties/${prop.id}/charges`, {
+      type: 'rent', title: 'Chirie august', amount: 400, due_date: today(),
+    })).body;
+    assert.equal(c.currency, 'EUR', 'the invoice is for what the lease says, not what the household reports in');
+  });
+
+  await t.test('and a utility bill against the same lease can still be in lei', async () => {
+    const c = (await api.post(`/api/properties/${prop.id}/charges`, {
+      type: 'invoice', title: 'Apă', amount: 85, due_date: today(), currency: 'RON',
+    })).body;
+    assert.equal(c.currency, 'RON', 'utilities billed in lei against a euro lease is the normal case');
+  });
+
+  await t.test('the two are never added into one number', async () => {
+    const charges = (await api.get(`/api/properties/${prop.id}/charges`)).body;
+    const byCurrency = {};
+    for (const c of charges) byCurrency[c.currency] = (byCurrency[c.currency] || 0) + c.amount;
+    assert.deepEqual(byCurrency, { EUR: 400, RON: 85 }, 'adding these needs a rate the app has no source for');
+  });
+
+  await t.test('changing the household currency does not restate an invoice already raised', async () => {
+    await api.patch('/api/family', { currency: 'GBP' });
+    const charges = (await api.get(`/api/properties/${prop.id}/charges`)).body;
+    assert.equal(charges.find((c) => c.title === 'Chirie august').currency, 'EUR',
+      'the tenant is holding a document that says 400 euro');
+  });
+
+  await t.test('an unknown currency is refused on the lease and on a charge', async () => {
+    const lease = await api.put(`/api/properties/${prop.id}`, { name: 'Apartament', rent_currency: 'USD' });
+    assert.equal(lease.status, 400, lease.text);
+    const charge = await api.post(`/api/properties/${prop.id}/charges`, {
+      type: 'invoice', title: 'X', amount: 5, due_date: today(), currency: 'USD',
+    });
+    assert.equal(charge.status, 400, charge.text);
+  });
+
+  await t.test('a lease with no currency named is the household one, and follows it no further', async () => {
+    const plain = (await api.post('/api/properties', { name: 'Casa', rent_amount: 1500 })).body;
+    const c = (await api.post(`/api/properties/${plain.id}/charges`, {
+      type: 'rent', title: 'Chirie', amount: 1500, due_date: today(),
+    })).body;
+    assert.equal(c.currency, 'GBP', 'the household currency at the moment the charge was raised');
+  });
+});
+
 test('a todo is done once and stays done', async (t) => {
   const api = await startServer();
   t.after(() => api.stop());

@@ -1338,7 +1338,7 @@ function tenantInvoicesView(el, data) {
         return `<tr>
           <td>${fdate(c.due_date)}${late ? ' <span class="badge late">overdue</span>' : ''}</td>
           <td><b>${esc(c.title)}</b>${c.type === 'rent' ? ' <span class="muted">· rent</span>' : ''}${c.attachment ? ` · <a href="/api/tenant/charges/${c.id}/attachment" target="_blank">invoice</a>` : ''}${c.note ? `<br><span class="muted">${esc(c.note)}</span>` : ''}</td>
-          <td class="right amount">${money(c.amount)}</td>
+          <td class="right amount">${moneyIn(c.amount, chargeCur(c))}</td>
           <td>${c.status === 'paid' ? `<span class="badge paid">${tr('paid')}${c.confirmed_at ? ' ' + fdate(c.confirmed_at) : ''}</span>`
             : c.status === 'pending' ? `<span class="badge role">confirmation pending</span>`
             : `<span class="badge unpaid">to pay</span>`}</td>
@@ -3194,7 +3194,10 @@ async function viewProperty(el, id) {
   const ro = LANG === 'ro';
 
   const unpaid = charges.filter((c) => c.status !== 'paid');
-  const owed = unpaid.reduce((s, c) => s + Number(c.amount || 0), 0);
+  const owed = owedText(unpaid);
+  // owed is a sentence now ("1.200,00 € · 350,00 RON"), so whether anything is outstanding at all
+  // has to be asked separately — comparing that string to 0 is always false.
+  const owesAnything = unpaid.reduce((n, c) => n + Number(c.amount || 0), 0) > 0;
   const rent = charges.find((c) => c.type === 'rent' && String(c.period || c.due_date).startsWith(period));
   const rentLate = rent && rent.status !== 'paid' && rent.due_date < t
     ? Math.round((new Date(t) - new Date(rent.due_date)) / 86400000) : 0;
@@ -3227,7 +3230,7 @@ async function viewProperty(el, id) {
         <div class="value">${rent ? money(rent.amount) : '—'}</div>
         <div style="margin-top:6px"><span class="badge ${rentState.cls}">${rentState.txt}</span></div></div>
       <div class="card"><div class="label">${tr('Outstanding')}</div>
-        <div class="value ${owed > 0 ? 'neg' : ''}">${money(owed)}</div>
+        <div class="value ${owesAnything ? 'neg' : ''}">${owed}</div>
         <div class="muted" style="font-size:12.5px">${unpaid.length} ${tr(unpaid.length === 1 ? 'unpaid charge' : 'unpaid charges')}</div></div>`
       // not let: the mortgage is the number that matters month to month
       : `<div class="card"><div class="label">${tr('Spent')}</div>
@@ -3268,7 +3271,7 @@ async function viewProperty(el, id) {
       ${unpaid.map((c) => { const late = c.status === 'unpaid' && c.due_date < t; return `<tr>
         <td data-label="${tr('Due')}">${fdate(c.due_date)}${late ? ` <span class="badge late">${tr('overdue')}</span>` : ''}</td>
         <td data-label="${tr('What')}"><b>${esc(c.title)}</b></td>
-        <td class="right amount" data-label="${tr('Amount')}">${money(c.amount)}</td>
+        <td class="right amount" data-label="${tr('Amount')}">${moneyIn(c.amount, chargeCur(c))}</td>
         <td data-label="${tr('Status')}">${c.status === 'pending' ? `<span class="badge role">${tr('pending — tenant marked paid')}</span>` : `<span class="badge unpaid">${tr('unpaid')}</span>`}</td>
         <td class="right">${canWrite() ? `<button class="btn small" data-confirm="${c.id}">${tr('Confirm paid')}</button>` : ''}</td></tr>`; }).join('')}
       </tbody></table></section>` : ''}
@@ -3420,9 +3423,11 @@ async function renderTenantBox(box, p) {
     api(`/properties/${p.id}/maintenance`)]);
   const t = today();
   box.innerHTML = `<h3 style="margin-top:16px">Tenant & rent</h3>
-    <p class="muted">${p.rent_amount ? `${tr('Rent:')} <b>${money(p.rent_amount)}</b> ${tr('/ month, due day')} ${p.rent_due_day || 1} — ${tr('the rent charge is generated automatically once a tenant has joined.')}` : tr('No rent set yet — set it here and the monthly rent charge generates itself.')}</p>
+    <p class="muted">${p.rent_amount ? `${tr('Rent:')} <b>${moneyIn(p.rent_amount, p.rent_currency)}</b> ${tr('/ month, due day')} ${p.rent_due_day || 1} — ${tr('the rent charge is generated automatically once a tenant has joined.')}` : tr('No rent set yet — set it here and the monthly rent charge generates itself.')}</p>
     ${canWrite() ? `<form data-rentform class="row" style="flex-wrap:wrap;align-items:flex-end;gap:8px">
-      <div><label>${tr('Rent')} (${cur()})</label><input name="rent_amount" type="number" step="0.01" min="0" value="${p.rent_amount ?? ''}" style="max-width:130px"></div>
+      <div><label>${tr('Rent')}</label><input name="rent_amount" type="number" step="0.01" min="0" value="${p.rent_amount ?? ''}" style="max-width:130px"></div>
+      <div><label>${tr('Currency')}</label><select name="rent_currency" style="max-width:110px">${Object.entries(CURRENCIES).map(([code, sym]) =>
+    `<option value="${code}" ${code === (p.rent_currency || FAMILY?.currency) ? 'selected' : ''}>${code}${code === sym ? '' : ` (${sym})`}</option>`).join('')}</select></div>
       <div><label>${tr('Rent due day (1-31)')}</label><input name="rent_due_day" type="number" min="1" max="31" value="${p.rent_due_day ?? 1}" style="max-width:120px"></div>
       <button class="btn small">${tr('Save')}</button></form>` : ''}
     ${leaseBlock(p)}
@@ -3457,7 +3462,7 @@ async function renderTenantBox(box, p) {
         return `<tr>
           <td>${fdate(c.due_date)}${late ? ' <span class="badge late">overdue</span>' : ''}</td>
           <td><b>${esc(c.title)}</b>${c.type === 'rent' ? ' <span class="muted">· rent</span>' : ''}</td>
-          <td class="right amount">${money(c.amount)}</td>
+          <td class="right amount">${moneyIn(c.amount, chargeCur(c))}</td>
           <td>${c.attachment ? `<a href="/api/properties/${p.id}/charges/${c.id}/attachment" target="_blank">view</a>` : canWrite() ? `<label class="btn ghost small" style="display:inline-block">attach<input type="file" data-chattach="${c.id}" accept=".pdf,image/*" hidden></label>` : '—'}</td>
           <td>${c.status === 'paid' ? `<span class="badge paid">${tr('paid')}${c.confirmed_at ? ' ' + fdate(c.confirmed_at) : ''}</span>`
             : c.status === 'pending' ? `<span class="badge role">${tr('pending — tenant marked paid')} ${c.marked_paid_at ? fdate(c.marked_paid_at) : ''}</span>`
@@ -3509,6 +3514,7 @@ async function renderTenantBox(box, p) {
     try {
       const updated = await api(`/properties/${p.id}`, { method: 'PUT', body: {
         rent_amount: f.rent_amount === '' ? null : Number(f.rent_amount),
+        rent_currency: f.rent_currency || null,
         rent_due_day: Number(f.rent_due_day) || 1,
       } });
       Object.assign(p, updated); // keep the card's copy in step so the reload shows the new rent
@@ -4165,6 +4171,18 @@ let SEAT_PICKED = null; // guest id held by the tap-to-place path, across re-ren
 
 /* "Table" belongs in front of a number, not in front of a name somebody chose: table 4 reads right,
    "Table Top table" does not. So the word is added only when the name is bare digits. */
+/* A charge carries the currency it was raised in; an older one predates the column and was
+   household currency. Totals are per currency because adding them needs a rate the app has no
+   source for — the tenant portal is a document somebody pays against, so one invented number is
+   worse than two true ones. */
+const chargeCur = (c) => c.currency || FAMILY?.currency || 'RON';
+function owedPerCurrency(charges) {
+  const totals = {};
+  for (const c of charges) totals[chargeCur(c)] = (totals[chargeCur(c)] || 0) + Number(c.amount || 0);
+  return totals;
+}
+const owedText = (charges) => Object.entries(owedPerCurrency(charges))
+  .map(([code, v]) => moneyIn(v, code)).join(' · ') || moneyIn(0, FAMILY?.currency);
 const tableLabel = (name) => (/^\d+$/.test(String(name)) ? `${tr('Table')} ${name}` : String(name));
 
 /* "6/6" says the table is full; it does not say what the kitchen has to cook. A child and a
