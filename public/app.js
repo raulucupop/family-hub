@@ -759,7 +759,7 @@ function quickSearch() {
     box.innerHTML = items.map((r, i) => `<button type="button" class="qsitem${i === sel ? ' on' : ''}" data-i="${i}">
       <span class="badge role">${tr(SEARCH_KINDS[r.kind] || r.kind)}</span>
       <span class="qsmain"><b>${esc(r.title || '')}</b>${r.sub ? `<br><span class="muted">${esc(r.sub)}</span>` : ''}</span>
-      <span class="muted qsmeta">${r.date ? fdate(r.date) : ''}${r.amount != null ? ` · ${money(r.amount)}` : ''}</span></button>`).join('');
+      <span class="muted qsmeta">${r.date ? fdate(r.date) : ''}${r.amount != null ? ` · ${moneyIn(r.amount, r.currency)}` : ''}</span></button>`).join('');
     box.querySelectorAll('[data-i]').forEach((b) => (b.onclick = () => go(items[Number(b.dataset.i)])));
   };
   const go = (r) => {
@@ -1290,7 +1290,10 @@ async function renderTenantPortal() {
 function tenantDashboardView(el, data) {
   const t = today();
   const unpaid = data.charges.filter((c) => c.status === 'unpaid');
-  const unpaidTotal = unpaid.reduce((s, c) => s + c.amount, 0);
+  // Per currency, like everywhere else money is owed: this is the figure a tenant reads before
+  // paying, so a euro invoice added to a lei one would be a number they cannot act on.
+  const unpaidTotal = owedText(unpaid);
+  const owesAnything = unpaid.reduce((n, c) => n + Number(c.amount || 0), 0) > 0;
   const overdue = unpaid.filter((c) => c.due_date < t).length;
   const pendingMeters = (data.meters || []).filter((m) => m.status === 'pending');
   const doneMeters = (data.meters || []).filter((m) => m.status === 'done').slice(0, 5);
@@ -1298,7 +1301,7 @@ function tenantDashboardView(el, data) {
   el.innerHTML = `<div class="pagehead"><div><h1>Dashboard</h1>
       <p>${esc(data.property.name)}${data.property.address ? ' — ' + esc(data.property.address) : ''}</p></div></div>
     <section class="kpi">
-      <a class="card clickcard" href="#invoices"><div class="label">${tr('Amount due')}</div><div class="value ${unpaidTotal > 0 ? 'neg' : ''}" data-cu="${unpaidTotal}">${money(unpaidTotal)}</div>
+      <a class="card clickcard" href="#invoices"><div class="label">${tr('Amount due')}</div><div class="value ${owesAnything ? 'neg' : ''}">${unpaidTotal}</div>
         <div class="muted" style="font-size:12px">${unpaid.length} ${tr('unpaid')}${overdue ? ` · ${overdue} ${tr('overdue')}` : ''}</div></a>
       <a class="card clickcard" href="#maintenance"><div class="label">${tr('Open maintenance')}</div><div class="value">${openMaint}</div></a>
       <div class="card"><div class="label">${tr('Meter readings due')}</div><div class="value">${pendingMeters.length}</div></div>
@@ -1328,9 +1331,11 @@ function tenantDashboardView(el, data) {
 function tenantInvoicesView(el, data) {
   const t = today();
   const payLink = data.property.payment_link ? data.property.payment_link.replace(/\/+$/, '') : null;
-  const unpaidTotal = data.charges.filter((c) => c.status === 'unpaid').reduce((s, c) => s + c.amount, 0);
+  const unpaidCharges = data.charges.filter((c) => c.status === 'unpaid');
+  const unpaidTotal = owedText(unpaidCharges);
+  const owesAnything = unpaidCharges.reduce((n, c) => n + Number(c.amount || 0), 0) > 0;
   el.innerHTML = `<div class="pagehead"><div><h1>${tr('Invoices')}</h1><p>${esc(data.property.name)}</p></div>
-      ${unpaidTotal > 0 ? `<div class="row" style="gap:8px;align-items:baseline"><span class="muted">${tr('Amount due')}</span><b class="amount" style="font-size:18px">${money(unpaidTotal)}</b></div>` : ''}</div>
+      ${owesAnything ? `<div class="row" style="gap:8px;align-items:baseline"><span class="muted">${tr('Amount due')}</span><b class="amount" style="font-size:18px">${unpaidTotal}</b></div>` : ''}</div>
     <div class="card">
     ${data.charges.length ? `<table><thead><tr><th>Due</th><th>What</th><th class="right">Amount</th><th>Status</th><th></th></tr></thead><tbody>
       ${data.charges.map((c) => {
@@ -4630,7 +4635,7 @@ async function viewSearch(el) {
         <td data-label="${tr('Type')}"><span class="badge role">${tr(SEARCH_KINDS[r.kind] || r.kind)}</span></td>
         <td><b>${esc(r.title || '')}</b>${r.sub ? `<br><span class="muted">${esc(r.sub)}</span>` : ''}</td>
         <td data-label="${tr('Date')}">${r.date ? fdate(r.date) : ''}</td>
-        <td class="right amount" data-label="${tr('Amount')}">${r.amount != null ? money(r.amount) : ''}</td>
+        <td class="right amount" data-label="${tr('Amount')}">${r.amount != null ? moneyIn(r.amount, r.currency) : ''}</td>
         <td class="right"><a class="btn ghost small" href="#${r.tab}" data-go="${r.kind}">${tr('View')}</a></td>
       </tr>`).join('')}</tbody></table>`;
     // an expense result lands on the Expenses tab already filtered to what was searched

@@ -233,3 +233,63 @@ test('neither loans nor todos leak between families', async (t) => {
   assert.equal((await other.post(`/api/todos/${todo.id}/toggle`)).status, 404);
   assert.equal((await api.get('/api/todos')).body[0].done, 0, 'the outsider changed nothing');
 });
+
+// The tenant portal is the only screen the tenant ever sees. It was printing a 400 euro rent as
+// "400,00 RON" because the query that feeds it listed its columns by hand and nobody added the new
+// one — so the amount arrived stripped of what it was denominated in and fell back to the
+// household currency. A charge without its currency is not a smaller bug than a wrong total.
+test('a tenant is told what currency each charge is in', async (t) => {
+  const owner = await startServer();
+  t.after(() => owner.stop());
+  const prop = (await owner.post('/api/properties', {
+    name: 'Apartament', rent_amount: 400, rent_currency: 'EUR', rent_due_day: 5,
+  })).body;
+  await owner.post(`/api/properties/${prop.id}/charges`, {
+    type: 'rent', title: 'Chirie august', amount: 400, due_date: today(),
+  });
+  await owner.post(`/api/properties/${prop.id}/charges`, {
+    type: 'invoice', title: 'Apa', amount: 85, due_date: today(), currency: 'RON',
+  });
+  const invite = (await owner.post(`/api/properties/${prop.id}/tenant/invite`)).body.invite_code;
+
+  // registering the tenant replaces this client's session, which is what we want from here on
+  const reg = await owner.post('/api/auth/register', {
+    name: 'Chirias', email: `chirias${owner.port}@test.ro`, password: 'Parola12345', inviteCode: invite,
+  });
+  assert.equal(reg.status, 200, reg.text);
+
+  const seen = (await owner.get('/api/tenant/charges')).body.charges;
+  const rent = seen.find((c) => c.title === 'Chirie august');
+  const water = seen.find((c) => c.title === 'Apa');
+  assert.equal(rent.currency, 'EUR', 'the tenant has to see the currency on their own invoice line');
+  assert.equal(water.currency, 'RON');
+
+  await t.test('and the two are never handed over pre-added', async () => {
+    const unpaid = seen.filter((c) => c.status === 'unpaid');
+    const byCurrency = {};
+    for (const c of unpaid) byCurrency[c.currency] = (byCurrency[c.currency] || 0) + c.amount;
+    assert.ok(Object.keys(byCurrency).length > 1, 'this fixture is meant to be mixed');
+    assert.equal(byCurrency.RON, 85);
+  });
+});
+
+// Search shows an amount next to each hit. It read that amount out of the row and then formatted it
+// in household currency regardless, so a euro loan and a euro charge both came back labelled RON.
+test('search results carry the currency of the row they came from', async (t) => {
+  const api = await startServer();
+  t.after(() => api.stop());
+  await api.post('/api/loans', {
+    person: 'Andrei', amount: 250, date: today(), currency: 'EUR', note: 'imprumut vacanta',
+  });
+  const prop = (await api.post('/api/properties', {
+    name: 'Garsoniera', rent_amount: 300, rent_currency: 'EUR', rent_due_day: 1,
+  })).body;
+  await api.post(`/api/properties/${prop.id}/charges`, {
+    type: 'invoice', title: 'Reparatie centrala', amount: 700, due_date: today(), currency: 'EUR',
+  });
+
+  const loanHit = (await api.get('/api/search?q=Andrei')).body.results.find((r) => r.kind === 'loan');
+  assert.equal(loanHit.currency, 'EUR', 'otherwise the hit reads 250,00 RON');
+  const chargeHit = (await api.get('/api/search?q=centrala')).body.results.find((r) => r.kind === 'charge');
+  assert.equal(chargeHit.currency, 'EUR');
+});

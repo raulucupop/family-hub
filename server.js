@@ -624,9 +624,9 @@ app.get('/api/search', auth, (req, res) => {
 
   // a loan is findable by the person holding the money — that is the only name anyone remembers
   add('loan', 'money', db.prepare(`
-    SELECT l.id, l.person, l.amount, l.date, l.due_date, l.note FROM personal_loans l
+    SELECT l.id, l.person, l.amount, l.currency, l.date, l.due_date, l.note FROM personal_loans l
     WHERE l.family_id = ? AND (lower(l.person) LIKE ? OR lower(COALESCE(l.note,'')) LIKE ?) ORDER BY l.date DESC LIMIT 10
-  `).all(fid, like, like), (r) => ({ id: r.id, title: r.person, sub: r.note || '', date: r.due_date || r.date, amount: r.amount }));
+  `).all(fid, like, like), (r) => ({ id: r.id, title: r.person, sub: r.note || '', date: r.due_date || r.date, amount: r.amount, currency: r.currency }));
 
   add('goal', 'money', db.prepare(`
     SELECT g.id, g.title, g.target, u.name AS who FROM savings_goals g LEFT JOIN users u ON u.id = g.user_id
@@ -634,10 +634,10 @@ app.get('/api/search', auth, (req, res) => {
   `).all(fid, like), (r) => ({ id: r.id, title: r.title, sub: r.who || '', amount: r.target }));
 
   add('charge', 'tenants', db.prepare(`
-    SELECT t.id, t.title, t.type, t.amount, t.due_date, t.status, p.name AS prop FROM tenant_charges t
+    SELECT t.id, t.title, t.type, t.amount, t.currency, t.due_date, t.status, p.name AS prop FROM tenant_charges t
     JOIN properties p ON p.id = t.property_id
     WHERE t.family_id = ? AND (lower(t.title) LIKE ? OR lower(COALESCE(t.note,'')) LIKE ?) ORDER BY t.due_date DESC LIMIT 10
-  `).all(fid, like, like), (r) => ({ id: r.id, title: r.title, sub: [r.prop, r.status].filter(Boolean).join(' · '), date: r.due_date, amount: r.amount }));
+  `).all(fid, like, like), (r) => ({ id: r.id, title: r.title, sub: [r.prop, r.status].filter(Boolean).join(' · '), date: r.due_date, amount: r.amount, currency: r.currency }));
 
   add('maintenance', 'tenants', db.prepare(`
     SELECT m.id, m.title, m.note, m.status, m.created_at, p.name AS prop FROM maintenance_requests m
@@ -1838,7 +1838,7 @@ app.post('/api/properties/:id/tenant/remind', auth, canWrite, (req, res) => {
   for (const [lang, addrs] of Object.entries(groups)) {
     const ro = lang === 'ro';
     if (unpaid.length) {
-      const m = tenantChargesMail(lang, prop, unpaid, total, cur, { manual: true });
+      const m = tenantChargesMail(lang, prop, unpaid, cur, { manual: true });
       // fold a pending-meter line into the same email so the tenant gets one nudge, not two
       const meterNote = meters.length ? (ro ? `De trimis și citirile de contor: ${meters.map((x) => x.utility).join(', ')}.` : `Also please send your meter readings: ${meters.map((x) => x.utility).join(', ')}.`) : '';
       notifyMail(addrs, m.subject, meterNote ? `${m.text}\n${meterNote}\n` : m.text,
@@ -2031,7 +2031,7 @@ app.get('/api/tenant/charges', auth, (req, res) => {
   if (!prop) return res.status(404).json({ error: 'Your rental is no longer registered — contact the owner' });
   ensureRentCharge(prop);
   ensureMeterRequests(prop);
-  const charges = db.prepare("SELECT id, type, title, amount, due_date, status, marked_paid_at, confirmed_at, attachment, note FROM tenant_charges WHERE property_id = ? ORDER BY (status = 'paid'), due_date DESC, id DESC").all(prop.id);
+  const charges = db.prepare("SELECT id, type, title, amount, currency, due_date, status, marked_paid_at, confirmed_at, attachment, note FROM tenant_charges WHERE property_id = ? ORDER BY (status = 'paid'), due_date DESC, id DESC").all(prop.id);
   const meters = db.prepare("SELECT id, utility, status, reading, provided_at, requested_at FROM meter_requests WHERE property_id = ? ORDER BY (status = 'done'), id DESC LIMIT 20").all(prop.id);
   const maintenance = db.prepare("SELECT id, title, note, photo, status, created_at, resolved_at, reopened_at, reopen_note FROM maintenance_requests WHERE property_id = ? ORDER BY (status = 'done'), id DESC LIMIT 20").all(prop.id);
   const fam = db.prepare('SELECT currency FROM families WHERE id = ?').get(prop.family_id);
@@ -3361,7 +3361,7 @@ function owedByCurrency(charges, fallback) {
 const owedText = (charges, fallback) => Object.entries(owedByCurrency(charges, fallback))
   .map(([code, v]) => `${v.toFixed(2)} ${curSymbol(code)}`).join(' · ') || `0.00 ${curSymbol(fallback)}`;
 
-function tenantChargesMail(lang, prop, charges, total, cur, opts = {}) {
+function tenantChargesMail(lang, prop, charges, cur, opts = {}) {
   const ro = lang === 'ro';
   const site = siteBase();
   const dueW = ro ? 'scadent' : 'due';
@@ -3476,7 +3476,7 @@ async function runEmailReminders() {
       const total = unpaid.reduce((s, c) => s + c.amount, 0);
       let anySent = false;
       for (const [lang, addrs] of Object.entries(groups)) {
-        const { subject, text, html } = tenantChargesMail(lang, prop, unpaid, total, cur);
+        const { subject, text, html } = tenantChargesMail(lang, prop, unpaid, cur);
         try { await sendMail(addrs, subject, text, undefined, html); sent++; anySent = true; }
         catch (err) { errors++; console.error('email reminders (tenant):', err.message); }
       }
