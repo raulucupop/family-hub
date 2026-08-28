@@ -2,6 +2,7 @@ const express = require('express');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const dnsPromises = require('dns').promises;
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const cookieParser = require('cookie-parser');
@@ -1251,6 +1252,9 @@ app.post('/api/loans/:id/payments', auth, canWrite, (req, res) => {
   const amount = Number(b.amount);
   if (!(amount > 0)) return res.status(400).json({ error: 'Amount must be greater than zero' });
   if (!isDate(b.date)) return res.status(400).json({ error: 'Pick a date' });
+  // Money cannot come back before it went out. The loan already refuses a due date that precedes
+  // it; the repayment was the same mistake left unguarded.
+  if (b.date < loan.date) return res.status(400).json({ error: `That is before the money was lent (${loan.date})` });
   // paying back more than was lent is a data-entry slip, not a generous friend
   if (amount > loanRow(loan).balance + 0.005) return res.status(400).json({ error: 'That is more than is still owed' });
   db.prepare('INSERT INTO personal_loan_payments (loan_id, family_id, amount, date, note) VALUES (?,?,?,?,?)')
@@ -2732,15 +2736,60 @@ function validateWatchUrl(raw) {
   return { url: u.toString() };
 }
 
-async function fetchWatched(url) {
+/* The spelling of a host says nothing about where it points. "localtest.me" is a perfectly public
+   name that resolves to loopback, and pointing the watcher at it made the server fetch whatever
+   else is listening here — a port scanner and a reader of internal pages, for anyone with a
+   session. So the name is resolved and the ADDRESS is judged, at fetch time rather than only when
+   the page is added, because what a name resolves to can change afterwards. */
+const PRIVATE_V4 = [
+  [/^0\./, 'this network'], [/^10\./, 'private'], [/^127\./, 'loopback'],
+  [/^169\.254\./, 'link-local'], [/^172\.(1[6-9]|2\d|3[01])\./, 'private'],
+  [/^192\.168\./, 'private'], [/^192\.0\.0\./, 'reserved'], [/^198\.1[89]\./, 'benchmark'],
+  [/^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./, 'carrier-grade NAT'],
+  [/^(22[4-9]|23\d)\./, 'multicast'], [/^(24\d|25[0-5])\./, 'reserved'],
+];
+function addressIsPublic(ip) {
+  const v = String(ip).toLowerCase();
+  // an IPv4 address wearing an IPv6 coat is still that IPv4 address
+  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(v);
+  const addr = mapped ? mapped[1] : v;
+  if (addr.includes(':')) {
+    if (addr === '::1' || addr === '::') return false;
+    if (/^f[cd]/.test(addr)) return false;          // unique local
+    if (/^fe[89ab]/.test(addr)) return false;       // link local
+    return true;
+  }
+  return !PRIVATE_V4.some(([re]) => re.test(addr));
+}
+async function assertPublicHost(hostname) {
+  // The suite runs its stub commune on loopback, which this check exists to forbid. Opting in per
+  // test server keeps the guard on by default — including in the test that proves it refuses.
+  if (process.env.WATCH_ALLOW_PRIVATE === '1') return;
+  let addrs;
+  try { addrs = await dnsPromises.lookup(hostname, { all: true }); }
+  catch { throw new Error(`Cannot find ${hostname}`); }
+  const bad = addrs.find((a) => !addressIsPublic(a.address));
+  if (bad) throw new Error(`${hostname} points to ${bad.address}, which is not on the public internet`);
+}
+
+// Redirects are followed by hand so every hop is checked too: a public page that 302s to
+// 127.0.0.1 would otherwise walk straight past the check on the first address.
+async function fetchWatched(url, hops = 4) {
+  await assertPublicHost(new URL(url).hostname);
   const res = await fetch(url, {
-    redirect: 'follow',
+    redirect: 'manual',
     headers: {
       'User-Agent': WATCH_UA,
       Accept: 'application/rss+xml, application/atom+xml, application/xml;q=0.9, text/html;q=0.8, */*;q=0.5',
     },
     signal: AbortSignal.timeout(WATCH_TIMEOUT_MS),
   });
+  if (res.status >= 300 && res.status < 400) {
+    const next = res.headers.get('location');
+    if (!next) throw new Error(`HTTP ${res.status} with nowhere to go`);
+    if (hops <= 0) throw new Error('Too many redirects');
+    return fetchWatched(new URL(next, url).toString(), hops - 1);
+  }
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const buf = Buffer.from(await res.arrayBuffer());
   if (buf.byteLength > WATCH_MAX_BYTES) throw new Error('The page is too large to check');

@@ -45,7 +45,7 @@ async function stubSite() {
 }
 
 test('a private address is refused, so the watcher cannot be pointed at the host itself', async (t) => {
-  const api = await startServer();
+  const api = await startServer({ WATCH_ALLOW_PRIVATE: '1' });
   t.after(() => api.stop());
   for (const url of [
     'http://127.0.0.1:9200/', 'http://localhost:8080/', 'http://10.0.0.5/', 'http://192.168.1.1/',
@@ -57,9 +57,22 @@ test('a private address is refused, so the watcher cannot be pointed at the host
   assert.deepEqual((await api.get('/api/watch')).body.sites, []);
 });
 
+
+test('a public name that points at this machine is refused when it is fetched', async (t) => {
+  const api = await startServer();
+  t.after(() => api.stop());
+  // localtest.me is an ordinary public hostname whose DNS answer is loopback. The spelling passes
+  // every string test, which is the whole reason the address itself has to be resolved and judged.
+  const r = await api.post('/api/watch', { url: 'http://localtest.me/', label: 'sneaky', kind: 'page' });
+  assert.equal(r.status, 200, 'the name looks public, so adding it is allowed');
+  const id = r.body.sites[0].id;
+  const checked = (await api.post(`/api/watch/${id}/check`)).body.checked;
+  assert.match(String(checked.error), /not on the public internet/,
+    'fetching it must be refused: otherwise this is a port scanner and a reader of internal pages');
+});
 test('the first check is a baseline and says nothing', async (t) => {
   const site = await stubSite();
-  const api = await startServer();
+  const api = await startServer({ WATCH_ALLOW_PRIVATE: '1' });
   t.after(async () => { await api.stop(); await site.stop(); });
   site.items = [
     { guid: 'a', title: 'Anunț licitație terenuri' },
@@ -112,7 +125,7 @@ test('the first check is a baseline and says nothing', async (t) => {
 
 test('a site that fails is recorded as failing, not as silence', async (t) => {
   const site = await stubSite();
-  const api = await startServer();
+  const api = await startServer({ WATCH_ALLOW_PRIVATE: '1' });
   t.after(async () => { await api.stop(); await site.stop(); });
   await api.post('/api/watch', { url: 'https://comunabucovat.ro/feed/', label: 'Comuna' });
   const id = (await api.get('/api/watch')).body.sites[0].id;
@@ -137,7 +150,7 @@ test('a site that fails is recorded as failing, not as silence', async (t) => {
 
 test('a page with no feed is diffed on its readable text', async (t) => {
   const site = await stubSite();
-  const api = await startServer();
+  const api = await startServer({ WATCH_ALLOW_PRIVATE: '1' });
   t.after(async () => { await api.stop(); await site.stop(); });
   site.html = `<html><head><style>.x{color:red}</style></head><body>
     <nav><a href="/">Acasă</a><a href="/contact">Contact</a></nav>
@@ -171,7 +184,7 @@ test('the app checks by itself, and opening it repeatedly does not hammer the si
   const site = await stubSite();
   // WATCH_EVERY_MS is deliberately long: the point of the test is that the second, third and
   // fourth page load do NOT each fetch the commune again.
-  const api = await startServer({ WATCH_AUTO: '1', WATCH_EVERY_MS: '600000' });
+  const api = await startServer({ WATCH_AUTO: '1', WATCH_EVERY_MS: '600000', WATCH_ALLOW_PRIVATE: '1' });
   t.after(async () => { await api.stop(); await site.stop(); });
   site.items = [{ guid: 'a', title: 'Anunț licitație terenuri' }];
   // The id comes from the POST response rather than a GET: a GET is exactly what triggers the
@@ -210,7 +223,7 @@ test('the app checks by itself, and opening it repeatedly does not hammer the si
 
 test('the cron answer says what it did, not just whether it found something', async (t) => {
   const site = await stubSite();
-  const api = await startServer();
+  const api = await startServer({ WATCH_ALLOW_PRIVATE: '1' });
   t.after(async () => { await api.stop(); await site.stop(); });
 
   await t.test('with nothing set up it says so, instead of looking like a quiet success', async () => {
@@ -233,7 +246,7 @@ test('the cron answer says what it did, not just whether it found something', as
   });
 });
 test('watched sites belong to one family', async (t) => {
-  const api = await startServer();
+  const api = await startServer({ WATCH_ALLOW_PRIVATE: '1' });
   const other = await startServer();
   t.after(() => Promise.all([api.stop(), other.stop()]));
   await api.post('/api/watch', { url: 'https://comunabucovat.ro/feed/', label: 'Comuna' });
