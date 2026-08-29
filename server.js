@@ -41,7 +41,7 @@ app.disable('x-powered-by'); // no reason to advertise Express + its version
 // low-risk half of inline (no code runs from a style).
 const CSP = [
   "default-src 'self'",
-  "script-src 'self' https://cdn.jsdelivr.net",
+  "script-src 'self'",
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
   'font-src https://fonts.gstatic.com',
   "img-src 'self' data:",
@@ -730,10 +730,16 @@ crud({
   route: 'incomes', table: 'incomes',
   fields: ['user_id', 'source', 'amount', 'date'],
   orderBy: 'date DESC, id DESC',
-  validate: (b) => {
+  validate: (b, req) => {
     if (!b.source) return 'Source is required';
     if (!okAmount(b.amount)) return 'Amount must be greater than 0';
     if (!isDate(b.date)) return 'Date must be YYYY-MM-DD';
+    // Every other place that accepts a person checks this one; income did not. The row would be
+    // written into this family with a stranger's user_id, and the per-person breakdown joins
+    // users — so another household's member name would appear on this household's dashboard.
+    if (num(b.user_id) != null && !db.prepare('SELECT id FROM users WHERE id = ? AND family_id = ?').get(num(b.user_id), req.user.family_id)) {
+      return 'Person must be a member of the family';
+    }
     return null;
   },
 });
@@ -800,6 +806,11 @@ crud({
     // A lease in euro is normal here; anything outside the three the app knows would print as a
     // currency that does not exist.
     if (b.rent_currency != null && b.rent_currency !== '' && !CURRENCY_SYMBOL[b.rent_currency]) return 'Currency must be RON, EUR or GBP';
+    // This becomes a link the tenant clicks. Anything but http(s) — javascript:, data: — is a way
+    // to run something in their session rather than send them to a payment page.
+    if (b.payment_link != null && b.payment_link !== '' && !/^https?:\/\//i.test(String(b.payment_link))) {
+      return 'The payment link must start with http:// or https://';
+    }
     // crud() writes every field, so an omitted `managed` would insert NULL into a NOT NULL column.
     // Normalising here (validate receives the real body on create) keeps it a plain 0/1.
     if (b.managed != null && b.managed !== '' && ![0, 1, '0', '1', true, false].includes(b.managed)) return 'Managed must be 0 or 1';
@@ -1546,7 +1557,25 @@ const upload = multer({
     cb(ok ? null : Object.assign(new Error('Only PDF or image files are allowed'), { status: 400 }), ok);
   },
 });
-app.post('/api/bills/:id/attachment', auth, canWrite, upload.single('file'), (req, res) => {
+// multer writes the file before the handler runs, so a handler that then refuses the request —
+// wrong family, no such row, wrong file type — leaves the bytes behind with nothing pointing at
+// them and nothing ever collecting them. Any signed-in member could fill the disk 10 MB at a
+// time by posting to an id that is not theirs. Tie the file to the answer: not accepted, not kept.
+function dropRejectedUpload(req, res, next) {
+  let settled = false;
+  // 'close' as well as 'finish': a client that hangs up mid-request never finishes the response,
+  // and that is the cheapest way to leave a file behind on purpose.
+  const drop = () => {
+    if (settled) return;
+    settled = true;
+    if (req.file && res.statusCode >= 400) fs.unlink(path.join(UPLOAD_DIR, req.file.filename), () => {});
+  };
+  res.on('finish', drop);
+  res.on('close', drop);
+  next();
+}
+const uploadOne = [upload.single('file'), dropRejectedUpload];
+app.post('/api/bills/:id/attachment', auth, canWrite, uploadOne, (req, res) => {
   const bill = db.prepare('SELECT * FROM bills WHERE id = ? AND family_id = ?').get(req.params.id, req.user.family_id);
   if (!bill) return res.status(404).json({ error: 'Not found' });
   if (!req.file) return res.status(400).json({ error: 'No file received' });
@@ -1592,7 +1621,7 @@ function canEditAvatar(reqUser, target) {
   if (target.id === reqUser.id) return ['admin', 'adult', 'tenant'].includes(reqUser.role);
   return (reqUser.role === 'admin' || reqUser.role === 'adult') && target.role === 'child';
 }
-app.post('/api/users/:id/avatar', auth, upload.single('file'), (req, res) => {
+app.post('/api/users/:id/avatar', auth, uploadOne, (req, res) => {
   const target = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
   if (!canEditAvatar(req.user, target)) return res.status(403).json({ error: 'Not allowed to change this picture' });
   if (!req.file) return res.status(400).json({ error: 'No file received' });
@@ -1677,7 +1706,7 @@ app.delete('/api/documents/:id', auth, canWrite, (req, res) => {
   db.prepare('DELETE FROM documents WHERE id = ?').run(row.id);
   res.json({ ok: true });
 });
-app.post('/api/documents/:id/attachment', auth, canWrite, upload.single('file'), (req, res) => {
+app.post('/api/documents/:id/attachment', auth, canWrite, uploadOne, (req, res) => {
   const doc = db.prepare('SELECT * FROM documents WHERE id = ? AND family_id = ?').get(req.params.id, req.user.family_id);
   if (!doc) return res.status(404).json({ error: 'Not found' });
   if (!req.file) return res.status(400).json({ error: 'No file received' });
@@ -1763,7 +1792,7 @@ app.delete('/api/warranties/:id', auth, canWrite, (req, res) => {
   db.prepare('DELETE FROM warranties WHERE id = ?').run(row.id);
   res.json({ ok: true });
 });
-app.post('/api/warranties/:id/attachment', auth, canWrite, upload.single('file'), (req, res) => {
+app.post('/api/warranties/:id/attachment', auth, canWrite, uploadOne, (req, res) => {
   const row = db.prepare('SELECT * FROM warranties WHERE id = ? AND family_id = ?').get(req.params.id, req.user.family_id);
   if (!row) return res.status(404).json({ error: 'Not found' });
   if (!req.file) return res.status(400).json({ error: 'No file received' });
@@ -2071,7 +2100,7 @@ app.post('/api/properties/:id/tenant/remind', auth, canWrite, (req, res) => {
   res.json({ ok: true });
 });
 // invoice file on a tenant charge (owner uploads, tenant can view)
-app.post('/api/properties/:id/charges/:cid/attachment', auth, canWrite, upload.single('file'), (req, res) => {
+app.post('/api/properties/:id/charges/:cid/attachment', auth, canWrite, uploadOne, (req, res) => {
   const prop = familyProperty(req);
   const ch = prop && db.prepare('SELECT * FROM tenant_charges WHERE id = ? AND property_id = ?').get(req.params.cid, prop.id);
   if (!ch) return res.status(404).json({ error: 'Charge not found' });
@@ -2310,7 +2339,7 @@ app.post('/api/tenant/maintenance', auth, (req, res) => {
   }
   res.json(db.prepare('SELECT * FROM maintenance_requests WHERE id = ?').get(info.lastInsertRowid));
 });
-app.post('/api/tenant/maintenance/:rid/photo', auth, upload.single('file'), (req, res) => {
+app.post('/api/tenant/maintenance/:rid/photo', auth, uploadOne, (req, res) => {
   if (req.user.role !== 'tenant') return res.status(403).json({ error: 'Tenant accounts only' });
   const row = db.prepare('SELECT * FROM maintenance_requests WHERE id = ? AND property_id = ? AND user_id = ?')
     .get(req.params.rid, req.user.tenant_property_id, req.user.id);
@@ -2376,7 +2405,7 @@ app.post('/api/tenant/remind', auth, (req, res) => {
   remindMark(`to:${prop.id}`);
   res.json({ ok: true });
 });
-app.post('/api/tenant/meter/:rid/photo', auth, upload.single('file'), (req, res) => {
+app.post('/api/tenant/meter/:rid/photo', auth, uploadOne, (req, res) => {
   if (req.user.role !== 'tenant') return res.status(403).json({ error: 'Tenant accounts only' });
   const row = db.prepare("SELECT * FROM meter_requests WHERE id = ? AND property_id = ? AND status = 'pending'").get(req.params.rid, req.user.tenant_property_id);
   if (!row) return res.status(404).json({ error: 'Request not found or already answered' });
@@ -4398,19 +4427,25 @@ if (WATCH_AUTO) setInterval(() => autoWatchTick('timer'), Math.min(WATCH_EVERY_M
 // This does real work (auto-pay, auto-log, sends mail), so it must not be world-callable.
 // A token is required; with none configured we fail closed in production rather than leaving a
 // fresh install open to anyone who guesses the URL. Locally it stays open for testing.
+// Both cron routes check the same secret, so they compare it the same way. A plain !== leaks how
+// much of the token matched through how long the comparison took; over the internet that is not a
+// practical attack, but two ways of checking one secret is how the weaker one survives.
+function cronTokenOk(given, token) {
+  const a = Buffer.from(String(given || ""));
+  const b = Buffer.from(String(token));
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
 app.get('/api/cron/watch', async (req, res) => {
   const token = process.env.CRON_TOKEN;
   if (!token) return res.status(403).json({ error: 'CRON_TOKEN is not configured on this server' });
-  if (req.query.token !== token) return res.status(403).json({ error: 'Bad token' });
+  if (!cronTokenOk(req.query.token, token)) return res.status(403).json({ error: 'Bad token' });
   try { res.json(await runWatchers('cron')); }
   catch (err) { console.error('watch cron:', err.message); res.status(500).json({ error: err.message }); }
 });
 app.get('/api/cron/email-reminders', async (req, res) => {
   const token = process.env.CRON_TOKEN;
   if (token) {
-    const given = String(req.query.token || '');
-    const a = Buffer.from(given), b = Buffer.from(token);
-    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return res.status(403).json({ error: 'Bad token' });
+    if (!cronTokenOk(req.query.token, token)) return res.status(403).json({ error: 'Bad token' });
   } else if (process.env.NODE_ENV === 'production') {
     return res.status(403).json({ error: 'CRON_TOKEN is not configured on this server' });
   }

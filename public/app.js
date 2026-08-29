@@ -874,6 +874,11 @@ function rowHide(btn) {
 }
 const registerLink = (code) => `${location.origin}/#register=${encodeURIComponent(code)}`;
 const inviteLink = () => registerLink(FAMILY.invite_code);
+// esc() makes a string safe to put INSIDE html; it does nothing about what a URL means. A link from
+// an outside feed, or one an owner typed for their tenant, can be javascript: or data: — escaping
+// leaves both intact and clicking one runs it in this origin. The page CSP already refuses to
+// execute it, but a link is either somewhere to go or it is nothing.
+const safeHref = (u) => (/^https?:\/\//i.test(String(u || '')) ? String(u) : '');
 async function copyText(text) {
   try {
     if (navigator.clipboard) await navigator.clipboard.writeText(text);
@@ -1386,7 +1391,8 @@ function tenantDashboardView(el, data) {
 }
 function tenantInvoicesView(el, data) {
   const t = today();
-  const payLink = data.property.payment_link ? data.property.payment_link.replace(/\/+$/, '') : null;
+  // an owner types this and the tenant clicks it, so only a web address may reach the anchor
+  const payLink = safeHref(data.property.payment_link).replace(/\/+$/, '') || null;
   const unpaidCharges = data.charges.filter((c) => c.status === 'unpaid');
   const unpaidTotal = owedText(unpaidCharges);
   const owesAnything = unpaidCharges.reduce((n, c) => n + Number(c.amount || 0), 0) > 0;
@@ -1856,7 +1862,10 @@ let LAST_EXP_CAT = null, EXP_FORM_OPEN = false, FOCUS_AMOUNT = false;
 // Chart.js is a ~200 KB dependency that only the dashboard needs, so it is fetched the first time a
 // chart is actually drawn instead of on every page load. The promise is cached, so later renders
 // (changing the period, switching person) reuse the already-loaded library.
-const CHART_SRC = 'https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js';
+// Served from here rather than from a CDN. A pinned version still means trusting a third party
+// forever with a script that runs inside a signed-in session; a copy in the repo is one fewer
+// party who can change what executes, and the dashboard then draws with no internet at all.
+const CHART_SRC = '/vendor/chart.umd.min.js';
 let chartLibPromise = null;
 function loadChartLib() {
   if (window.Chart) return Promise.resolve(window.Chart);
@@ -4266,7 +4275,7 @@ function renderWatch(el, state) {
     isNew(i) ? `<span class="badge">${tr('new')}</span>` : '',
   ].filter(Boolean).join(' · ')}</div>
         ${i.summary ? `<p class="muted newssum">${esc(String(i.summary).slice(0, 220))}${String(i.summary).length > 220 ? '…' : ''}</p>` : ''}
-        ${i.link ? `<a class="btn ghost small" href="${esc(i.link)}" target="_blank" rel="noopener noreferrer">${tr('Open the notice')}</a>` : ''}
+        ${safeHref(i.link) ? `<a class="btn ghost small" href="${esc(safeHref(i.link))}" target="_blank" rel="noopener noreferrer">${tr('Open the notice')}</a>` : ''}
       </li>`).join('')}</ul>`
     : `<div class="empty"><b>${tr('Nothing spotted yet')}</b>${sites.length
       ? tr('The pages are being watched. Anything new will show up here and in your email.')

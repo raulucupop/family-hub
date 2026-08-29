@@ -72,6 +72,8 @@ async function startServer(extraEnv = {}) {
     del: (u) => call('DELETE', u),
     stop: () => new Promise((res) => { proc.once('exit', res); proc.kill(); }),
     dir, port, log: () => log,
+    // for the few tests that must send a multipart body, which call() does not build
+    cookie: () => cookie,
   };
 
   const reg = await client.post('/api/auth/register', {
