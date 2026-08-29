@@ -281,6 +281,14 @@ const RO = {
   'RCA insurance': 'Asigurare RCA', 'Casco insurance': 'Asigurare Casco', 'Rovinieta (vignette)': 'Rovinietă',
   'ITP inspection': 'Inspecție ITP', 'Vehicle tax': 'Taxă auto', 'Property insurance (PAD)': 'Asigurare locuință (PAD)',
   'Additional home insurance': 'Asigurare facultativă locuință', 'Property tax': 'Impozit proprietate',
+  // balance forecast
+  'How the month ends': 'Cum se termină luna', 'now': 'acum', 'Lowest point:': 'Cel mai jos:', 'on': 'pe',
+  'Until': 'Până pe', 'What moves it': 'Ce îl mișcă', 'In the account': 'În cont', 'On': 'La data de',
+  'Save balance': 'Salvează soldul', 'Balance saved': 'Sold salvat', 'Balance from': 'Sold din',
+  'update it': 'actualizează-l', 'Not counted, another currency:': 'Necontorizat, altă monedă:',
+  'Nothing due drops the balance below where it is now.': 'Nimic din ce urmează nu duce soldul sub cât e acum.',
+  'Type in what is in the account and the app works out the rest — bills, rates, salary, rent.':
+    'Scrie cât ai în cont și aplicația calculează restul — facturi, rate, salariu, chirie.',
   // warranties
   'Warranties': 'Garanții', 'Warranty': 'Garanție', 'Add warranty': 'Adaugă garanție', 'Warranty added': 'Garanție adăugată',
   'Thing': 'Obiect', 'Bought from': 'Cumpărat de la', 'Bought': 'Cumpărat', 'Cover ends': 'Garanția expiră',
@@ -1611,7 +1619,7 @@ async function viewDashboard(el) {
   const userQ = DASH_VIEW === 'all' ? '' : `&user=${DASH_VIEW}`;
   // the KPI tiles follow the period selector, but a trend chart of ONE bar teaches nothing —
   // so the history chart always pulls a rolling 12 months, whatever the tiles are showing
-  const [reminders, stats, trend12, budgets, rent, savings, suggest, upcoming, chores] = await Promise.all([
+  const [reminders, stats, trend12, budgets, rent, savings, suggest, upcoming, chores, forecast] = await Promise.all([
     api(`/reminders?days=60${userQ}`), api(`/stats?months=${DASH_MONTHS}${userQ}`),
     DASH_MONTHS >= 12 ? null : api(`/stats?months=12${userQ}`).catch(() => null), api('/budgets'),
     api('/rent-status').catch(() => []), api('/savings').catch(() => ({ goals: [] })),
@@ -1619,6 +1627,8 @@ async function viewDashboard(el) {
     // charges committed but not yet posted; a whole-family, single-month idea, so only fetched then
     (DASH_MONTHS === 1 && DASH_VIEW === 'all') ? api('/upcoming-month').catch(() => null) : null,
     api('/chores').catch(() => []),
+    // the forecast is one balance on one timeline: it has no per-person or multi-month reading
+    (DASH_MONTHS === 1 && DASH_VIEW === 'all') ? api('/forecast').catch(() => null) : null,
   ]);
   const trendStats = trend12 || stats;
   // monthly series behind each KPI, for the sparklines under the numbers
@@ -1661,6 +1671,7 @@ async function viewDashboard(el) {
       <div class="card"><div class="label"><span class="kpi-ic">${icon('coins')}</span>Left over</div>${pctPill(net, (stats.prev?.income ?? 0) - (stats.prev?.spent ?? 0), 'up-good')}<div class="value ${net < 0 ? 'neg' : ''}" data-cu="${net}">${money(net)}</div>${deltaAmountHtml(net, (stats.prev?.income ?? 0) - (stats.prev?.spent ?? 0))}${savingsRateHtml(stats.income, net)}<span class="spark-pos">${sparkline(netSeries)}</span></div>
     </section>
     ${safeToSpendHtml(stats, DASH_MONTHS, upcoming)}
+    ${(DASH_MONTHS === 1 && DASH_VIEW === 'all') ? forecastCard(forecast) : ''}
     ${dashInsight(stats, suggest, DASH_MONTHS, upcoming)}
     ${rentHtml(rent)}
     <section class="grid2" style="margin-top:18px">
@@ -1690,6 +1701,7 @@ async function viewDashboard(el) {
     ${goalsHtml(savings.goals)}
     <details class="card foldcard" style="margin-top:18px"><summary>${tr('Calendar')}</summary>
       <div id="dashcal" style="padding-top:12px"><div class="skel" style="height:220px"></div></div></details>`;
+  wireBalance(el, () => viewDashboard(el));
   el.querySelector('#dash').querySelectorAll('[data-tab]').forEach((a) => a.addEventListener('click', () => { PENDING_MONEY_TAB = a.dataset.tab; }));
   el.querySelector('#budgetkick')?.addEventListener('click', async (e) => {
     e.target.disabled = true;
@@ -3878,6 +3890,76 @@ async function viewActe(el) {
     try { await api(`/documents/${inp.dataset.attach}/attachment`, { method: 'POST', body: fd }); toast('Scan attached'); viewActe(el); }
     catch (err) { toast(err.message); }
   }));
+}
+
+/* ---------- balance forecast ----------
+   The dashboard already says what was spent. This says what is left, and when it gets tight —
+   which is the question people actually open a money app to ask. It is drawn from one number the
+   household types in, so the card leads with that number and how old it is: a forecast built on a
+   three-week-old balance is a guess, and it should look like one. */
+function forecastCard(f) {
+  if (!f || f.needs_balance) return `<section class="card" style="margin-top:18px"><div class="row" style="justify-content:space-between;gap:10px;align-items:baseline">
+      <h3 style="margin:0">${tr('How the month ends')}</h3></div>
+    <p class="muted" style="margin:6px 0 10px">${tr('Type in what is in the account and the app works out the rest — bills, rates, salary, rent.')}</p>
+    ${balanceForm(null)}</section>`;
+  const dip = f.low.amount < f.today;
+  const tight = f.low.amount < 0;
+  // the line is drawn from the series, scaled to its own range; zero gets a rule of its own so
+  // "goes below zero" is something you see rather than something you read
+  const vals = f.series.map((p) => p.amount);
+  const hi = Math.max(...vals, 0), lo = Math.min(...vals, 0);
+  const span = (hi - lo) || 1;
+  const W = 320, H = 54;
+  const x = (i) => (i / Math.max(1, f.series.length - 1)) * W;
+  const y = (v) => H - ((v - lo) / span) * H;
+  const path = f.series.map((p, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)} ${y(p.amount).toFixed(1)}`).join(' ');
+  const zeroY = y(0).toFixed(1);
+  return `<section class="card fccard" style="margin-top:18px">
+    <div class="row" style="justify-content:space-between;gap:10px;align-items:baseline">
+      <h3 style="margin:0">${tr('How the month ends')}</h3>
+      <span class="muted">${tr('now')} <b class="amount">${money(f.today)}</b></span>
+    </div>
+    <p class="fclow ${tight ? 'neg' : ''}">${dip
+      ? `${tr('Lowest point:')} <b>${money(f.low.amount)}</b> ${tr('on')} ${fdate(f.low.date)}`
+      : tr('Nothing due drops the balance below where it is now.')}</p>
+    <svg class="fcline" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">
+      ${lo < 0 ? `<line x1="0" y1="${zeroY}" x2="${W}" y2="${zeroY}" class="fczero"/>` : ''}
+      <path d="${path}"/>
+    </svg>
+    <p class="muted fcend">${tr('Until')} ${fdate(f.horizon)}: <b class="amount">${money(f.end.amount)}</b></p>
+    ${f.items.length ? `<details class="fcitems"><summary>${tr('What moves it')} (${f.items.length})</summary>
+      <table class="cards"><tbody>${f.items.map((i) => `<tr>
+        <td>${fdate(i.date)}</td><td>${esc(i.label)}</td>
+        <td class="right amount" style="color:${i.amount < 0 ? 'var(--red)' : '#2f6b5a'}">${i.amount > 0 ? '+' : ''}${money(i.amount)}</td>
+      </tr>`).join('')}</tbody></table></details>` : ''}
+    ${f.skipped.length ? `<p class="muted" style="font-size:12.5px">${tr('Not counted, another currency:')} ${f.skipped.map((x2) => `${esc(x2.label)} ${Number(x2.amount).toFixed(2)} ${esc(x2.currency)}`).join(' · ')}</p>` : ''}
+    ${balanceForm(f)}</section>`;
+}
+// One number, one date, one button. Kept inside a <details> once a balance exists so the card
+// leads with the answer rather than with a form.
+// How old the reading is, in words. daysLabel() speaks in deadlines ("3d overdue"), and a balance
+// from Tuesday is not overdue — it is just from Tuesday.
+const balanceAge = (d) => (LANG === 'ro'
+  ? (d === 1 ? 'de ieri' : 'de acum ' + d + ' zile')
+  : (d === 1 ? '1 day old' : d + ' days old'));
+function balanceForm(f) {
+  if (!canWrite()) return '';
+  const inner = `<form id="balform" class="row" style="gap:8px;align-items:flex-end;flex-wrap:wrap;margin-top:8px">
+    <div><label>${tr('In the account')} (${cur()})</label><input name="balance" type="number" step="0.01" required style="max-width:150px" value="${f && f.balance != null ? f.balance : ''}"></div>
+    <div><label>${tr('On')}</label><input name="date" type="date" value="${today()}" max="${today()}"></div>
+    <button class="btn small">${tr('Save balance')}</button></form>`;
+  if (!f || f.needs_balance) return inner;
+  const stale = f.stale_days > 7;
+  return `<details class="fcbal"><summary class="${stale ? 'stale' : ''}">${tr('Balance from')} ${fdate(f.balance_date)}${f.stale_days > 0 ? ' · ' + balanceAge(f.stale_days) : ''}${stale ? ` — ${tr('update it')}` : ''}</summary>${inner}</details>`;
+}
+function wireBalance(root, reload) {
+  root.querySelector('#balform')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      await api('/balance', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) });
+      toast(tr('Balance saved'), 'success'); reload();
+    } catch (err) { toast(err.message); }
+  });
 }
 
 /* ---------- warranties ----------

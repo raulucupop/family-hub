@@ -879,6 +879,125 @@ app.get('/api/upcoming-month', auth, (req, res) => {
   items.sort((a, b) => a.date.localeCompare(b.date));
   res.json({ total: Math.round(items.reduce((s, i) => s + i.amount, 0) * 100) / 100, items });
 });
+// ---------- balance forecast ----------
+// "Will I still be above zero on the 14th" is a different question from "what did I spend", and
+// the app could not answer it because it never knew what was in the account. So: one number the
+// household types in off the banking app, with the day it was true, and everything the app
+// already knows about applied on top of it.
+//
+// The starting balance ages. Rather than pretend it is current, the movements the app has
+// recorded since that day are replayed onto it — money that has already come and gone — and how
+// stale the reading is comes back with the answer, so a forecast built on a three-week-old number
+// can be shown for what it is.
+app.post('/api/balance', auth, canWrite, (req, res) => {
+  const b = req.body || {};
+  const amount = Number(b.balance);
+  if (b.balance === '' || b.balance == null || !Number.isFinite(amount)) return res.status(400).json({ error: 'Balance is required' });
+  const date = isDate(b.date) ? b.date : new Date().toISOString().slice(0, 10);
+  if (date > new Date().toISOString().slice(0, 10)) return res.status(400).json({ error: 'A balance cannot be from the future' });
+  db.prepare('UPDATE families SET balance = ?, balance_date = ? WHERE id = ?').run(amount, date, req.user.family_id);
+  res.json({ balance: amount, balance_date: date });
+});
+
+app.get('/api/forecast', auth, (req, res) => {
+  const fid = req.user.family_id;
+  const fam = db.prepare('SELECT * FROM families WHERE id = ?').get(fid);
+  const cur = curSymbol(fam.currency);
+  const today = new Date().toISOString().slice(0, 10);
+  const days = Math.min(Math.max(Number(req.query.days) || 60, 7), 180);
+  const horizon = addDays(today, days);
+  if (fam.balance == null || !fam.balance_date) {
+    return res.json({ currency: cur, balance: null, needs_balance: true, items: [], series: [], skipped: [] });
+  }
+
+  // replay what has been recorded since the reading, so the starting point is today, not then
+  const since = (sql, ...args) => db.prepare(sql).get(fid, fam.balance_date, today, ...args).t;
+  const inSince = since("SELECT COALESCE(SUM(amount),0) t FROM incomes WHERE family_id = ? AND date > ? AND date <= ?");
+  const outSince = since("SELECT COALESCE(SUM(amount),0) t FROM expenses WHERE family_id = ? AND on_card = 0 AND date > ? AND date <= ?");
+  const startToday = fam.balance + inSince - outSince;
+
+  const items = [];
+  const skipped = [];
+  // anything the app knows is coming but whose day has already gone is not in the future — it is
+  // about to happen, so it is dated today rather than dropped out of the arithmetic entirely
+  const at = (date) => (date < today ? today : date);
+  const add = (date, kind, label, amount) => {
+    const on = at(date);
+    // a movement past the end of the window is not part of this answer; returning it would put
+    // rows in the list that the projected line never accounts for
+    if (!amount || on > horizon) return;
+    items.push({ date: on, kind, label, amount: Math.round(amount * 100) / 100 });
+  };
+
+  // The months the horizon touches, walked from the FIRST of this month rather than from today:
+  // stepping a month from the 29th lands on the 29th, so a 20-day window ending on the 18th of next
+  // month never reached next month at all, and every salary and rent day in it vanished. Walking
+  // from the 1st also sidesteps the other trap — 31 January plus one month is 3 March.
+  const periods = [];
+  for (let d = new Date(today.slice(0, 7) + "-01T00:00:00Z"); d.toISOString().slice(0, 7) <= horizon.slice(0, 7); d.setUTCMonth(d.getUTCMonth() + 1)) {
+    periods.push(d.toISOString().slice(0, 7));
+  }
+
+  for (const p of periods) {
+    for (const r of db.prepare('SELECT * FROM recurring_expenses WHERE family_id = ? AND active = 1 AND on_card = 0').all(fid)) {
+      if (r.last_period === p) continue; // already logged, so it is in the balance replay above
+      add(monthDate(p, r.day), 'recurring', r.note || r.category, -Number(r.amount));
+    }
+    for (const r of db.prepare('SELECT * FROM recurring_incomes WHERE family_id = ? AND active = 1').all(fid)) {
+      if (r.last_period === p) continue;
+      add(monthDate(p, r.day), 'income', r.source, Number(r.amount));
+    }
+    for (const c of db.prepare('SELECT * FROM credits WHERE family_id = ?').all(fid)) {
+      if (c.auto_expense_period === p) continue;
+      const stats = creditStats(c, db.prepare('SELECT * FROM credit_payments WHERE credit_id = ?').all(c.id));
+      if (!(stats.months_left > 0) && stats.balance <= 0.005) continue;
+      add(monthDate(p, Number(String(c.start_date).slice(8, 10)) || 1), 'credit', c.name,
+        -(Math.round((stats.monthly_payment + (Number(c.commission) || 0)) * 100) / 100));
+    }
+  }
+  // every unpaid bill, not only the auto-paid ones: a bill you have to pay by hand still leaves
+  // the account, and leaving it out is how a forecast ends up cheerful and wrong
+  for (const b of db.prepare("SELECT * FROM bills WHERE family_id = ? AND status = 'unpaid' AND amount > 0 AND due_date <= ?").all(fid, horizon)) {
+    add(b.due_date, 'bill', b.name, -Number(b.amount));
+  }
+  // rent and charges the tenant still owes are money coming in. Only the ones in the household
+  // currency are added up — the rest are listed separately, because converting them needs a rate
+  // this app has no source for and one invented number is worse than a short one you can see.
+  for (const c of db.prepare(`
+    SELECT c.*, p.name AS property_name, p.rent_currency FROM tenant_charges c
+    JOIN properties p ON p.id = c.property_id
+    WHERE c.family_id = ? AND c.status = 'unpaid' AND c.due_date <= ?
+  `).all(fid, horizon)) {
+    const code = c.currency || c.rent_currency || fam.currency;
+    if (code !== fam.currency) { skipped.push({ label: c.title, amount: c.amount, currency: curSymbol(code) }); continue; }
+    add(c.due_date, 'tenant', c.title, Number(c.amount));
+  }
+
+  items.sort((a, b) => a.date.localeCompare(b.date) || a.label.localeCompare(b.label));
+  const series = [];
+  let running = startToday;
+  let low = { date: today, amount: startToday };
+  for (let d = today; d <= horizon; d = addDays(d, 1)) {
+    for (const it of items) if (it.date === d) running += it.amount;
+    running = Math.round(running * 100) / 100;
+    series.push({ date: d, amount: running });
+    if (running < low.amount) low = { date: d, amount: running };
+  }
+  res.json({
+    currency: cur,
+    balance: fam.balance,
+    balance_date: fam.balance_date,
+    stale_days: Math.round((new Date(today) - new Date(fam.balance_date)) / 86400000),
+    today: Math.round(startToday * 100) / 100,
+    low,
+    end: series[series.length - 1],
+    horizon,
+    series,
+    items,
+    skipped,
+  });
+});
+
 const BUDGET_BASIS_MONTHS = 3;
 app.get('/api/budgets/suggest', auth, (req, res) => {
   const n = BUDGET_BASIS_MONTHS;

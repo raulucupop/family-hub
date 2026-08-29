@@ -41,6 +41,8 @@ CREATE TABLE IF NOT EXISTS families (
   name TEXT NOT NULL,
   invite_code TEXT UNIQUE NOT NULL,
   currency TEXT NOT NULL DEFAULT 'RON',
+  balance REAL,               -- last known bank balance; NULL until somebody enters one
+  balance_date TEXT,          -- the day that balance was true
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -727,6 +729,13 @@ if (!expCols.includes('vehicle_id')) db.exec('ALTER TABLE expenses ADD COLUMN ve
 if (!expCols.includes('on_card')) db.exec('ALTER TABLE expenses ADD COLUMN on_card INTEGER NOT NULL DEFAULT 0');
 const recxCols = db.prepare('PRAGMA table_info(recurring_expenses)').all().map((c) => c.name);
 if (!recxCols.includes('on_card')) db.exec('ALTER TABLE recurring_expenses ADD COLUMN on_card INTEGER NOT NULL DEFAULT 0');
+// The bank balance, as last read off the banking app, with the day it was true. A forecast needs a
+// number to start from and the app has no way to know it — the date is stored with it because a
+// balance from three weeks ago is not the same fact as one from this morning, and the difference
+// has to be visible rather than assumed away.
+const balCols = db.prepare('PRAGMA table_info(families)').all().map((c) => c.name);
+if (!balCols.includes('balance')) db.exec('ALTER TABLE families ADD COLUMN balance REAL');
+if (!balCols.includes('balance_date')) db.exec('ALTER TABLE families ADD COLUMN balance_date TEXT');
 
 if (!userCols.includes('lang')) db.exec("ALTER TABLE users ADD COLUMN lang TEXT NOT NULL DEFAULT 'en'");
 if (!userCols.includes('birthday')) db.exec('ALTER TABLE users ADD COLUMN birthday TEXT');
