@@ -335,8 +335,7 @@ CREATE TABLE IF NOT EXISTS recurring_incomes (
   amount REAL NOT NULL,
   day INTEGER NOT NULL DEFAULT 1,   -- day of month (1-31; clamped to the last day in shorter months)
   active INTEGER NOT NULL DEFAULT 1,
-  last_period TEXT                  -- YYYY-MM of the last auto-logged month,
-  on_card INTEGER NOT NULL DEFAULT 0 -- the expense it logs each month goes on the card, not the account
+  last_period TEXT                  -- YYYY-MM of the last auto-logged month
 );
 
 -- recurring expenses: the fixed costs that are neither a bill with a due date nor a credit
@@ -352,7 +351,9 @@ CREATE TABLE IF NOT EXISTS recurring_expenses (
   property_id INTEGER REFERENCES properties(id) ON DELETE SET NULL,
   vehicle_id INTEGER REFERENCES vehicles(id) ON DELETE SET NULL,
   active INTEGER NOT NULL DEFAULT 1,
-  last_period TEXT                  -- YYYY-MM of the last auto-logged month
+  last_period TEXT,                 -- YYYY-MM of the last auto-logged month
+  -- the expense it logs each month goes on the card rather than out of the account
+  on_card INTEGER NOT NULL DEFAULT 0
 );
 
 -- savings goals: deposits/withdrawals can be tagged with a goal to track progress
