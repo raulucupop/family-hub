@@ -899,15 +899,16 @@ app.post('/api/balance', auth, canWrite, (req, res) => {
   res.json({ balance: amount, balance_date: date });
 });
 
-app.get('/api/forecast', auth, (req, res) => {
-  const fid = req.user.family_id;
-  const fam = db.prepare('SELECT * FROM families WHERE id = ?').get(fid);
+// Split out from the route so the Home Assistant feed can ask the same question and get the same
+// answer — two implementations of a projection is two projections.
+function forecastFor(fam, wantDays) {
+  const fid = fam.id;
   const cur = curSymbol(fam.currency);
   const today = new Date().toISOString().slice(0, 10);
-  const days = Math.min(Math.max(Number(req.query.days) || 60, 7), 180);
+  const days = Math.min(Math.max(Number(wantDays) || 60, 7), 180);
   const horizon = addDays(today, days);
   if (fam.balance == null || !fam.balance_date) {
-    return res.json({ currency: cur, balance: null, needs_balance: true, items: [], series: [], skipped: [] });
+    return { currency: cur, balance: null, needs_balance: true, items: [], series: [], skipped: [] };
   }
 
   // replay what has been recorded since the reading, so the starting point is today, not then
@@ -983,7 +984,7 @@ app.get('/api/forecast', auth, (req, res) => {
     series.push({ date: d, amount: running });
     if (running < low.amount) low = { date: d, amount: running };
   }
-  res.json({
+  return {
     currency: cur,
     balance: fam.balance,
     balance_date: fam.balance_date,
@@ -995,7 +996,11 @@ app.get('/api/forecast', auth, (req, res) => {
     series,
     items,
     skipped,
-  });
+  };
+}
+app.get('/api/forecast', auth, (req, res) => {
+  const fam = db.prepare('SELECT * FROM families WHERE id = ?').get(req.user.family_id);
+  res.json(forecastFor(fam, req.query.days));
 });
 
 const BUDGET_BASIS_MONTHS = 3;
@@ -2855,6 +2860,108 @@ app.get('/api/reminders', auth, (req, res) => {
   res.json(collectReminders(req.user.family_id, horizon, scope));
 });
 
+// ---------- Home Assistant feed ----------
+// A house dashboard cannot sign in, so this is a by-token feed like the calendar one. It is
+// deliberately one-way and read-only: Home Assistant learns numbers, Family Hub learns nothing
+// and is handed no key to the house. The other direction — storing a long-lived HA token on
+// shared hosting so the app could reach in — would put the lights and locks one leaked file away.
+//
+// It answers with figures, never with rows: no names, no notes, no addresses. A leaked token
+// should expose "three bills due, 525 lei", not who owes what for which flat.
+// What KIND of thing is next, never what it is called. A reminder's label is text the household
+// typed — a bill name, a document name — and a by-token URL is the wrong place for it. The kind is
+// just as useful on a wall panel and cannot echo anything private back out.
+const KIND_LABELS = {
+  en: { bill: 'Bill', rca: 'RCA insurance', casco: 'Casco insurance', vignette: 'Vignette', itp: 'ITP', road_tax: 'Vehicle tax',
+    property_insurance: 'Home insurance', property_tax: 'Property tax', lease_end: 'Tenancy ends', lease_notice: 'Notice to give',
+    tenant_unpaid: 'Rent unpaid', meter_pending: 'Meter reading', warranty: 'Warranty', document: 'Document', birthday: 'Birthday' },
+  ro: { bill: 'Factură', rca: 'Asigurare RCA', casco: 'Asigurare Casco', vignette: 'Rovinietă', itp: 'ITP', road_tax: 'Taxă auto',
+    property_insurance: 'Asigurare locuință', property_tax: 'Impozit proprietate', lease_end: 'Sfârșit contract', lease_notice: 'Preaviz contract',
+    tenant_unpaid: 'Chirie neplătită', meter_pending: 'Citire contor', warranty: 'Garanție', document: 'Act', birthday: 'Zi de naștere' },
+};
+const kindLabel = (lang, kind) => KIND_LABELS[lang === 'ro' ? 'ro' : 'en'][kind] || KIND_LABELS.en[kind] || kind;
+function haSummary(fam) {
+  const today = new Date().toISOString().slice(0, 10);
+  const month = today.slice(0, 7);
+  const cur = fam.currency;
+  const one = (sql, ...a) => db.prepare(sql).get(fam.id, ...a).t;
+  const week = addDays(today, 7);
+
+  const billsSoon = db.prepare(
+    "SELECT COUNT(*) n, COALESCE(SUM(amount),0) t FROM bills WHERE family_id = ? AND status = 'unpaid' AND due_date >= ? AND due_date <= ?",
+  ).get(fam.id, today, week);
+  const billsLate = db.prepare(
+    "SELECT COUNT(*) n, COALESCE(SUM(amount),0) t FROM bills WHERE family_id = ? AND status = 'unpaid' AND due_date < ?",
+  ).get(fam.id, today);
+
+  const spent = one("SELECT COALESCE(SUM(amount),0) t FROM expenses WHERE family_id = ? AND on_card = 0 AND substr(date,1,7) = ?", month);
+  const income = one('SELECT COALESCE(SUM(amount),0) t FROM incomes WHERE family_id = ? AND substr(date,1,7) = ?', month);
+  const onCard = one("SELECT COALESCE(SUM(amount),0) t FROM expenses WHERE family_id = ? AND on_card = 1 AND substr(date,1,7) = ?", month);
+
+  const charges = db.prepare(`
+    SELECT c.amount, c.currency, p.rent_currency FROM tenant_charges c
+    JOIN properties p ON p.id = c.property_id
+    WHERE c.family_id = ? AND c.status = 'unpaid'
+  `).all(fam.id);
+  const meters = one("SELECT COUNT(*) t FROM meter_requests WHERE family_id = ? AND status = 'pending'");
+  const maint = one("SELECT COUNT(*) t FROM maintenance_requests WHERE family_id = ? AND status = 'open'");
+
+  // the next thing with a date on it, whatever kind it is — one line a dashboard can show
+  const soon = collectReminders(fam.id, 60).filter((r) => r.days_left >= 0)[0] || null;
+  const overdue = collectReminders(fam.id, 60).filter((r) => r.days_left < 0).length;
+
+  const out = {
+    family: fam.name,
+    currency: curSymbol(cur),
+    generated_at: new Date().toISOString(),
+    bills_due_7d: billsSoon.n,
+    bills_due_7d_amount: Math.round(billsSoon.t * 100) / 100,
+    bills_overdue: billsLate.n,
+    bills_overdue_amount: Math.round(billsLate.t * 100) / 100,
+    month_spent: Math.round(spent * 100) / 100,
+    month_income: Math.round(income * 100) / 100,
+    month_on_card: Math.round(onCard * 100) / 100,
+    tenant_unpaid: charges.length,
+    tenant_owed: owedText(charges.map((c) => ({ amount: c.amount, currency: c.currency || c.rent_currency })), cur),
+    meter_readings_pending: meters,
+    maintenance_open: maint,
+    deadlines_overdue: overdue,
+    next_deadline: soon ? kindLabel(famLang(fam.id), soon.kind) : null,
+    next_deadline_days: soon ? soon.days_left : null,
+    next_deadline_date: soon ? soon.date : null,
+  };
+  // the forecast only exists once somebody has entered a balance; say so rather than send zeros
+  if (fam.balance != null && fam.balance_date) {
+    const f = forecastFor(fam, 60);
+    out.balance_now = f.today;
+    out.balance_low = f.low.amount;
+    out.balance_low_date = f.low.date;
+    out.balance_end = f.end.amount;
+    out.balance_age_days = f.stale_days;
+  } else {
+    out.balance_now = null;
+    out.balance_low = null;
+  }
+  return out;
+}
+app.get('/api/ha/info', auth, (req, res) => {
+  const fam = db.prepare('SELECT ha_token FROM families WHERE id = ?').get(req.user.family_id);
+  const base = `${req.protocol}://${req.get('host')}`;
+  res.json({ url: fam?.ha_token ? `${base}/ha/${fam.ha_token}.json` : null });
+});
+app.post('/api/ha/token', auth, canWrite, (req, res) => {
+  const token = crypto.randomBytes(20).toString('hex');
+  db.prepare('UPDATE families SET ha_token = ? WHERE id = ?').run(token, req.user.family_id);
+  const base = `${req.protocol}://${req.get('host')}`;
+  res.json({ url: `${base}/ha/${token}.json` });
+});
+app.get('/ha/:token.json', (req, res) => {
+  const fam = db.prepare('SELECT * FROM families WHERE ha_token = ?').get(req.params.token);
+  if (!fam) return res.status(404).json({ error: 'Not found' });
+  res.setHeader('Cache-Control', 'no-store');
+  res.json(haSummary(fam));
+});
+
 // ---------- calendar (iCal feed + subscribe link) ----------
 app.get('/api/calendar/info', auth, (req, res) => {
   const fam = db.prepare('SELECT cal_token FROM families WHERE id = ?').get(req.user.family_id);
@@ -3538,6 +3645,12 @@ const catLabel = (lang, cat) => (lang === 'ro' && MAIL_CATEGORIES_RO[cat]) || ca
 const mailDate = (iso) => { const p = String(iso).slice(0, 10).split('-'); return p.length === 3 ? `${p[2]}/${p[1]}/${p[0]}` : String(iso); };
 // Romanian takes "de" from 20 upwards — "3 zile" but "24 de zile". Small thing, reads wrong without it.
 const roDays = (n) => (n === 1 ? 'o zi' : `${n}${n % 100 >= 20 || n % 100 === 0 ? ' de' : ''} zile`);
+// A family has no language of its own — its people do. For a feed nobody is signed in to, the
+// language of the admins is the closest thing to an answer.
+function famLang(fid) {
+  const row = db.prepare("SELECT lang FROM users WHERE family_id = ? AND role = 'admin' ORDER BY id LIMIT 1").get(fid);
+  return row?.lang === 'ro' ? 'ro' : 'en';
+}
 function mailLabel(lang, label) {
   if (lang !== 'ro') return label;
   if (MAIL_LABELS_RO[label]) return MAIL_LABELS_RO[label];

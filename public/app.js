@@ -281,6 +281,11 @@ const RO = {
   'RCA insurance': 'Asigurare RCA', 'Casco insurance': 'Asigurare Casco', 'Rovinieta (vignette)': 'Rovinietă',
   'ITP inspection': 'Inspecție ITP', 'Vehicle tax': 'Taxă auto', 'Property insurance (PAD)': 'Asigurare locuință (PAD)',
   'Additional home insurance': 'Asigurare facultativă locuință', 'Property tax': 'Impozit proprietate',
+  // house dashboard feed
+  'House dashboard': 'Panou în casă', 'New address': 'Adresă nouă', 'Create the address': 'Creează adresa',
+  'Address ready': 'Adresă gata', 'Copy': 'Copiază',
+  'A read-only address Home Assistant can read to show these numbers on a wall panel. It gives out figures only — no names, no notes, no addresses — and it cannot change anything here.':
+    'O adresă doar-citire pe care Home Assistant o poate citi ca să arate cifrele astea pe un panou. Dă doar cifre — fără nume, fără notițe, fără adrese — și nu poate schimba nimic aici.',
   // balance forecast
   'How the month ends': 'Cum se termină luna', 'now': 'acum', 'Lowest point:': 'Cel mai jos:', 'on': 'pe',
   'Until': 'Până pe', 'What moves it': 'Ce îl mișcă', 'In the account': 'În cont', 'On': 'La data de',
@@ -4992,7 +4997,7 @@ async function viewFamily(el) {
 
 /* ---------- settings: profile picture, theme, name ---------- */
 async function viewSettings(el) {
-  const members = await api('/family/members');
+  const [members, haInfo] = await Promise.all([api('/family/members'), api('/ha/info').catch(() => ({ url: null }))]);
   const kids = members.filter((m) => m.role === 'child');
   const canEditKids = ME.role === 'admin' || ME.role === 'adult';
   el.innerHTML = `<div class="pagehead"><div><h1>Settings</h1><p>Your profile, theme and family pictures.</p></div></div>
@@ -5041,7 +5046,15 @@ async function viewSettings(el) {
         <div class="row" style="justify-content:center;margin-top:4px">
           <label class="btn ghost small" style="display:inline-block">Upload<input type="file" data-avatar="${k.id}" accept="image/*" hidden></label>
           ${k.avatar ? `<button class="btn danger small" data-avadel="${k.id}">✕</button>` : ''}</div></div>`).join('')}</div></div>` : ''}
-    ${ME.role === 'admin' ? `<div class="card" style="margin-top:16px"><h3>${tr('Backup')}</h3>
+    ${ME.role === 'admin' ? `<div class="card" style="margin-top:16px"><h3>${tr('House dashboard')}</h3>
+      <p class="muted" style="margin-top:0">${tr('A read-only address Home Assistant can read to show these numbers on a wall panel. It gives out figures only — no names, no notes, no addresses — and it cannot change anything here.')}</p>
+      ${haInfo.url
+        ? `<div class="row" style="gap:8px;flex-wrap:wrap;align-items:center">
+            <code class="tokenline">${esc(haInfo.url)}</code>
+            <button class="btn ghost small" data-copy="${esc(haInfo.url)}">${tr('Copy')}</button>
+            <button class="btn ghost small" id="harotate">${tr('New address')}</button></div>`
+        : `<button class="btn small" id="hagen">${tr('Create the address')}</button>`}</div>
+    <div class="card" style="margin-top:16px"><h3>${tr('Backup')}</h3>
       <p class="muted" style="margin-top:0">${tr('A compressed copy of the whole database, taken cleanly while the app keeps running. Scans and invoices are not in it — those live in the uploads folder.')}</p>
       <button class="btn small" id="dlbackup">${tr('Download backup')}</button></div>` : ''}`;
   el.querySelectorAll('[data-theme]').forEach((b) => (b.onclick = async () => {
@@ -5052,6 +5065,15 @@ async function viewSettings(el) {
     try { const u = await api('/settings', { method: 'POST', body: { lang: b.dataset.lang } }); ME = { ...ME, ...u }; applyLang(); render(); }
     catch (err) { toast(err.message); }
   }));
+  const haGen = async () => {
+    try { await api('/ha/token', { method: 'POST' }); toast(tr('Address ready'), 'success'); viewSettings(el); }
+    catch (err) { toast(err.message); }
+  };
+  $('#hagen')?.addEventListener('click', haGen);
+  $('#harotate')?.addEventListener('click', async () => {
+    if (confirm('Generate a new address? The old one stops working.')) await haGen();
+  });
+  el.querySelectorAll('[data-copy]').forEach((b) => (b.onclick = () => copyText(b.dataset.copy)));
   setupPushCard();
   $('#notifsave')?.addEventListener('click', async () => {
     // muted = groups left unchecked; quiet hours only count when both edges are set

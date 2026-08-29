@@ -721,6 +721,9 @@ if (!propCols3.includes('payment_link')) db.exec('ALTER TABLE properties ADD COL
 
 const famCols = db.prepare('PRAGMA table_info(families)').all().map((c) => c.name);
 if (!famCols.includes('cal_token')) db.exec('ALTER TABLE families ADD COLUMN cal_token TEXT');
+// the by-token feed a house dashboard reads; separate from the calendar one so revoking either
+// does not disturb the other
+if (!famCols.includes('ha_token')) db.exec('ALTER TABLE families ADD COLUMN ha_token TEXT');
 
 const expCols = db.prepare('PRAGMA table_info(expenses)').all().map((c) => c.name);
 if (!expCols.includes('property_id')) db.exec('ALTER TABLE expenses ADD COLUMN property_id INTEGER REFERENCES properties(id) ON DELETE SET NULL');
