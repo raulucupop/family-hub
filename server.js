@@ -2544,11 +2544,14 @@ app.delete('/api/todos/:id', auth, canWrite, (req, res) => {
 });
 
 // ---------- reminders (aggregated deadlines) ----------
+const METER_LABEL = {
+  water: 'Water meter reading', gas: 'Gas meter reading', electricity: 'Electricity meter reading',
+};
 function collectReminders(fid, horizon, scopeUserId = null) {
   const items = [];
   // priority: birthdays, cars & documents rank above property, above bills (tiebreaker on same date)
   // notice ranks with the documents: miss the window and the lease renews itself whether you meant it to or not
-  const PRIO = { birthday: 3, document: 3, rca: 3, casco: 3, vignette: 3, itp: 3, road_tax: 3, lease_notice: 3, lease_end: 2, tenant_unpaid: 2, property_insurance: 2, property_tax: 2, bill: 1 };
+  const PRIO = { birthday: 3, document: 3, rca: 3, casco: 3, vignette: 3, itp: 3, road_tax: 3, lease_notice: 3, lease_end: 2, tenant_unpaid: 2, meter_pending: 2, property_insurance: 2, property_tax: 2, bill: 1 };
   const push = (kind, label, entity, date, id, owner, extra) => {
     if (!date) return;
     items.push({ kind, label, entity, date, ref_id: id, owner_id: owner ?? null, priority: PRIO[kind] || 1, ...extra });
@@ -2606,6 +2609,18 @@ function collectReminders(fid, horizon, scopeUserId = null) {
     // property_id travels too: ref_id is the charge, but the useful place to land is the property's
     // own dashboard, which is where you confirm the payment
     push('tenant_unpaid', `${c.title} — unpaid by tenant`, c.property_name, c.due_date, c.id, c.owner_id, { amount: c.amount, property_id: c.property_id });
+  }
+  // Readings the tenant has been asked for and has not sent back. The request is raised on the
+  // scheduled day and the tenant is emailed then; this is the other half — the owner chasing it.
+  // Dated the day it was asked, so it reads as overdue from that day on and the alert text keeps
+  // counting: an unanswered reading is only a problem because it goes on getting older.
+  for (const mr of db.prepare(`
+    SELECT mr.id, mr.utility, mr.requested_at, mr.property_id, p.name AS property_name, p.owner_id
+    FROM meter_requests mr JOIN properties p ON p.id = mr.property_id
+    WHERE mr.family_id = ? AND mr.status = 'pending'
+  `).all(fid)) {
+    push('meter_pending', METER_LABEL[mr.utility] || 'Meter reading', mr.property_name,
+      String(mr.requested_at).slice(0, 10), mr.id, mr.owner_id, { property_id: mr.property_id, utility: mr.utility });
   }
   // birthdays repeat yearly; show the next upcoming one. Family-wide (owner null) so everyone is reminded.
   for (const u of db.prepare("SELECT id, name, birthday FROM users WHERE family_id = ? AND role != 'tenant' AND birthday IS NOT NULL AND birthday != ''").all(fid)) {
@@ -3081,13 +3096,13 @@ const THRESHOLDS = [0, 1, 7, 14, 30];
 // only the important stuff raises alerts: insurance, car deadlines, PAD, personal papers,
 // and money a tenant owes past its due date.
 // regular bills stay visible in the dashboard ribbon but never notify.
-const ALERT_KINDS = new Set(['rca', 'casco', 'vignette', 'itp', 'road_tax', 'property_insurance', 'document', 'birthday', 'tenant_unpaid']);
+const ALERT_KINDS = new Set(['rca', 'casco', 'vignette', 'itp', 'road_tax', 'property_insurance', 'document', 'birthday', 'tenant_unpaid', 'meter_pending']);
 // user-facing preference groups: each member can mute whole groups (users.notif_muted, CSV).
 // The group names are the API surface the Settings page speaks.
 const ALERT_GROUPS = {
   vehicles: ['rca', 'casco', 'vignette', 'itp', 'road_tax'],
   property: ['property_insurance'],
-  tenant: ['tenant_unpaid', 'maintenance'],
+  tenant: ['tenant_unpaid', 'maintenance', 'meter_pending'],
   documents: ['document'],
   birthdays: ['birthday'],
 };
@@ -3107,7 +3122,7 @@ function inQuietHours(qs, qe, h = bucharestHour()) {
 // instead of the bare dashboard.
 const ALERT_PAGE = {
   rca: '/#vehicles', casco: '/#vehicles', vignette: '/#vehicles', itp: '/#vehicles', road_tax: '/#vehicles',
-  property_insurance: '/#properties', tenant_unpaid: '/#properties', maintenance: '/#properties',
+  property_insurance: '/#properties', tenant_unpaid: '/#properties', maintenance: '/#properties', meter_pending: '/#properties',
   document: '/#acte', birthday: '/#family', watch: '/#watch',
 };
 function alertUrl(key) { return ALERT_PAGE[String(key).split(':')[0]] || '/#alerts'; }
@@ -3297,6 +3312,8 @@ const MAIL_LABELS_RO = {
   'RCA insurance': 'Asigurare RCA', 'Casco insurance': 'Asigurare Casco', 'Rovinieta (vignette)': 'Rovinietă',
   'ITP inspection': 'Inspecție ITP', 'Vehicle tax': 'Taxă auto', 'Property insurance (PAD)': 'Asigurare locuință (PAD)',
   'Additional home insurance': 'Asigurare facultativă locuință', 'Property tax': 'Impozit proprietate',
+  'Water meter reading': 'Citire contor apă', 'Gas meter reading': 'Citire contor gaz',
+  'Electricity meter reading': 'Citire contor curent',
 };
 // expense categories are stored as English keys and translated in the browser; the report writes
 // sentences around them, so the server needs the same table (mirrors CATEGORIES_RO in app.js).
@@ -3317,9 +3334,11 @@ function mailLabel(lang, label) {
   if ((m = /^(.+) — unpaid by tenant$/.exec(label))) return `${m[1]} — neplătit de chiriaș`;
   return label; // user-entered text (a bill or document name) stays as they typed it
 }
+// A negative count is a date already past. It only reaches here for the few items that are worth
+// chasing after the fact, but "in -7 days" is not a sentence in either language.
 const mailDays = (lang, d) => (lang === 'ro'
-  ? (d === 0 ? 'astăzi' : `în ${roDays(d)}`)
-  : (d === 0 ? 'today' : `in ${d} day${d === 1 ? '' : 's'}`));
+  ? (d === 0 ? 'astăzi' : d < 0 ? `acum ${roDays(-d)}` : `în ${roDays(d)}`)
+  : (d === 0 ? 'today' : d < 0 ? `${-d} day${d === -1 ? '' : 's'} ago` : `in ${d} day${d === 1 ? '' : 's'}`));
 // split a recipient list into { en: [...], ro: [...] } so each person reads their own language
 function byLanguage(rows) {
   const groups = {};
@@ -3464,6 +3483,25 @@ async function runEmailReminders() {
           catch (err) { errors++; console.error('email reminders (family):', err.message); }
         }
         // only unclaim if nobody got it — otherwise a retry would double-send to the group that did
+        if (!anySent) releaseKeys(claimed);
+      }
+    }
+    // --- readings asked for a week ago that never came back ---
+    // Keyed on the request alone, with no date or threshold in it, so this is one chase per
+    // request and never a daily drip: the in-app alert already counts the days out loud.
+    const stale = collectReminders(fam.id, 31)
+      .filter((it) => it.kind === 'meter_pending' && it.days_left <= -7);
+    if (stale.length) {
+      const claimed = claimKeys(stale.map((it) => `mtr:${fam.id}:${it.ref_id}`));
+      if (claimed.length) {
+        const chase = stale.filter((it) => claimed.includes(`mtr:${fam.id}:${it.ref_id}`));
+        const groups = byLanguage(db.prepare("SELECT email, lang FROM users WHERE family_id = ? AND role IN ('admin','adult') AND email IS NOT NULL").all(fam.id));
+        let anySent = false;
+        for (const [lang, addrs] of Object.entries(groups)) {
+          const { subject, text, html } = familyDigestMail(lang, fam.name, chase, cur);
+          try { await sendMail(addrs, subject, text, undefined, html); sent++; anySent = true; }
+          catch (err) { errors++; console.error('email reminders (meter chase):', err.message); }
+        }
         if (!anySent) releaseKeys(claimed);
       }
     }

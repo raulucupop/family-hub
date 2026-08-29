@@ -279,6 +279,8 @@ const RO = {
   'RCA insurance': 'Asigurare RCA', 'Casco insurance': 'Asigurare Casco', 'Rovinieta (vignette)': 'Rovinietă',
   'ITP inspection': 'Inspecție ITP', 'Vehicle tax': 'Taxă auto', 'Property insurance (PAD)': 'Asigurare locuință (PAD)',
   'Additional home insurance': 'Asigurare facultativă locuință', 'Property tax': 'Impozit proprietate',
+  'Water meter reading': 'Citire contor apă', 'Gas meter reading': 'Citire contor gaz',
+  'Electricity meter reading': 'Citire contor curent',
   // dashboard
   'Add bills, vehicle or property deadlines and they will line up here.': 'Adaugă facturi sau termene pentru vehicule și proprietăți și vor apărea aici.',
   'Nothing assigned to this person is coming up.': 'Nimic atribuit acestei persoane nu urmează.',
@@ -942,6 +944,7 @@ function reminderHref(r) {
     case 'property_insurance': case 'property_tax': case 'lease_end': case 'lease_notice':
       return r.ref_id ? `#property/${r.ref_id}` : '#properties';
     case 'tenant_unpaid': return r.property_id ? `#property/${r.property_id}` : '#tenants';
+    case 'meter_pending': return r.property_id ? `#property/${r.property_id}` : '#properties';
     case 'document': return '#acte';
     case 'birthday': return '#family';
     default: return '';
