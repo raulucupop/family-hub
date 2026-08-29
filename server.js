@@ -1567,6 +1567,92 @@ app.get('/api/documents/:id/attachment', auth, (req, res) => {
   res.sendFile(path.join(UPLOAD_DIR, doc.attachment));
 });
 
+// ---------- warranties ----------
+// The date that matters is the day the cover runs out. It is written down rather than worked out
+// on every read, because the whole reminder system reads one date column per row and a warranty
+// has to queue up with everything else. Given a purchase date and a length in months we compute
+// it; given an explicit end date we take that, because plenty of receipts just say one.
+function warrantyEnd(b) {
+  if (isDate(b.expires_at)) return b.expires_at;
+  const months = Math.round(Number(b.months));
+  if (!isDate(b.purchased_at) || !(months > 0)) return null;
+  const d = new Date(b.purchased_at + 'T00:00:00Z');
+  const day = d.getUTCDate();
+  d.setUTCDate(1);
+  d.setUTCMonth(d.getUTCMonth() + months);
+  // 31 May + 3 months is 31 August, but 31 Nov does not exist — clamp to the last day of the
+  // month it lands in rather than rolling into the next one, which would give a free extra day.
+  const last = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate();
+  d.setUTCDate(Math.min(day, last));
+  return d.toISOString().slice(0, 10);
+}
+const WARRANTY_SELECT = `
+  SELECT w.*, p.name AS property_name, u.name AS user_name FROM warranties w
+  LEFT JOIN properties p ON p.id = w.property_id
+  LEFT JOIN users u ON u.id = w.user_id
+`;
+function validateWarranty(b, fid) {
+  if (!str(b.name)) return 'Name is required';
+  if (b.purchased_at && !isDate(b.purchased_at)) return 'Purchase date must be YYYY-MM-DD';
+  if (b.expires_at && !isDate(b.expires_at)) return 'Expiry date must be YYYY-MM-DD';
+  if (b.months != null && b.months !== '' && !(Math.round(Number(b.months)) > 0)) return 'Warranty length must be a number of months';
+  if (b.price != null && b.price !== '' && !(Number(b.price) >= 0)) return 'Price cannot be negative';
+  const end = warrantyEnd(b);
+  if (!end) return 'Give either an expiry date, or a purchase date and a length in months';
+  if (b.purchased_at && end < b.purchased_at) return 'The warranty cannot end before the thing was bought';
+  const pid = num(b.property_id), uid = num(b.user_id);
+  if (pid != null && !db.prepare('SELECT id FROM properties WHERE id = ? AND family_id = ?').get(pid, fid)) return 'Linked property not found';
+  if (uid != null && !db.prepare('SELECT id FROM users WHERE id = ? AND family_id = ?').get(uid, fid)) return 'Person must be a member of the family';
+  return null;
+}
+app.get('/api/warranties', auth, (req, res) => {
+  res.json(db.prepare(`${WARRANTY_SELECT} WHERE w.family_id = ? ORDER BY w.expires_at`).all(req.user.family_id));
+});
+app.post('/api/warranties', auth, canWrite, (req, res) => {
+  const b = req.body || {};
+  const err = validateWarranty(b, req.user.family_id);
+  if (err) return res.status(400).json({ error: err });
+  const info = db.prepare('INSERT INTO warranties (family_id, name, seller, serial, purchased_at, months, expires_at, price, property_id, user_id, note) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
+    .run(req.user.family_id, str(b.name), str(b.seller), str(b.serial), b.purchased_at || null,
+      b.months === '' || b.months == null ? null : Math.round(Number(b.months)), warrantyEnd(b),
+      b.price === '' || b.price == null ? null : Number(b.price), num(b.property_id), num(b.user_id), str(b.note));
+  res.json(db.prepare(`${WARRANTY_SELECT} WHERE w.id = ?`).get(info.lastInsertRowid));
+});
+app.put('/api/warranties/:id', auth, canWrite, (req, res) => {
+  const row = db.prepare('SELECT * FROM warranties WHERE id = ? AND family_id = ?').get(req.params.id, req.user.family_id);
+  if (!row) return res.status(404).json({ error: 'Not found' });
+  // an edit that changes the purchase date or the length has to move the end date with it, so the
+  // stored expires_at is recomputed unless this edit names one outright
+  const b = { ...row, ...req.body, expires_at: 'expires_at' in (req.body || {}) ? req.body.expires_at : null };
+  const err = validateWarranty(b, req.user.family_id);
+  if (err) return res.status(400).json({ error: err });
+  db.prepare('UPDATE warranties SET name=?, seller=?, serial=?, purchased_at=?, months=?, expires_at=?, price=?, property_id=?, user_id=?, note=? WHERE id=?')
+    .run(str(b.name), str(b.seller), str(b.serial), b.purchased_at || null,
+      b.months === '' || b.months == null ? null : Math.round(Number(b.months)), warrantyEnd(b),
+      b.price === '' || b.price == null ? null : Number(b.price), num(b.property_id), num(b.user_id), str(b.note), row.id);
+  res.json(db.prepare(`${WARRANTY_SELECT} WHERE w.id = ?`).get(row.id));
+});
+app.delete('/api/warranties/:id', auth, canWrite, (req, res) => {
+  const row = db.prepare('SELECT * FROM warranties WHERE id = ? AND family_id = ?').get(req.params.id, req.user.family_id);
+  if (!row) return res.status(404).json({ error: 'Not found' });
+  if (row.attachment) { try { fs.unlinkSync(path.join(UPLOAD_DIR, row.attachment)); } catch {} }
+  db.prepare('DELETE FROM warranties WHERE id = ?').run(row.id);
+  res.json({ ok: true });
+});
+app.post('/api/warranties/:id/attachment', auth, canWrite, upload.single('file'), (req, res) => {
+  const row = db.prepare('SELECT * FROM warranties WHERE id = ? AND family_id = ?').get(req.params.id, req.user.family_id);
+  if (!row) return res.status(404).json({ error: 'Not found' });
+  if (!req.file) return res.status(400).json({ error: 'No file received' });
+  if (row.attachment) { try { fs.unlinkSync(path.join(UPLOAD_DIR, row.attachment)); } catch {} }
+  db.prepare('UPDATE warranties SET attachment = ? WHERE id = ?').run(req.file.filename, row.id);
+  res.json({ attachment: req.file.filename });
+});
+app.get('/api/warranties/:id/attachment', auth, (req, res) => {
+  const row = db.prepare('SELECT * FROM warranties WHERE id = ? AND family_id = ?').get(req.params.id, req.user.family_id);
+  if (!row || !row.attachment) return res.status(404).json({ error: 'No attachment' });
+  res.sendFile(path.join(UPLOAD_DIR, row.attachment));
+});
+
 // ---------- vehicle & property records ----------
 // (a generic subRecords() factory used to live here — it was superseded by the explicit routes
 //  below and had been dead for a while. Removed: it built table/column names into SQL by
@@ -2551,7 +2637,7 @@ function collectReminders(fid, horizon, scopeUserId = null) {
   const items = [];
   // priority: birthdays, cars & documents rank above property, above bills (tiebreaker on same date)
   // notice ranks with the documents: miss the window and the lease renews itself whether you meant it to or not
-  const PRIO = { birthday: 3, document: 3, rca: 3, casco: 3, vignette: 3, itp: 3, road_tax: 3, lease_notice: 3, lease_end: 2, tenant_unpaid: 2, meter_pending: 2, property_insurance: 2, property_tax: 2, bill: 1 };
+  const PRIO = { birthday: 3, document: 3, rca: 3, casco: 3, vignette: 3, itp: 3, road_tax: 3, lease_notice: 3, lease_end: 2, tenant_unpaid: 2, meter_pending: 2, property_insurance: 2, property_tax: 2, warranty: 2, bill: 1 };
   const push = (kind, label, entity, date, id, owner, extra) => {
     if (!date) return;
     items.push({ kind, label, entity, date, ref_id: id, owner_id: owner ?? null, priority: PRIO[kind] || 1, ...extra });
@@ -2621,6 +2707,12 @@ function collectReminders(fid, horizon, scopeUserId = null) {
   `).all(fid)) {
     push('meter_pending', METER_LABEL[mr.utility] || 'Meter reading', mr.property_name,
       String(mr.requested_at).slice(0, 10), mr.id, mr.owner_id, { property_id: mr.property_id, utility: mr.utility });
+  }
+  // A warranty is only worth knowing about while it still has time on it: once it has run out
+  // there is nothing to do, so unlike an unpaid charge it stops being a reminder rather than
+  // turning into an overdue one.
+  for (const w of db.prepare('SELECT * FROM warranties WHERE family_id = ? AND expires_at >= ?').all(fid, todayISO)) {
+    push('warranty', `Warranty: ${w.name}`, w.seller || '', w.expires_at, w.id, w.user_id);
   }
   // birthdays repeat yearly; show the next upcoming one. Family-wide (owner null) so everyone is reminded.
   for (const u of db.prepare("SELECT id, name, birthday FROM users WHERE family_id = ? AND role != 'tenant' AND birthday IS NOT NULL AND birthday != ''").all(fid)) {
@@ -3096,7 +3188,7 @@ const THRESHOLDS = [0, 1, 7, 14, 30];
 // only the important stuff raises alerts: insurance, car deadlines, PAD, personal papers,
 // and money a tenant owes past its due date.
 // regular bills stay visible in the dashboard ribbon but never notify.
-const ALERT_KINDS = new Set(['rca', 'casco', 'vignette', 'itp', 'road_tax', 'property_insurance', 'document', 'birthday', 'tenant_unpaid', 'meter_pending']);
+const ALERT_KINDS = new Set(['rca', 'casco', 'vignette', 'itp', 'road_tax', 'property_insurance', 'document', 'birthday', 'tenant_unpaid', 'meter_pending', 'warranty']);
 // user-facing preference groups: each member can mute whole groups (users.notif_muted, CSV).
 // The group names are the API surface the Settings page speaks.
 const ALERT_GROUPS = {
@@ -3104,6 +3196,7 @@ const ALERT_GROUPS = {
   property: ['property_insurance'],
   tenant: ['tenant_unpaid', 'maintenance', 'meter_pending'],
   documents: ['document'],
+  warranties: ['warranty'],
   birthdays: ['birthday'],
 };
 const GROUP_OF_KIND = Object.fromEntries(Object.entries(ALERT_GROUPS).flatMap(([g, kinds]) => kinds.map((k) => [k, g])));
@@ -3123,7 +3216,7 @@ function inQuietHours(qs, qe, h = bucharestHour()) {
 const ALERT_PAGE = {
   rca: '/#vehicles', casco: '/#vehicles', vignette: '/#vehicles', itp: '/#vehicles', road_tax: '/#vehicles',
   property_insurance: '/#properties', tenant_unpaid: '/#properties', maintenance: '/#properties', meter_pending: '/#properties',
-  document: '/#acte', birthday: '/#family', watch: '/#watch',
+  document: '/#acte', birthday: '/#family', watch: '/#watch', warranty: '/#garantii',
 };
 function alertUrl(key) { return ALERT_PAGE[String(key).split(':')[0]] || '/#alerts'; }
 // the thing an alert is about, without the threshold: "rca:3:2026-08-16:14" -> "rca:3:2026-08-16".
@@ -3332,6 +3425,7 @@ function mailLabel(lang, label) {
   let m;
   if ((m = /^🎂 (.+)'s birthday$/.exec(label))) return `🎂 Ziua de naștere: ${m[1]}`;
   if ((m = /^(.+) — unpaid by tenant$/.exec(label))) return `${m[1]} — neplătit de chiriaș`;
+  if ((m = /^Warranty: (.+)$/.exec(label))) return `Garanție: ${m[1]}`;
   return label; // user-entered text (a bill or document name) stays as they typed it
 }
 // A negative count is a date already past. It only reaches here for the few items that are worth

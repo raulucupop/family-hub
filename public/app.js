@@ -15,6 +15,8 @@ const BILL_CATS = { electricity: 'Electricity', gas: 'Gas', internet: 'Internet'
 const ICON = {
   grid: '<rect x="3" y="3" width="7.5" height="7.5" rx="1.6"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.6"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1.6"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.6"/>',
   search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.6-3.6"/>',
+  // a warranty is cover: a shield, with a tick for "still claimable"
+  shield: '<path d="M12 3.2 5 6v5.4c0 4.2 2.8 7.6 7 9.4 4.2-1.8 7-5.2 7-9.4V6Z"/><path d="m9 12 2.2 2.2L15.2 10"/>',
   radar: '<circle cx="12" cy="12" r="3"/><path d="M12 12 19 5"/><path d="M16.9 7.1a7 7 0 1 1-9.8 0"/><path d="M19.8 4.2a11 11 0 1 1-15.6 0"/>',
   wallet: '<path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H18a1 1 0 0 1 1 1v1.5"/><rect x="3" y="7.5" width="18" height="12" rx="2.5"/><path d="M16.5 13.5h2.5"/>',
   coins: '<ellipse cx="12" cy="6.5" rx="7" ry="3"/><path d="M5 6.5v5c0 1.66 3.13 3 7 3s7-1.34 7-3v-5"/><path d="M5 11.5v5c0 1.66 3.13 3 7 3s7-1.34 7-3v-5"/>',
@@ -279,6 +281,19 @@ const RO = {
   'RCA insurance': 'Asigurare RCA', 'Casco insurance': 'Asigurare Casco', 'Rovinieta (vignette)': 'Rovinietă',
   'ITP inspection': 'Inspecție ITP', 'Vehicle tax': 'Taxă auto', 'Property insurance (PAD)': 'Asigurare locuință (PAD)',
   'Additional home insurance': 'Asigurare facultativă locuință', 'Property tax': 'Impozit proprietate',
+  // warranties
+  'Warranties': 'Garanții', 'Warranty': 'Garanție', 'Add warranty': 'Adaugă garanție', 'Warranty added': 'Garanție adăugată',
+  'Thing': 'Obiect', 'Bought from': 'Cumpărat de la', 'Bought': 'Cumpărat', 'Cover ends': 'Garanția expiră',
+  'Receipt': 'Bon', 'receipt': 'bon', 'Receipt attached': 'Bon atașat',
+  'Serial number': 'Serie', 'Purchase date': 'Data cumpărării', 'Cover (months)': 'Garanție (luni)',
+  'or, cover ends on': 'sau, expiră pe', 'Price': 'Preț', 'Running out soon': 'Expiră curând',
+  'Cover already ended': 'Garanții expirate', 'Nothing under warranty yet': 'Nicio garanție încă',
+  'Receipt (PDF or photo)': 'Bon (PDF sau poză)',
+  'Appliances, electronics, tools — what is still under cover, who you claim from, and the receipt that proves it.':
+    'Electrocasnice, electronice, scule — ce mai e în garanție, la cine reclami și bonul care o dovedește.',
+  'Add the fridge, the phone, the drill — anything with a receipt worth keeping.':
+    'Adaugă frigiderul, telefonul, bormașina — orice are un bon care merită păstrat.',
+  'Warranty saved, but the receipt failed:': 'Garanția a fost salvată, dar bonul nu:',
   'Water meter reading': 'Citire contor apă', 'Gas meter reading': 'Citire contor gaz',
   'Electricity meter reading': 'Citire contor curent',
   // dashboard
@@ -937,6 +952,12 @@ function daysLabel(d) {
 // work out for yourself which page it lives on is the wrong way round — the card is the deadline,
 // so it should be the way to it. Property deadlines land on that property's own dashboard rather
 // than the list, and an unpaid charge lands where you confirm the payment.
+// Reminder labels are translated as whole strings, which cannot work for one built around a name
+// the family typed in. Only the prefix is ours to translate, so it is peeled off and put back.
+const remLabel = (r) => {
+  const m = /^Warranty: (.+)$/.exec(r.label || '');
+  return m ? `${tr('Warranty')}: ${m[1]}` : r.label;
+};
 function reminderHref(r) {
   switch (r.kind) {
     case 'bill': return '#bills';
@@ -946,6 +967,7 @@ function reminderHref(r) {
     case 'tenant_unpaid': return r.property_id ? `#property/${r.property_id}` : '#tenants';
     case 'meter_pending': return r.property_id ? `#property/${r.property_id}` : '#properties';
     case 'document': return '#acte';
+    case 'warranty': return '#garantii';
     case 'birthday': return '#family';
     default: return '';
   }
@@ -960,7 +982,7 @@ function dayLabel(iso) {
 }
 
 /* ---------- router ---------- */
-const routes = { dashboard: viewDashboard, money: viewMoney, bills: viewBills, search: viewSearch, vehicles: viewVehicles, properties: viewProperties, tenants: viewTenants, property: viewProperty, acte: viewActe, lists: viewLists, chores: viewChores, watch: viewWatch, import: viewImport, alerts: viewAlerts, family: viewFamily, settings: viewSettings };
+const routes = { dashboard: viewDashboard, money: viewMoney, bills: viewBills, search: viewSearch, vehicles: viewVehicles, properties: viewProperties, tenants: viewTenants, property: viewProperty, acte: viewActe, garantii: viewWarranties, lists: viewLists, chores: viewChores, watch: viewWatch, import: viewImport, alerts: viewAlerts, family: viewFamily, settings: viewSettings };
 // Page changes cross-fade where the browser supports it; plain render elsewhere.
 //
 // The cross-fade is decoration — the render is the point — so nothing about the transition may be
@@ -1105,6 +1127,7 @@ const NAV = [
   ['money', 'wallet', 'Budget & expenses'], ['bills', 'receipt', 'Bills'], ['import', 'upload', 'Bank import'],
   [null, 'Property & things'],
   ['properties', 'home', 'Properties'], ['tenants', 'key', 'Tenants'], ['vehicles', 'car', 'Vehicles'], ['acte', 'file', 'Acte'],
+  ['garantii', 'shield', 'Warranties'],
   [null, 'Household'],
   ['chores', 'chore', 'Chores'], ['lists', 'checklist', 'Lists'], ['watch', 'radar', 'Watched pages'], ['alerts', 'bell', 'Alerts'], ['family', 'users', 'Family'], ['settings', 'gear', 'Settings'],
 ];
@@ -1626,7 +1649,7 @@ async function viewDashboard(el) {
         ${(() => { const href = reminderHref(r); const T = href ? 'a' : 'div';
           return `<${T} class="stub ${remClass(r)}"${href ? ` href="${href}"` : ''}>
           <div class="days">${daysLabel(r.days_left)}</div>
-          <div class="what">${esc(r.label)}</div>
+          <div class="what">${esc(remLabel(r))}</div>
           <div class="who">${esc(r.entity || '')} · ${fdate(r.date)}${r.amount ? ` · <span class="amount">${money(r.amount)}</span>` : ''}</div>
         </${T}>`; })()}`).join('')}</div>`
       : `<div class="card empty"><b>Nothing due soon</b>${DASH_VIEW === 'all' ? 'Add bills, vehicle or property deadlines and they will line up here.' : 'Nothing assigned to this person is coming up.'}</div>`}
@@ -2007,7 +2030,7 @@ async function renderCalendar(el, embedded) {
     const date = `${CAL_MONTH}-${String(d).padStart(2, '0')}`;
     const evs = byDate[date] || [];
     cells.push(`<div class="day${date === t ? ' today' : ''}"><div class="n">${d}</div>
-      ${evs.slice(0, 3).map((r) => `<div class="ev ${remClass(r)}" title="${esc(r.label + (r.entity ? ' — ' + r.entity : ''))}">${esc(r.label)}</div>`).join('')}
+      ${evs.slice(0, 3).map((r) => `<div class="ev ${remClass(r)}" title="${esc(remLabel(r) + (r.entity ? ' — ' + r.entity : ''))}">${esc(remLabel(r))}</div>`).join('')}
       ${evs.length > 3 ? `<div class="muted" style="font-size:11px">+${evs.length - 3} ${tr('more')}</div>` : ''}</div>`);
   }
   const controls = `<div class="row"><button class="btn ghost small" id="calprev">←</button>
@@ -3853,6 +3876,84 @@ async function viewActe(el) {
   el.querySelectorAll('[data-attach]').forEach((inp) => (inp.onchange = async () => {
     const fd = new FormData(); fd.append('file', inp.files[0]);
     try { await api(`/documents/${inp.dataset.attach}/attachment`, { method: 'POST', body: fd }); toast('Scan attached'); viewActe(el); }
+    catch (err) { toast(err.message); }
+  }));
+}
+
+/* ---------- warranties ----------
+   The question this page answers is "can I still claim this, and who from" — which is why the
+   receipt and the seller are as prominent as the date. An expired one is kept rather than hidden:
+   it is the record of what the thing cost and when it was bought. */
+async function viewWarranties(el) {
+  const [rows, members, properties] = await Promise.all([api('/warranties'), api('/family/members'), api('/properties')]);
+  const t = today();
+  const daysTo = (d) => Math.ceil((new Date(d) - new Date(t)) / 86400000);
+  const live = rows.filter((w) => w.expires_at >= t);
+  const expired = rows.filter((w) => w.expires_at < t);
+  const owner = (w) => [w.user_name, w.property_name].filter(Boolean).join(' · ');
+  const soon = live.filter((w) => daysTo(w.expires_at) <= 60);
+  const row = (w) => {
+    const days = daysTo(w.expires_at);
+    const dead = days < 0;
+    return `<tr${dead ? ' style="opacity:.6"' : ''}>
+      <td><b>${esc(w.name)}</b>${w.serial ? ` <span class="muted">${esc(w.serial)}</span>` : ''}${w.note ? `<br><span class="muted">${esc(w.note)}</span>` : ''}</td>
+      <td>${w.seller ? esc(w.seller) : '<span class="muted">—</span>'}${owner(w) ? `<br><span class="muted">${esc(owner(w))}</span>` : ''}</td>
+      <td>${w.purchased_at ? fdate(w.purchased_at) : '<span class="muted">—</span>'}${w.price != null ? `<br><span class="muted">${money(w.price)}</span>` : ''}</td>
+      <td><span class="${dead ? 'badge late' : days <= 30 ? 'badge unpaid' : ''}">${fdate(w.expires_at)}${dead ? '' : ` · ${daysLabel(days)}`}</span></td>
+      <td>${w.attachment ? `<a href="/api/warranties/${w.id}/attachment" target="_blank">${tr('receipt')}</a>`
+        : canWrite() ? `<label class="btn ghost small" style="display:inline-block">${tr('attach')}<input type="file" data-attach="${w.id}" accept=".pdf,image/*" hidden></label>` : '—'}</td>
+      <td class="right">${canWrite() ? `<button class="btn danger small" data-del="${w.id}">✕</button>` : ''}</td></tr>`;
+  };
+  const table = (list) => `<table class="cards"><thead><tr><th>${tr('Thing')}</th><th>${tr('Bought from')}</th><th>${tr('Bought')}</th><th>${tr('Cover ends')}</th><th>${tr('Receipt')}</th><th></th></tr></thead>
+    <tbody>${list.map(row).join('')}</tbody></table>`;
+  el.innerHTML = `<div class="pagehead"><div><h1>${tr('Warranties')}</h1>
+      <p>${tr('Appliances, electronics, tools — what is still under cover, who you claim from, and the receipt that proves it.')}</p></div></div>
+    ${soon.length ? `<div class="card" style="margin-bottom:16px"><h3 style="margin-top:0">${tr('Running out soon')}</h3>
+      <div class="dchips">${soon.map((w) => { const d = daysTo(w.expires_at);
+        return `<span class="dchip ${daysClass(d)}">${esc(w.name)} <b>${daysLabel(d)}</b> <span class="dchip-d">${fdate(w.expires_at)}</span></span>`; }).join('')}</div></div>` : ''}
+    ${canWrite() ? addBox('Add warranty', `<form id="warform" class="formgrid">
+      <div><label>${tr('Thing')}</label><input name="name" placeholder="Mașină de spălat Bosch" required></div>
+      <div><label>${tr('Bought from')}</label><input name="seller" placeholder="eMAG, Altex…"></div>
+      <div><label>${tr('Serial number')}</label><input name="serial" placeholder="optional"></div>
+      <div><label>${tr('Purchase date')}</label><input name="purchased_at" type="date" value="${today()}"></div>
+      <div><label>${tr('Cover (months)')}</label><input name="months" type="number" min="1" max="600" value="24"></div>
+      <div><label>${tr('or, cover ends on')}</label><input name="expires_at" type="date"></div>
+      <div><label>${tr('Price')} (${cur()})</label><input name="price" type="number" step="0.01" min="0" placeholder="optional"></div>
+      <div><label>${tr('Person')}</label><select name="user_id"><option value="">${tr('Family (general)')}</option>
+        ${members.map((m) => `<option value="${m.id}">${esc(m.name)}</option>`).join('')}</select></div>
+      ${ownProps(properties).length ? `<div><label>${tr('Property')}</label><select name="property_id"><option value="">—</option>
+        ${ownProps(properties).map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select></div>` : ''}
+      <div><label>${tr('Note')}</label><input name="note" placeholder="optional"></div>
+      <div><label>${tr('Receipt (PDF or photo)')}</label><input name="file" type="file" accept=".pdf,image/*"></div>
+      <button class="btn">${tr('Add warranty')}</button></form>`) : ''}
+    <div class="card" style="margin-top:16px">
+      ${live.length ? table(live) : `<div class="empty"><b>${tr('Nothing under warranty yet')}</b>${tr('Add the fridge, the phone, the drill — anything with a receipt worth keeping.')}</div>`}
+    </div>
+    ${expired.length ? `<details class="card" style="margin-top:16px"><summary>${tr('Cover already ended')} (${expired.length})</summary>
+      <div style="margin-top:10px">${table(expired)}</div></details>` : ''}`;
+
+  $('#warform')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const form = e.target;
+    const raw = Object.fromEntries(new FormData(form));
+    const file = form.querySelector('input[name="file"]')?.files?.[0];
+    try {
+      const w = await api('/warranties', { method: 'POST', body: raw });
+      if (file) {
+        const fd = new FormData(); fd.append('file', file);
+        try { await api(`/warranties/${w.id}/attachment`, { method: 'POST', body: fd }); }
+        catch (err) { toast(tr('Warranty saved, but the receipt failed:') + ' ' + err.message); viewWarranties(el); return; }
+      }
+      toast(tr('Warranty added'), 'success'); viewWarranties(el);
+    } catch (err) { toast(err.message); }
+  });
+  el.querySelectorAll('[data-del]').forEach((b) => (b.onclick = async () => {
+    if (!confirm('Delete this warranty (and its receipt)?')) return;
+    await api('/warranties/' + b.dataset.del, { method: 'DELETE' }); viewWarranties(el);
+  }));
+  el.querySelectorAll('[data-attach]').forEach((inp) => (inp.onchange = async () => {
+    const fd = new FormData(); fd.append('file', inp.files[0]);
+    try { await api(`/warranties/${inp.dataset.attach}/attachment`, { method: 'POST', body: fd }); toast(tr('Receipt attached'), 'success'); viewWarranties(el); }
     catch (err) { toast(err.message); }
   }));
 }

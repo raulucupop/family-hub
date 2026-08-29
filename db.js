@@ -77,6 +77,27 @@ CREATE TABLE IF NOT EXISTS documents (
 );
 CREATE INDEX IF NOT EXISTS idx_documents_family ON documents(family_id);
 
+-- Warranties. Kept apart from documents because the useful questions are different: a document
+-- expires, a warranty is a claim you can still make -- against a named seller, with a receipt,
+-- on a thing that has a serial number. expires_at is stored rather than derived at read time,
+-- because every reminder in the app reads one date column and this one has to look like the rest.
+CREATE TABLE IF NOT EXISTS warranties (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  family_id INTEGER NOT NULL REFERENCES families(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,                 -- what it is: "Masina de spalat Bosch"
+  seller TEXT,                        -- who honours it, which is rarely the manufacturer
+  serial TEXT,
+  purchased_at TEXT,                  -- YYYY-MM-DD
+  months INTEGER,                     -- length as sold; expires_at is what it works out to
+  expires_at TEXT NOT NULL,
+  price REAL,
+  property_id INTEGER REFERENCES properties(id) ON DELETE SET NULL,
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  attachment TEXT,                    -- the receipt: without it the warranty is mostly theory
+  note TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_warranties_family ON warranties(family_id, expires_at);
+
 CREATE TABLE IF NOT EXISTS expenses (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   family_id INTEGER NOT NULL REFERENCES families(id) ON DELETE CASCADE,
