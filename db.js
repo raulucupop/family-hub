@@ -86,7 +86,13 @@ CREATE TABLE IF NOT EXISTS expenses (
   note TEXT,
   date TEXT NOT NULL,
   property_id INTEGER REFERENCES properties(id) ON DELETE SET NULL, -- optional link; also mirrored into property_records
-  vehicle_id INTEGER REFERENCES vehicles(id) ON DELETE SET NULL      -- optional link; also mirrored into vehicle_records
+  vehicle_id INTEGER REFERENCES vehicles(id) ON DELETE SET NULL,     -- optional link; also mirrored into vehicle_records
+  -- Put on a credit card rather than paid from the account. The money leaves when the card bill
+  -- is paid, and that bill is logged as its own expense, so counting the purchase as well is the
+  -- same money twice. A row with this set stays out of every spending total and is reported on
+  -- its own instead, per person. Deliberately not called on_credit: 'Credit' is already a
+  -- category in this app and it means a bank loan.
+  on_card INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_expenses_family_date ON expenses(family_id, date);
 
@@ -308,7 +314,8 @@ CREATE TABLE IF NOT EXISTS recurring_incomes (
   amount REAL NOT NULL,
   day INTEGER NOT NULL DEFAULT 1,   -- day of month (1-31; clamped to the last day in shorter months)
   active INTEGER NOT NULL DEFAULT 1,
-  last_period TEXT                  -- YYYY-MM of the last auto-logged month
+  last_period TEXT                  -- YYYY-MM of the last auto-logged month,
+  on_card INTEGER NOT NULL DEFAULT 0 -- the expense it logs each month goes on the card, not the account
 );
 
 -- recurring expenses: the fixed costs that are neither a bill with a due date nor a credit
@@ -694,6 +701,10 @@ if (!famCols.includes('cal_token')) db.exec('ALTER TABLE families ADD COLUMN cal
 const expCols = db.prepare('PRAGMA table_info(expenses)').all().map((c) => c.name);
 if (!expCols.includes('property_id')) db.exec('ALTER TABLE expenses ADD COLUMN property_id INTEGER REFERENCES properties(id) ON DELETE SET NULL');
 if (!expCols.includes('vehicle_id')) db.exec('ALTER TABLE expenses ADD COLUMN vehicle_id INTEGER REFERENCES vehicles(id) ON DELETE SET NULL');
+// Everything written before this column existed was paid from the account, which is what 0 says.
+if (!expCols.includes('on_card')) db.exec('ALTER TABLE expenses ADD COLUMN on_card INTEGER NOT NULL DEFAULT 0');
+const recxCols = db.prepare('PRAGMA table_info(recurring_expenses)').all().map((c) => c.name);
+if (!recxCols.includes('on_card')) db.exec('ALTER TABLE recurring_expenses ADD COLUMN on_card INTEGER NOT NULL DEFAULT 0');
 
 if (!userCols.includes('lang')) db.exec("ALTER TABLE users ADD COLUMN lang TEXT NOT NULL DEFAULT 'en'");
 if (!userCols.includes('birthday')) db.exec('ALTER TABLE users ADD COLUMN birthday TEXT');

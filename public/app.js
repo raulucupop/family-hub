@@ -107,6 +107,9 @@ const RO = {
   'Track what comes in, what goes out, and set monthly limits.': 'Urmărește ce intră, ce iese și setează limite lunare.',
   'Export expenses (CSV)': 'Exportă cheltuieli (CSV)',
   'Add expense': 'Adaugă cheltuială', 'Add income': 'Adaugă venit', 'Date': 'Data', 'Category': 'Categorie', 'Amount': 'Sumă',
+  'Paid by credit card': 'Plătit cu cardul de credit', 'on card': 'pe card', 'On the credit card': 'Pe cardul de credit',
+  'Not counted as spent — the money leaves the account when you pay the card bill.':
+    'Nu intră la cheltuit — banii pleacă din cont când achiți factura cardului.',
   'Note': 'Notă', 'optional': 'opțional', 'Source': 'Sursă', 'All categories': 'Toate categoriile', 'All time': 'Tot timpul',
   'Search note…': 'Caută notă…', 'Whole family': 'Toată familia', 'No matching expenses': 'Nicio cheltuială găsită',
   'Adjust the filters or add one above.': 'Ajustează filtrele sau adaugă una mai sus.', 'By': 'De cine', 'Delete': 'Șterge',
@@ -1628,7 +1631,7 @@ async function viewDashboard(el) {
     ${choresCard(chores)}
     <section class="kpi" style="margin-top:18px">
       <a class="card clickcard" href="#money" data-tab="income"><div class="label"><span class="kpi-ic">${icon('wallet')}</span>${tr('Income')}</div>${pctPill(stats.income, stats.prev?.income, 'up-good')}<div class="value" data-cu="${stats.income}">${money(stats.income)}</div>${deltaAmountHtml(stats.income, stats.prev?.income)}<span class="spark-pos">${sparkline(incomeSeries)}</span></a>
-      <a class="card clickcard" href="#money" data-tab="expenses"><div class="label"><span class="kpi-ic">${icon('receipt')}</span>${tr('Spent')}</div>${pctPill(stats.spent, stats.prev?.spent, 'up-bad')}<div class="value" data-cu="${stats.spent}">${money(stats.spent)}</div>${deltaAmountHtml(stats.spent, stats.prev?.spent)}<span class="spark-neg">${sparkline(spendSeries)}</span></a>
+      <a class="card clickcard" href="#money" data-tab="expenses"><div class="label"><span class="kpi-ic">${icon('receipt')}</span>${tr('Spent')}</div>${pctPill(stats.spent, stats.prev?.spent, 'up-bad')}<div class="value" data-cu="${stats.spent}">${money(stats.spent)}</div>${deltaAmountHtml(stats.spent, stats.prev?.spent)}${stats.card?.total > 0 ? `<div class="muted" style="font-size:12px;margin-top:2px">+ ${money(stats.card.total)} ${tr('on card')}</div>` : ''}<span class="spark-neg">${sparkline(spendSeries)}</span></a>
       <div class="card"><div class="label"><span class="kpi-ic">${icon('coins')}</span>Left over</div>${pctPill(net, (stats.prev?.income ?? 0) - (stats.prev?.spent ?? 0), 'up-good')}<div class="value ${net < 0 ? 'neg' : ''}" data-cu="${net}">${money(net)}</div>${deltaAmountHtml(net, (stats.prev?.income ?? 0) - (stats.prev?.spent ?? 0))}${savingsRateHtml(stats.income, net)}<span class="spark-pos">${sparkline(netSeries)}</span></div>
     </section>
     ${safeToSpendHtml(stats, DASH_MONTHS, upcoming)}
@@ -2381,11 +2384,15 @@ function expenseFormFields(members, properties, vehicles, e = {}) {
     ${properties.length || vehicles.length ? `<div><label>Link to (optional)</label><select name="link"><option value="">Nothing</option>
       ${ownProps(properties).map((p) => `<option value="property:${p.id}" ${link === `property:${p.id}` ? 'selected' : ''}>⌂ ${esc(p.name)}</option>`).join('')}
       ${vehicles.map((v) => `<option value="vehicle:${v.id}" ${link === `vehicle:${v.id}` ? 'selected' : ''}>⛟ ${esc(v.name)}</option>`).join('')}</select></div>` : ''}
-    <div><label>Note</label><input name="note" placeholder="optional" value="${esc(e.note || '')}"></div>`;
+    <div><label>Note</label><input name="note" placeholder="optional" value="${esc(e.note || '')}"></div>
+    <div style="align-self:center"><label class="cardtick"><input type="checkbox" name="on_card" value="1" ${e.on_card ? 'checked' : ''} style="width:auto"> ${tr('Paid by credit card')}</label></div>`;
 }
 // the combined link select unpacks into real columns; both keys are always written so
 // clearing the link on edit actually clears it server-side
 function unpackExpenseBody(b) {
+  // an unticked checkbox is not in FormData at all, and the edit route falls back to the stored
+  // row for anything the body does not mention — so unticking has to be said out loud
+  b.on_card = b.on_card ? 1 : 0;
   const l = String(b.link || ''); delete b.link;
   b.property_id = null; b.vehicle_id = null;
   if (l) { const [kind, id] = l.split(':'); b[kind + '_id'] = Number(id); }
@@ -2405,11 +2412,29 @@ async function moneyExpenses(body, f = {}) {
     (flt.who === 'all' || String(e.user_id) === String(flt.who)) &&
     (!q || (e.note || '').toLowerCase().includes(q) || e.category.toLowerCase().includes(q)));
   const rows = inScope.filter((e) => flt.cat === 'all' || e.category === flt.cat);
-  const total = rows.reduce((s, e) => s + e.amount, 0);
-  // top categories in the current view — the breakdown that otherwise only lives in the dashboard donut
-  const scopeTotal = inScope.reduce((s, e) => s + e.amount, 0);
-  const byCat = Object.entries(inScope.reduce((m, e) => ((m[e.category] = (m[e.category] || 0) + e.amount), m), {}))
+  // Card purchases sit in the same list — hiding them would make an expense you entered vanish —
+  // but they are not money out of the account yet, so no total here counts them. The card figure
+  // is stated next to the account one instead of folded into it.
+  const fromAccount = (list) => list.filter((e) => !e.on_card);
+  const sum = (list) => list.reduce((s, e) => s + e.amount, 0);
+  const total = sum(fromAccount(rows));
+  const cardRows = inScope.filter((e) => e.on_card);
+  const cardTotal = sum(cardRows);
+  const cardByPerson = Object.entries(cardRows.reduce((m, e) => ((m[e.user_id] = (m[e.user_id] || 0) + e.amount), m), {}))
     .sort((a, b) => b[1] - a[1]);
+  // top categories in the current view — the breakdown that otherwise only lives in the dashboard donut
+  const scopeTotal = sum(fromAccount(inScope));
+  const byCat = Object.entries(fromAccount(inScope).reduce((m, e) => ((m[e.category] = (m[e.category] || 0) + e.amount), m), {}))
+    .sort((a, b) => b[1] - a[1]);
+  // who put what on the card, for the same month and person the filters are showing
+  const cardPanel = cardTotal > 0 ? `<div class="card cardpanel" style="margin-top:16px">
+      <div class="row" style="justify-content:space-between;gap:10px;align-items:baseline">
+        <h3 style="margin:0">${tr('On the credit card')}</h3><span class="amount"><b>${money(cardTotal)}</b></span></div>
+      <p class="muted" style="margin:4px 0 10px">${tr('Not counted as spent — the money leaves the account when you pay the card bill.')}</p>
+      <table class="cards"><tbody>${cardByPerson.map(([uid, amt]) => `<tr>
+        <td>${whoChip(mname[uid])}</td>
+        <td class="right amount">${money(amt)}</td></tr>`).join('')}</tbody></table>
+    </div>` : '';
   const subtotals = (byCat.length > 1 && scopeTotal > 0) ? `<div class="catstrip">${byCat.slice(0, 6).map(([c, amt]) =>
     // The name is its own element so it can be the part that truncates when a pill is squeezed to
     // half a phone row — a bare text node has nothing to hang text-overflow on. Both amounts are
@@ -2443,11 +2468,12 @@ async function moneyExpenses(body, f = {}) {
           ${ownProps(properties).map((p) => `<option value="property:${p.id}">⌂ ${esc(p.name)}</option>`).join('')}
           ${vehicles.map((v) => `<option value="vehicle:${v.id}">⛟ ${esc(v.name)}</option>`).join('')}</select></div>` : ''}
         <div><label>Note</label><input name="note" placeholder="optional"></div>
+        <div style="align-self:center"><label class="cardtick"><input type="checkbox" name="on_card" value="1" '' style="width:auto"> ${tr('Paid by credit card')}</label></div>
       </div></form></div>`) : ''}
     <details class="card addbox" style="margin-top:16px"><summary><span class="plus" aria-hidden="true">+</span> Recurring expenses</summary><div class="addbody">
       <p class="muted" style="margin-top:0">Fixed monthly costs that aren't bills — logged automatically every month on the chosen day.</p>
       ${recurring.length ? `<table><tbody>${recurring.map((r) => `<tr style="${r.active ? '' : 'opacity:.55'}">
-        <td><b>${esc(r.note || tr(r.category))}</b> <span class="muted">· ${tr(r.category)} · ${esc(r.user_name || tr('whole family'))} · ${tr('day')} ${r.day}${r.property_name ? ` · ⌂ ${esc(r.property_name)}` : ''}${r.vehicle_name ? ` · ⛟ ${esc(r.vehicle_name)}` : ''}</span>${r.active ? '' : ' <span class="badge role">paused</span>'}</td>
+        <td><b>${esc(r.note || tr(r.category))}</b> <span class="muted">· ${tr(r.category)} · ${esc(r.user_name || tr('whole family'))} · ${tr('day')} ${r.day}${r.on_card ? ' · ' + tr('on card') : ''}${r.property_name ? ` · ⌂ ${esc(r.property_name)}` : ''}${r.vehicle_name ? ` · ⛟ ${esc(r.vehicle_name)}` : ''}</span>${r.active ? '' : ' <span class="badge role">paused</span>'}</td>
         <td class="right amount">${money(r.amount)}<span class="muted">/${tr('mo')}</span></td>
         <td class="right">${canWrite() ? `<span class="rowacts"><button class="btn ghost small" data-rxtog="${r.id}">${r.active ? 'Pause' : 'Resume'}</button>
           <button class="btn danger small" data-rxdel="${r.id}">✕</button></span>` : ''}</td></tr>`).join('')}</tbody></table>` : ''}
@@ -2460,10 +2486,12 @@ async function moneyExpenses(body, f = {}) {
         ${properties.length || vehicles.length ? `<div><label>Link to (optional)</label><select name="link"><option value="">Nothing</option>
           ${ownProps(properties).map((p) => `<option value="property:${p.id}">⌂ ${esc(p.name)}</option>`).join('')}
           ${vehicles.map((v) => `<option value="vehicle:${v.id}">⛟ ${esc(v.name)}</option>`).join('')}</select></div>` : ''}
+        <div style="align-self:center"><label class="cardtick"><input type="checkbox" name="on_card" value="1" '' style="width:auto"> ${tr('Paid by credit card')}</label></div>
         <button class="btn small">Add recurring</button></form>` : ''}
     </div></details>
+    ${cardPanel}
     <div class="card" style="margin-top:16px">
-      <div class="row" style="justify-content:space-between;gap:10px"><h3 style="margin:0">Expenses</h3><span class="amount"><b>${money(total)}</b></span></div>
+      <div class="row" style="justify-content:space-between;gap:10px"><h3 style="margin:0">Expenses</h3><span class="amount"><b>${money(total)}</b>${cardTotal > 0 ? ` <span class="muted" style="font-weight:400">+ ${money(cardTotal)} ${tr('on card')}</span>` : ''}</span></div>
       <div class="row filterrow">
         ${whoFilter('wfilter', members, flt.who)}
         <select id="cfilter"><option value="all" ${flt.cat === 'all' ? 'selected' : ''}>All categories</option>${CATEGORIES.map((c) => `<option value="${c}" ${flt.cat === c ? 'selected' : ''}>${c}</option>`).join('')}</select>
@@ -2477,14 +2505,14 @@ async function moneyExpenses(body, f = {}) {
           // a light header each time the date changes, with that day's total — the rows arrive in
           // date order, so this just breaks a long month into scannable days
           const sep = (i === 0 || rows[i - 1].date !== e.date)
-            ? `<tr class="daysep"><td colspan="6"><div class="daysep-in"><span>${dayLabel(e.date)}</span><span class="amount">${money(rows.filter((r) => r.date === e.date).reduce((s, r) => s + r.amount, 0))}</span></div></td></tr>`
+            ? `<tr class="daysep"><td colspan="6"><div class="daysep-in"><span>${dayLabel(e.date)}</span><span class="amount">${money(sum(fromAccount(rows.filter((r) => r.date === e.date))))}${sum(rows.filter((r) => r.date === e.date && r.on_card)) > 0 ? ` <span class="muted">+ ${money(sum(rows.filter((r) => r.date === e.date && r.on_card)))} ${tr('on card')}</span>` : ''}</span></div></td></tr>`
             : '';
           return `${sep}<tr>
           <td data-label="${tr('Date')}">${fdate(e.date)}</td>
           <td data-label="${tr('Category')}"><span class="catcell"><span class="catdot" style="--cat:${catColor(e.category)}"></span>${esc(e.category)}</span></td>
           <td data-label="${tr('By')}">${whoChip(mname[e.user_id])}</td>
           <td data-label="${tr('Note')}">${esc(e.note || '')}${link ? `${e.note ? ' · ' : ''}<span class="muted">${link}</span>` : ''}</td>
-          <td class="right amount" data-label="${tr('Amount')}">${money(e.amount)}</td>
+          <td class="right amount" data-label="${tr('Amount')}">${money(e.amount)}${e.on_card ? `<br><span class="badge cardbadge">${tr('on card')}</span>` : ''}</td>
           <td class="right">${canWrite() ? rowMenu([
             [tr('Edit'), `data-edit="${e.id}"`],
             [tr('Delete'), `data-del="${e.id}"`, true],

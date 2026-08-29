@@ -1116,3 +1116,10 @@ body.seat-dragging { cursor: grabbing; user-select: none; -webkit-user-select: n
    it. This is the general fix: last rule in the file, !important, so `hidden` means hidden whatever
    classes the element carries. */
 [hidden] { display: none !important; }
+
+/* Paid-by-card: a quiet marker, not a warning. The row is a real expense you entered — it just
+   is not money out of the account yet, so it must read as "noted", never as "wrong". */
+.cardtick { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
+.cardbadge { background: #ece7f6; color: #4b3b7a; border-color: #d8cfee; white-space: nowrap; }
+.cardpanel h3 { font-size: 15px; }
+:root[data-theme="dark"] .cardbadge { background: #2f2a40; color: #cdc2ee; border-color: #443a5e; }

@@ -470,6 +470,9 @@ app.get('/api/expenses', auth, (req, res) => {
     WHERE e.family_id = ? ORDER BY e.date DESC, e.id DESC
   `).all(req.user.family_id));
 });
+// The edit route spreads the stored row under the body, so an edit that does not mention the
+// flag keeps whatever was there rather than silently clearing it.
+const onCard = (v) => (v === true || v === 1 || v === '1' ? 1 : 0);
 // shared by create and edit: returns an error string, or the cleaned fields
 function validateExpense(b, fid, prevPropId = null) {
   if (!b.category) return 'Category is required';
@@ -479,6 +482,7 @@ function validateExpense(b, fid, prevPropId = null) {
   if (num(b.user_id) != null && !db.prepare('SELECT id FROM users WHERE id = ? AND family_id = ?').get(num(b.user_id), fid)) {
     return 'Person must be a member of the family';
   }
+  if (b.on_card != null && ![0, 1, true, false, '0', '1'].includes(b.on_card)) return 'Paid by card must be yes or no';
   const propId = num(b.property_id), vehId = num(b.vehicle_id);
   if (propId != null && vehId != null) return 'Link the expense to a property or a vehicle, not both';
   const prop = propId != null ? db.prepare('SELECT id, managed FROM properties WHERE id = ? AND family_id = ?').get(propId, fid) : null;
@@ -530,8 +534,8 @@ app.post('/api/expenses', auth, canWrite, (req, res) => {
   if (err) return res.status(400).json({ error: err });
   const uid = num(b.user_id) ?? req.user.id;
   const eid = db.transaction(() => {
-    const info = db.prepare('INSERT INTO expenses (family_id, user_id, category, amount, note, date, property_id, vehicle_id) VALUES (?,?,?,?,?,?,?,?)')
-      .run(req.user.family_id, uid, str(b.category), Number(b.amount), str(b.note), b.date, num(b.property_id), num(b.vehicle_id));
+    const info = db.prepare('INSERT INTO expenses (family_id, user_id, category, amount, note, date, property_id, vehicle_id, on_card) VALUES (?,?,?,?,?,?,?,?,?)')
+      .run(req.user.family_id, uid, str(b.category), Number(b.amount), str(b.note), b.date, num(b.property_id), num(b.vehicle_id), onCard(b.on_card));
     mirrorExpense(req.user.family_id, info.lastInsertRowid, b, uid);
     return info.lastInsertRowid;
   })();
@@ -546,8 +550,8 @@ app.put('/api/expenses/:id', auth, canWrite, (req, res) => {
   const uid = num(b.user_id) ?? req.user.id;
   db.transaction(() => {
     mirrorExpense(req.user.family_id, row.id, b, uid, row); // `row` = the link as it was, before we overwrite it
-    db.prepare('UPDATE expenses SET user_id=?, category=?, amount=?, note=?, date=?, property_id=?, vehicle_id=? WHERE id=?')
-      .run(uid, str(b.category), Number(b.amount), str(b.note), b.date, num(b.property_id), num(b.vehicle_id), row.id);
+    db.prepare('UPDATE expenses SET user_id=?, category=?, amount=?, note=?, date=?, property_id=?, vehicle_id=?, on_card=? WHERE id=?')
+      .run(uid, str(b.category), Number(b.amount), str(b.note), b.date, num(b.property_id), num(b.vehicle_id), onCard(b.on_card), row.id);
   })();
   res.json(db.prepare('SELECT * FROM expenses WHERE id = ?').get(row.id));
 });
@@ -573,9 +577,9 @@ app.get('/api/search', auth, (req, res) => {
   const add = (kind, tab, rows, map) => { for (const r of rows) results.push({ kind, tab, ...map(r) }); };
 
   add('expense', 'money', db.prepare(`
-    SELECT e.id, e.date, e.note, e.category, e.amount, u.name AS who FROM expenses e LEFT JOIN users u ON u.id = e.user_id
+    SELECT e.id, e.date, e.note, e.category, e.amount, e.on_card, u.name AS who FROM expenses e LEFT JOIN users u ON u.id = e.user_id
     WHERE e.family_id = ? AND (lower(e.note) LIKE ? OR lower(e.category) LIKE ?) ORDER BY e.date DESC LIMIT 25
-  `).all(fid, like, like), (r) => ({ id: r.id, title: r.note || r.category, sub: [r.category, r.who].filter(Boolean).join(' · '), date: r.date, amount: r.amount }));
+  `).all(fid, like, like), (r) => ({ id: r.id, title: r.note || r.category, sub: [r.category, r.who].filter(Boolean).join(' · '), date: r.date, amount: r.amount, on_card: r.on_card }));
 
   add('income', 'money', db.prepare(`
     SELECT i.id, i.date, i.source, i.amount, u.name AS who FROM incomes i LEFT JOIN users u ON u.id = i.user_id
@@ -683,8 +687,8 @@ function autoLogRecurringExpenses() {
     if (r.last_period === period || todayDay < Number(date.slice(8))) continue;
     const b = { category: r.category, amount: r.amount, note: r.note, date, property_id: r.property_id, vehicle_id: r.vehicle_id };
     db.transaction(() => {
-      const info = db.prepare('INSERT INTO expenses (family_id, user_id, category, amount, note, date, property_id, vehicle_id) VALUES (?,?,?,?,?,?,?,?)')
-        .run(r.family_id, r.user_id, r.category, r.amount, r.note, date, r.property_id, r.vehicle_id);
+      const info = db.prepare('INSERT INTO expenses (family_id, user_id, category, amount, note, date, property_id, vehicle_id, on_card) VALUES (?,?,?,?,?,?,?,?,?)')
+        .run(r.family_id, r.user_id, r.category, r.amount, r.note, date, r.property_id, r.vehicle_id, r.on_card ? 1 : 0);
       mirrorExpense(r.family_id, info.lastInsertRowid, b, r.user_id);
       db.prepare('UPDATE recurring_expenses SET last_period = ? WHERE id = ?').run(period, r.id);
     })();
@@ -707,8 +711,8 @@ app.post('/api/recurring-expenses', auth, canWrite, (req, res) => {
   const err = validateExpense({ ...b, date: '2000-01-01' }, req.user.family_id);
   if (err) return res.status(400).json({ error: err });
   const uid = num(b.user_id) ?? req.user.id;
-  const info = db.prepare('INSERT INTO recurring_expenses (family_id, user_id, category, note, amount, day, property_id, vehicle_id) VALUES (?,?,?,?,?,?,?,?)')
-    .run(req.user.family_id, uid, str(b.category), str(b.note), Number(b.amount), day, num(b.property_id), num(b.vehicle_id));
+  const info = db.prepare('INSERT INTO recurring_expenses (family_id, user_id, category, note, amount, day, property_id, vehicle_id, on_card) VALUES (?,?,?,?,?,?,?,?,?)')
+    .run(req.user.family_id, uid, str(b.category), str(b.note), Number(b.amount), day, num(b.property_id), num(b.vehicle_id), onCard(b.on_card));
   autoLogRecurringExpenses(); // if this month's day already passed, log it right away
   res.json(db.prepare('SELECT * FROM recurring_expenses WHERE id = ?').get(info.lastInsertRowid));
 });
@@ -822,7 +826,7 @@ app.get('/api/budgets', auth, (req, res) => {
   const budgets = db.prepare('SELECT * FROM budgets WHERE family_id = ? AND month = ?').all(req.user.family_id, month);
   const spent = db.prepare(`
     SELECT category, SUM(amount) AS spent FROM expenses
-    WHERE family_id = ? AND substr(date,1,7) = ? GROUP BY category
+    WHERE family_id = ? AND on_card = 0 AND substr(date,1,7) = ? GROUP BY category
   `).all(req.user.family_id, month);
   res.json({ month, budgets, spent });
 });
@@ -868,7 +872,7 @@ app.get('/api/upcoming-month', auth, (req, res) => {
   for (const b of db.prepare("SELECT * FROM bills WHERE family_id = ? AND auto_pay = 1 AND status = 'unpaid' AND amount > 0 AND due_date > ? AND due_date <= ?").all(fid, today, monthEnd)) {
     items.push({ kind: 'bill', label: b.name, amount: Number(b.amount), date: b.due_date });
   }
-  for (const r of db.prepare('SELECT * FROM recurring_expenses WHERE family_id = ? AND active = 1').all(fid)) {
+  for (const r of db.prepare('SELECT * FROM recurring_expenses WHERE family_id = ? AND on_card = 0 AND active = 1').all(fid)) {
     if (r.last_period === period) continue; // already logged this month
     items.push({ kind: 'recurring', label: r.note || r.category, amount: Number(r.amount), date: monthDate(period, r.day) });
   }
@@ -883,7 +887,7 @@ app.get('/api/budgets/suggest', auth, (req, res) => {
   const from = monthAt(n), to = monthAt(1);
   const rows = db.prepare(`
     SELECT category, SUM(amount) AS total FROM expenses
-    WHERE family_id = ? AND substr(date,1,7) >= ? AND substr(date,1,7) <= ?
+    WHERE family_id = ? AND on_card = 0 AND substr(date,1,7) >= ? AND substr(date,1,7) <= ?
     GROUP BY category ORDER BY total DESC
   `).all(req.user.family_id, from, to);
   // rounded up to the nearest 10 — a budget you are instantly over is useless
@@ -3506,8 +3510,8 @@ const shiftMonth = (month, n) => {
 function monthlyFacts(famId, month) {
   const prevMonth = shiftMonth(month, -1);
   const one = (sql, ...args) => db.prepare(sql).get(...args).t;
-  const spentIn = (mm) => one('SELECT COALESCE(SUM(amount),0) t FROM expenses WHERE family_id = ? AND substr(date,1,7) = ?', famId, mm);
-  const spentCat = (cat, mm) => one('SELECT COALESCE(SUM(amount),0) t FROM expenses WHERE family_id = ? AND category = ? AND substr(date,1,7) = ?', famId, cat, mm);
+  const spentIn = (mm) => one('SELECT COALESCE(SUM(amount),0) t FROM expenses WHERE family_id = ? AND on_card = 0 AND substr(date,1,7) = ?', famId, mm);
+  const spentCat = (cat, mm) => one('SELECT COALESCE(SUM(amount),0) t FROM expenses WHERE family_id = ? AND on_card = 0 AND category = ? AND substr(date,1,7) = ?', famId, cat, mm);
 
   const spent = spentIn(month);
   const prevSpent = spentIn(prevMonth);
@@ -3518,10 +3522,10 @@ function monthlyFacts(famId, month) {
   const avg3 = past.length ? past.reduce((a, b) => a + b, 0) / past.length : null;
 
   const prevCats = Object.fromEntries(db.prepare(
-    'SELECT category, SUM(amount) t FROM expenses WHERE family_id = ? AND substr(date,1,7) = ? GROUP BY category',
+    'SELECT category, SUM(amount) t FROM expenses WHERE family_id = ? AND on_card = 0 AND substr(date,1,7) = ? GROUP BY category',
   ).all(famId, prevMonth).map((c) => [c.category, c.t]));
   const categories = db.prepare(
-    'SELECT category, SUM(amount) t FROM expenses WHERE family_id = ? AND substr(date,1,7) = ? GROUP BY category ORDER BY t DESC',
+    'SELECT category, SUM(amount) t FROM expenses WHERE family_id = ? AND on_card = 0 AND substr(date,1,7) = ? GROUP BY category ORDER BY t DESC',
   ).all(famId, month).map((c) => ({
     category: c.category,
     total: c.t,
@@ -3682,19 +3686,22 @@ async function runMonthlyReports() {
     const m = (n) => `${Number(n || 0).toFixed(2)} ${cur}`;
     const facts = monthlyFacts(fam.id, prev);
     const income = db.prepare("SELECT COALESCE(SUM(amount),0) t FROM incomes WHERE family_id = ? AND substr(date,1,7) = ?").get(fam.id, prev).t;
-    const spent = db.prepare("SELECT COALESCE(SUM(amount),0) t FROM expenses WHERE family_id = ? AND substr(date,1,7) = ?").get(fam.id, prev).t;
-    const cats = db.prepare("SELECT category, SUM(amount) t FROM expenses WHERE family_id = ? AND substr(date,1,7) = ? GROUP BY category ORDER BY t DESC LIMIT 6").all(fam.id, prev);
+    const spent = db.prepare("SELECT COALESCE(SUM(amount),0) t FROM expenses WHERE family_id = ? AND on_card = 0 AND substr(date,1,7) = ?").get(fam.id, prev).t;
+    const cats = db.prepare("SELECT category, SUM(amount) t FROM expenses WHERE family_id = ? AND on_card = 0 AND substr(date,1,7) = ? GROUP BY category ORDER BY t DESC LIMIT 6").all(fam.id, prev);
     const byMember = db.prepare(`
       SELECT COALESCE(u.name, '—') name, SUM(e.amount) t FROM expenses e LEFT JOIN users u ON u.id = e.user_id
-      WHERE e.family_id = ? AND substr(e.date,1,7) = ? GROUP BY u.id ORDER BY t DESC`).all(fam.id, prev);
+      WHERE e.family_id = ? AND e.on_card = 0 AND substr(e.date,1,7) = ? GROUP BY u.id ORDER BY t DESC`).all(fam.id, prev);
     const budgets = db.prepare('SELECT * FROM budgets WHERE family_id = ? AND month = ?').all(fam.id, prev);
     const budgetData = budgets.map((b) => {
-      const s = db.prepare('SELECT COALESCE(SUM(amount),0) t FROM expenses WHERE family_id = ? AND category = ? AND substr(date,1,7) = ?').get(fam.id, b.category, prev).t;
+      const s = db.prepare('SELECT COALESCE(SUM(amount),0) t FROM expenses WHERE family_id = ? AND on_card = 0 AND category = ? AND substr(date,1,7) = ?').get(fam.id, b.category, prev).t;
       return { category: b.category, spent: s, amount: b.amount, over: s > b.amount };
     });
     const savBal = db.prepare("SELECT COALESCE(SUM(CASE WHEN kind='deposit' THEN amount ELSE -amount END),0) t FROM savings WHERE family_id = ?").get(fam.id).t;
     const savMonth = db.prepare("SELECT COALESCE(SUM(CASE WHEN kind='deposit' THEN amount ELSE -amount END),0) t FROM savings WHERE family_id = ? AND substr(date,1,7) = ?").get(fam.id, prev).t;
-    const data = { income, spent, cats, byMember, budgetData, savBal, savMonth };
+    const card = db.prepare(`
+      SELECT COALESCE(u.name, '—') name, SUM(e.amount) t FROM expenses e LEFT JOIN users u ON u.id = e.user_id
+      WHERE e.family_id = ? AND e.on_card = 1 AND substr(e.date,1,7) = ? GROUP BY u.id ORDER BY t DESC`).all(fam.id, prev);
+    const data = { income, spent, cats, byMember, budgetData, savBal, savMonth, card };
     // the narrative is written per language, from the same facts — so nobody reads a summary in one
     // language over a table in another
     let anySent = false;
@@ -3708,7 +3715,8 @@ async function runMonthlyReports() {
 }
 function monthlyReportMail(lang, fam, prev, d, lines, m) {
   const ro = lang === 'ro';
-  const { income, spent, cats, byMember, budgetData, savBal, savMonth } = d;
+  const { income, spent, cats, byMember, budgetData, savBal, savMonth, card = [] } = d;
+  const cardTotal = card.reduce((t, x) => t + x.t, 0);
   const C = (c) => catLabel(lang, c);
   const budgetLines = budgetData.map((b) => `  ${C(b.category)}: ${m(b.spent)} / ${m(b.amount)}`
     + (b.over ? (ro ? '  (depășit!)' : '  (over!)') : ''));
@@ -3718,6 +3726,7 @@ function monthlyReportMail(lang, fam, prev, d, lines, m) {
     topCats: 'Cele mai mari categorii', none: 'Nu a fost notată nicio cheltuială.',
     perPerson: 'Cheltuieli pe persoană', budgets: 'Bugete față de realitate',
     savings: 'Fond de economii', open: 'Deschide Family Hub',
+    card: 'Pus pe cardul de credit', cardNote: 'Nu intră în „Cheltuit\u201d — banii pleacă din cont când achiți factura cardului.',
     foot: 'Deschide Family Hub pentru imaginea completă.',
     subject: `Family Hub — raportul pe ${monthName('ro', prev)}`,
   } : {
@@ -3726,6 +3735,7 @@ function monthlyReportMail(lang, fam, prev, d, lines, m) {
     topCats: 'Top spending categories', none: 'No expenses were logged.',
     perPerson: 'Spending per person', budgets: 'Budgets vs actual',
     savings: 'Economy account', open: 'Open Family Hub',
+    card: 'Put on the credit card', cardNote: 'Not counted in Spent — the money leaves the account when the card bill is paid.',
     foot: 'Open Family Hub for the full picture.',
     subject: `Family Hub — ${prev} monthly report`,
   };
@@ -3741,6 +3751,7 @@ function monthlyReportMail(lang, fam, prev, d, lines, m) {
     cats.length ? `${t.topCats}:\n${cats.map((c) => `  ${C(c.category)}: ${m(c.t)}`).join('\n')}` : t.none,
     byMember.length ? `\n${t.perPerson}:\n${byMember.map((x) => `  ${x.name}: ${m(x.t)}`).join('\n')}` : null,
     budgetLines.length ? `\n${t.budgets}:\n${budgetLines.join('\n')}` : null,
+    card.length ? `\n${t.card}: ${m(cardTotal)}\n${card.map((x) => `  ${x.name}: ${m(x.t)}`).join('\n')}\n  (${t.cardNote})` : null,
     `\n${t.savings}: ${m(savBal)} (${savMonth >= 0 ? '+' : ''}${m(savMonth)})`, '',
     t.foot,
   ].filter((s) => s !== null).join('\n');
@@ -3757,6 +3768,7 @@ function monthlyReportMail(lang, fam, prev, d, lines, m) {
       ${cats.length ? `<p style="font-weight:600;margin:12px 0 2px">${t.topCats}</p>${list(cats, (c) => kvRow(C(c.category), m(c.t)))}` : `<p style="color:#45565f">${t.none}</p>`}
       ${byMember.length ? `<p style="font-weight:600;margin:14px 0 2px">${t.perPerson}</p>${list(byMember, (x) => kvRow(x.name, m(x.t)))}` : ''}
       ${budgetData.length ? `<p style="font-weight:600;margin:14px 0 2px">${t.budgets}</p>${list(budgetData, (b) => `<div style="display:flex;justify-content:space-between;font-size:14px;padding:3px 0"><span>${htmlEsc(C(b.category))}</span><span style="font-family:monospace;color:${b.over ? '#b23a2e' : '#2f6b5a'}">${m(b.spent)} / ${m(b.amount)}${b.over ? ' ⚠' : ''}</span></div>`)}` : ''}
+      ${card.length ? `<p style="font-weight:600;margin:14px 0 2px">${t.card} — ${m(cardTotal)}</p>${list(card, (x) => kvRow(x.name, m(x.t)))}<p style="color:#45565f;font-size:13px;margin:2px 0 0">${htmlEsc(t.cardNote)}</p>` : ''}
       <p style="margin-top:14px">${t.savings}: <b>${m(savBal)}</b> <span style="color:#45565f">(${savMonth >= 0 ? '+' : ''}${m(savMonth)})</span></p>
       <p>${htmlButton(`${siteBase()}/#dashboard`, t.open)}</p>`);
   return { subject: t.subject, text: text + '\n', html };
@@ -3999,13 +4011,13 @@ app.get('/api/stats', auth, (req, res) => {
   const ua = uid != null ? [uid] : [];
   const byCategory = db.prepare(`
     SELECT category, SUM(amount) AS total FROM expenses
-    WHERE family_id = ? AND substr(date,1,7) >= ?${uf} GROUP BY category ORDER BY total DESC
+    WHERE family_id = ? AND on_card = 0 AND substr(date,1,7) >= ?${uf} GROUP BY category ORDER BY total DESC
   `).all(fid, startMonth, ...ua);
   const income = db.prepare(`SELECT COALESCE(SUM(amount),0) AS total FROM incomes WHERE family_id = ? AND substr(date,1,7) >= ?${uf}`).get(fid, startMonth, ...ua).total;
-  const spent = db.prepare(`SELECT COALESCE(SUM(amount),0) AS total FROM expenses WHERE family_id = ? AND substr(date,1,7) >= ?${uf}`).get(fid, startMonth, ...ua).total;
+  const spent = db.prepare(`SELECT COALESCE(SUM(amount),0) AS total FROM expenses WHERE family_id = ? AND on_card = 0 AND substr(date,1,7) >= ?${uf}`).get(fid, startMonth, ...ua).total;
   const trend = db.prepare(`
     SELECT substr(date,1,7) AS m, SUM(amount) AS total FROM expenses
-    WHERE family_id = ? AND substr(date,1,7) >= ?${uf} GROUP BY m ORDER BY m
+    WHERE family_id = ? AND on_card = 0 AND substr(date,1,7) >= ?${uf} GROUP BY m ORDER BY m
   `).all(fid, startMonth, ...ua);
   const incomeTrend = db.prepare(`
     SELECT substr(date,1,7) AS m, SUM(amount) AS total FROM incomes
@@ -4018,9 +4030,19 @@ app.get('/api/stats', auth, (req, res) => {
   const between = ` AND substr(date,1,7) >= ? AND substr(date,1,7) <= ?`;
   const prev = {
     income: db.prepare(`SELECT COALESCE(SUM(amount),0) AS total FROM incomes WHERE family_id = ?${between}${uf}`).get(fid, prevStart, prevEnd, ...ua).total,
-    spent: db.prepare(`SELECT COALESCE(SUM(amount),0) AS total FROM expenses WHERE family_id = ?${between}${uf}`).get(fid, prevStart, prevEnd, ...ua).total,
+    spent: db.prepare(`SELECT COALESCE(SUM(amount),0) AS total FROM expenses WHERE family_id = ? AND on_card = 0${between}${uf}`).get(fid, prevStart, prevEnd, ...ua).total,
   };
-  res.json({ month, months, startMonth, byCategory, income, spent, trend, incomeTrend, prev, prevStart, prevEnd });
+  // Card purchases are held out of every figure above, so the dashboard would otherwise show a
+  // number that quietly went down with no explanation. Reported per person: a household card is
+  // shared, and "who put what on it" is the question that gets asked when the bill lands.
+  const cardBy = db.prepare(`
+    SELECT e.user_id, COALESCE(u.name, '—') AS name, SUM(e.amount) AS total, COUNT(*) AS n
+    FROM expenses e LEFT JOIN users u ON u.id = e.user_id
+    WHERE e.family_id = ? AND e.on_card = 1 AND substr(e.date,1,7) >= ?${uf.replace('user_id', 'e.user_id')}
+    GROUP BY e.user_id ORDER BY total DESC
+  `).all(fid, startMonth, ...ua);
+  const card = { total: cardBy.reduce((t, r) => t + r.total, 0), byMember: cardBy };
+  res.json({ month, months, startMonth, byCategory, income, spent, trend, incomeTrend, prev, prevStart, prevEnd, card });
 });
 
 // ---------- savings / economy account & goals ----------
@@ -4104,7 +4126,7 @@ app.delete('/api/savings-goals/:id', auth, canWrite, (req, res) => {
 // ---------- CSV export ----------
 app.get('/api/export/expenses.csv', auth, (req, res) => {
   const rows = db.prepare(`
-    SELECT e.date, e.category, e.amount, e.note, u.name AS added_by
+    SELECT e.date, e.category, e.amount, e.note, e.on_card, u.name AS added_by
     FROM expenses e LEFT JOIN users u ON u.id = e.user_id
     WHERE e.family_id = ? ORDER BY e.date
   `).all(req.user.family_id);
@@ -4115,7 +4137,7 @@ app.get('/api/export/expenses.csv', auth, (req, res) => {
     if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
     return `"${s.replace(/"/g, '""')}"`;
   };
-  const csv = ['date,category,amount,note,added_by', ...rows.map((r) => [r.date, r.category, r.amount, r.note, r.added_by].map(esc).join(','))].join('\n');
+  const csv = ['date,category,amount,note,added_by,paid_by_card', ...rows.map((r) => [r.date, r.category, r.amount, r.note, r.added_by, r.on_card ? 'yes' : 'no'].map(esc).join(','))].join('\n');
   res.setHeader('Content-Type', 'text/csv');
   res.setHeader('Content-Disposition', 'attachment; filename="expenses.csv"');
   res.send(csv);
