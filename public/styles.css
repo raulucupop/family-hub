@@ -1136,5 +1136,11 @@ body.seat-dragging { cursor: grabbing; user-select: none; -webkit-user-select: n
 .fcbal summary.stale { color: var(--red); }
 
 /* a long by-token URL has to be readable and selectable without pushing the page sideways */
+/* the weekly review: three questions, nothing competing with them for attention */
+.revlist { margin: 0; padding-left: 18px; }
+.revlist li { margin: 4px 0; font-size: 14px; }
+.revmoney { font-size: 15px; }
+.revmoney.neg { color: var(--red); font-weight: 600; }
+
 .tokenline { font-size: 12px; word-break: break-all; background: var(--surface-2, #eff2f1); padding: 6px 8px; border-radius: 6px; max-width: 100%; }
 :root[data-theme="dark"] .cardbadge { background: #2f2a40; color: #cdc2ee; border-color: #443a5e; }

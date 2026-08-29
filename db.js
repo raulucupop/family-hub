@@ -608,6 +608,10 @@ if (!vehCols.includes('owner_id')) db.exec('ALTER TABLE vehicles ADD COLUMN owne
 
 const userCols = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name);
 if (!userCols.includes('avatar')) db.exec('ALTER TABLE users ADD COLUMN avatar TEXT');
+// When this person last said "done" on the weekly review. "What changed" is measured from here
+// rather than from an arbitrary seven days, so somebody who checks in every three weeks still
+// sees the three weeks, and somebody who checks in daily is not shown the same thing twice.
+if (!userCols.includes('last_review_at')) db.exec('ALTER TABLE users ADD COLUMN last_review_at TEXT');
 // bumped whenever the password changes; tokens carrying an older value stop being accepted,
 // so changing your password actually signs the other devices out
 if (!userCols.includes('token_version')) db.exec('ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0');

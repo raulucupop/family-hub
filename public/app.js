@@ -15,6 +15,7 @@ const BILL_CATS = { electricity: 'Electricity', gas: 'Gas', internet: 'Internet'
 const ICON = {
   grid: '<rect x="3" y="3" width="7.5" height="7.5" rx="1.6"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.6"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1.6"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.6"/>',
   search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.6-3.6"/>',
+  check: '<path d="M20.5 6.5 9.5 17.5 4 12"/>',
   // a warranty is cover: a shield, with a tick for "still claimable"
   shield: '<path d="M12 3.2 5 6v5.4c0 4.2 2.8 7.6 7 9.4 4.2-1.8 7-5.2 7-9.4V6Z"/><path d="m9 12 2.2 2.2L15.2 10"/>',
   radar: '<circle cx="12" cy="12" r="3"/><path d="M12 12 19 5"/><path d="M16.9 7.1a7 7 0 1 1-9.8 0"/><path d="M19.8 4.2a11 11 0 1 1-15.6 0"/>',
@@ -281,6 +282,19 @@ const RO = {
   'RCA insurance': 'Asigurare RCA', 'Casco insurance': 'Asigurare Casco', 'Rovinieta (vignette)': 'Rovinietă',
   'ITP inspection': 'Inspecție ITP', 'Vehicle tax': 'Taxă auto', 'Property insurance (PAD)': 'Asigurare locuință (PAD)',
   'Additional home insurance': 'Asigurare facultativă locuință', 'Property tax': 'Impozit proprietate',
+  // the weekly two minutes
+  'This week': 'Săptămâna asta', 'What changed': 'Ce s-a schimbat', 'What needs you': 'Ce are nevoie de tine',
+  'Does the money hold': 'Ies banii', 'Done for this week': 'Gata pe săptămâna asta',
+  'What changed since': 'Ce s-a schimbat de pe', 'See you next week': 'Pe săptămâna viitoare',
+  'Nothing happened while you were away.': 'Nu s-a întâmplat nimic cât ai lipsit.',
+  'Nothing is waiting on a decision.': 'Nimic nu așteaptă o decizie.',
+  'Reading came in': 'A venit citirea', 'Reported broken': 'S-a raportat stricat', 'New notice': 'Anunț nou',
+  'Bill paid': 'Factură plătită', 'Repairs still open': 'Reparații deschise', 'Readings still missing': 'Citiri lipsă',
+  'Confirm': 'Confirmă', 'Marked as paid': 'Marcată ca plătită',
+  'the balance is old — update it': 'soldul e vechi — actualizează-l',
+  'Enter what is in the account on the dashboard and this answers itself.': 'Scrie pe dashboard cât ai în cont și răspunsul apare singur.',
+  'Everything below is from the last seven days. Once you tick this off, next time shows only what is new since then.':
+    'Tot ce e mai jos e din ultimele șapte zile. După ce bifezi, data viitoare vezi doar ce e nou de atunci.',
   // house dashboard feed
   'House dashboard': 'Panou în casă', 'New address': 'Adresă nouă', 'Create the address': 'Creează adresa',
   'Address ready': 'Adresă gata', 'Copy': 'Copiază',
@@ -995,7 +1009,7 @@ function dayLabel(iso) {
 }
 
 /* ---------- router ---------- */
-const routes = { dashboard: viewDashboard, money: viewMoney, bills: viewBills, search: viewSearch, vehicles: viewVehicles, properties: viewProperties, tenants: viewTenants, property: viewProperty, acte: viewActe, garantii: viewWarranties, lists: viewLists, chores: viewChores, watch: viewWatch, import: viewImport, alerts: viewAlerts, family: viewFamily, settings: viewSettings };
+const routes = { dashboard: viewDashboard, review: viewReview, money: viewMoney, bills: viewBills, search: viewSearch, vehicles: viewVehicles, properties: viewProperties, tenants: viewTenants, property: viewProperty, acte: viewActe, garantii: viewWarranties, lists: viewLists, chores: viewChores, watch: viewWatch, import: viewImport, alerts: viewAlerts, family: viewFamily, settings: viewSettings };
 // Page changes cross-fade where the browser supports it; plain render elsewhere.
 //
 // The cross-fade is decoration — the render is the point — so nothing about the transition may be
@@ -1135,7 +1149,7 @@ function runView(fn, el, seq = RENDER_SEQ) {
 // Thirteen flat links read as one long undifferentiated list; grouped, the sidebar answers "where
 // would that live?" at a glance. `null` starts a new group under the given heading.
 const NAV = [
-  ['dashboard', 'grid', 'Dashboard'], ['search', 'search', 'Search'],
+  ['dashboard', 'grid', 'Dashboard'], ['review', 'check', 'This week'], ['search', 'search', 'Search'],
   [null, 'Money'],
   ['money', 'wallet', 'Budget & expenses'], ['bills', 'receipt', 'Bills'], ['import', 'upload', 'Bank import'],
   [null, 'Property & things'],
@@ -3895,6 +3909,91 @@ async function viewActe(el) {
     try { await api(`/documents/${inp.dataset.attach}/attachment`, { method: 'POST', body: fd }); toast('Scan attached'); viewActe(el); }
     catch (err) { toast(err.message); }
   }));
+}
+
+/* ---------- the weekly two minutes ----------
+   Sixteen tabs is a lot to open when you only want to know whether anything needs you. This page
+   asks three questions in the order somebody actually wants them, puts the button next to the
+   thing it acts on, and ends with a way to say "done" — which is also what makes "since you last
+   looked" mean anything the next time. */
+async function viewReview(el) {
+  const r = await api('/review');
+  const cash = r.money || {};
+  const decideRow = (d) => {
+    const when = d.date ? `<span class="muted">${fdate(d.date)}</span>` : '';
+    // the server sends the symbol already, because a tenant charge can be in a currency that is
+    // not the household one and converting it needs a rate this app has no source for
+    const amount = d.amount != null
+      ? `<span class="amount">${Number(d.amount).toLocaleString('ro-RO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${esc(d.currency || cur())}</span>`
+      : '';
+    const act = {
+      confirm_charge: `<button class="btn small" data-confirm="${d.id}" data-prop="${d.property_id}">${tr('Confirm')}</button>`,
+      pay_bill: `<button class="btn small" data-paybill="${d.id}">${tr('Mark as paid')}</button>`,
+      todo: `<button class="btn small" data-todo="${d.id}">${tr('Done')}</button>`,
+    }[d.kind] || '';
+    return `<tr>
+      <td><b>${esc(d.label)}</b>${d.entity ? `<br><span class="muted">${esc(d.entity)}</span>` : ''}</td>
+      <td>${when}</td><td class="right">${amount}</td>
+      <td class="right">${canWrite() ? act : ''}</td></tr>`;
+  };
+  const changedLine = (c) => ({
+    reading_in: `${tr('Reading came in')}: ${esc(tr(c.label))}${c.value ? ` — ${esc(c.value)}` : ''}`,
+    maintenance_new: `${tr('Reported broken')}: ${esc(c.label)}`,
+    watch_new: `${tr('New notice')}: ${esc(c.label)}`,
+    bill_paid: `${tr('Bill paid')}: ${esc(c.label)}`,
+  }[c.kind] || esc(c.label));
+
+  el.innerHTML = `<div class="pagehead"><div><h1>${tr('This week')}</h1>
+      <p>${r.first_time ? tr('Everything below is from the last seven days. Once you tick this off, next time shows only what is new since then.')
+        : `${tr('What changed since')} ${fdate(String(r.since).slice(0, 10))}`}</p></div></div>
+
+    <section class="card"><h3 style="margin-top:0">1 · ${tr('What changed')}</h3>
+    ${r.changed.length
+      ? `<ul class="revlist">${r.changed.map((c) => `<li>${changedLine(c)}</li>`).join('')}</ul>`
+      : `<p class="muted" style="margin:0">${tr('Nothing happened while you were away.')}</p>`}</section>
+
+    <section class="card" style="margin-top:16px"><h3 style="margin-top:0">2 · ${tr('What needs you')}</h3>
+    ${r.decide.length
+      ? `<table class="cards"><tbody>${r.decide.map(decideRow).join('')}</tbody></table>`
+      : `<p class="muted" style="margin:0">${tr('Nothing is waiting on a decision.')}</p>`}
+    ${r.open_maintenance || r.meters_pending ? `<p class="muted" style="margin:10px 0 0">
+      ${r.open_maintenance ? `<a href="#properties">${tr('Repairs still open')}: ${r.open_maintenance}</a>` : ''}
+      ${r.open_maintenance && r.meters_pending ? ' · ' : ''}
+      ${r.meters_pending ? `<a href="#properties">${tr('Readings still missing')}: ${r.meters_pending}</a>` : ''}</p>` : ''}</section>
+
+    <section class="card" style="margin-top:16px"><h3 style="margin-top:0">3 · ${tr('Does the money hold')}</h3>
+    ${cash.needs_balance
+      ? `<p class="muted" style="margin:0">${tr('Enter what is in the account on the dashboard and this answers itself.')}</p>`
+      : `<p class="revmoney ${cash.low < 0 ? 'neg' : ''}" style="margin:0">
+          ${cash.low < cash.now
+            ? `${tr('Lowest point:')} <b>${money(cash.low)}</b> ${tr('on')} ${fdate(cash.low_date)}`
+            : tr('Nothing due drops the balance below where it is now.')}</p>
+        <p class="muted" style="margin:6px 0 0">${tr('now')} ${money(cash.now)}${cash.stale_days > 7
+          ? ` · <a href="#dashboard">${tr('the balance is old — update it')}</a>` : ''}</p>`}</section>
+
+    ${canWrite() ? `<div class="row" style="justify-content:center;margin-top:20px">
+      <button class="btn" id="revdone" style="min-width:220px">${tr('Done for this week')}</button></div>` : ''}`;
+
+  const reload = () => viewReview(el);
+  el.querySelectorAll('[data-confirm]').forEach((b) => (b.onclick = async () => {
+    try { await api(`/properties/${b.dataset.prop}/charges/${b.dataset.confirm}/confirm`, { method: 'POST' }); toast(tr('Payment confirmed'), 'success'); reload(); }
+    catch (err) { toast(err.message); }
+  }));
+  el.querySelectorAll('[data-paybill]').forEach((b) => (b.onclick = async () => {
+    try { await api(`/bills/${b.dataset.paybill}/pay`, { method: 'POST' }); toast(tr('Marked as paid'), 'success'); reload(); }
+    catch (err) { toast(err.message); }
+  }));
+  el.querySelectorAll('[data-todo]').forEach((b) => (b.onclick = async () => {
+    try { await api(`/todos/${b.dataset.todo}/toggle`, { method: 'POST' }); reload(); }
+    catch (err) { toast(err.message); }
+  }));
+  $('#revdone')?.addEventListener('click', async () => {
+    try {
+      await api('/review/done', { method: 'POST' });
+      toast(tr('See you next week'), 'success');
+      location.hash = '#dashboard';
+    } catch (err) { toast(err.message); }
+  });
 }
 
 /* ---------- balance forecast ----------

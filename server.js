@@ -2860,6 +2860,104 @@ app.get('/api/reminders', auth, (req, res) => {
   res.json(collectReminders(req.user.family_id, horizon, scope));
 });
 
+// ---------- the weekly two minutes ----------
+// This app has sixteen tabs. This is the one screen that makes the other fifteen optional: what
+// changed since you last looked, what only a person can decide, and whether the money holds.
+// Nothing here is new data — it is the same rows the rest of the app already has, asked in the
+// order somebody actually wants them.
+//
+// "Since you last looked" is measured from the button at the bottom of this screen, not from a
+// rolling seven days: three weeks away should show three weeks, and twice in one day should not
+// show the same thing twice.
+function reviewFor(user) {
+  const fid = user.family_id;
+  // read straight from the row rather than from req.user: the session payload is identity only,
+  // deliberately narrow, and widening it for one screen would mean every request carries this
+  const mark = db.prepare('SELECT last_review_at FROM users WHERE id = ?').get(user.id)?.last_review_at || null;
+  const since = mark || new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 19).replace('T', ' ');
+  const today = new Date().toISOString().slice(0, 10);
+  const changed = [];
+  const decide = [];
+
+  // --- what happened while you were not looking ---
+  const paidByTenant = db.prepare(`
+    SELECT c.id, c.title, c.amount, c.currency, c.property_id, p.name AS property_name, p.rent_currency
+    FROM tenant_charges c JOIN properties p ON p.id = c.property_id
+    WHERE c.family_id = ? AND c.status = 'pending' ORDER BY c.marked_paid_at DESC
+  `).all(fid);
+  for (const c of paidByTenant) {
+    decide.push({ kind: 'confirm_charge', id: c.id, property_id: c.property_id,
+      label: c.title, entity: c.property_name,
+      amount: c.amount, currency: curSymbol(c.currency || c.rent_currency || familyCurrencyCode(fid)) });
+  }
+
+  const readings = db.prepare(`
+    SELECT m.utility, m.reading, m.provided_at, p.name AS property_name
+    FROM meter_requests m JOIN properties p ON p.id = m.property_id
+    WHERE m.family_id = ? AND m.status = 'done' AND m.provided_at > ? ORDER BY m.provided_at DESC LIMIT 10
+  `).all(fid, since);
+  for (const r of readings) changed.push({ kind: 'reading_in', label: r.utility, entity: r.property_name, value: r.reading });
+
+  const reported = db.prepare(`
+    SELECT m.id, m.title, m.created_at, p.name AS property_name FROM maintenance_requests m
+    JOIN properties p ON p.id = m.property_id
+    WHERE m.family_id = ? AND m.created_at > ? ORDER BY m.id DESC LIMIT 10
+  `).all(fid, since);
+  for (const m of reported) changed.push({ kind: 'maintenance_new', label: m.title, entity: m.property_name });
+
+  const news = db.prepare(`
+    SELECT i.title, s.label FROM watched_items i JOIN watched_sites s ON s.id = i.site_id
+    WHERE i.family_id = ? AND i.announced = 1 AND i.seen_at > ? ORDER BY i.seen_at DESC LIMIT 10
+  `).all(fid, since);
+  for (const w of news) changed.push({ kind: 'watch_new', label: w.title, entity: w.label });
+
+  // bills carry no paid-at of their own; the payment rows do, and they are what "paid since" means
+  const billsPaid = db.prepare(`
+    SELECT b.name, p.amount FROM bill_payments p JOIN bills b ON b.id = p.bill_id
+    WHERE p.family_id = ? AND p.paid_at > ? ORDER BY p.paid_at DESC LIMIT 10
+  `).all(fid, since);
+  for (const b of billsPaid) changed.push({ kind: 'bill_paid', label: b.name, amount: b.amount });
+
+  // --- what only a person can settle ---
+  for (const b of db.prepare(
+    "SELECT id, name, amount, due_date FROM bills WHERE family_id = ? AND status = 'unpaid' AND amount > 0 AND due_date <= ? ORDER BY due_date",
+  ).all(fid, today)) {
+    decide.push({ kind: 'pay_bill', id: b.id, label: b.name, amount: b.amount, date: b.due_date });
+  }
+  for (const t of db.prepare(
+    'SELECT id, title, due_date FROM todos WHERE family_id = ? AND done = 0 AND due_date IS NOT NULL AND due_date <= ? ORDER BY due_date',
+  ).all(fid, today)) {
+    decide.push({ kind: 'todo', id: t.id, label: t.title, date: t.due_date });
+  }
+  const openMaint = db.prepare(
+    "SELECT COUNT(*) t FROM maintenance_requests WHERE family_id = ? AND status = 'open'",
+  ).get(fid).t;
+  const metersPending = db.prepare(
+    "SELECT COUNT(*) t FROM meter_requests WHERE family_id = ? AND status = 'pending'",
+  ).get(fid).t;
+
+  // --- and whether the money holds ---
+  const fam = db.prepare('SELECT * FROM families WHERE id = ?').get(fid);
+  const f = forecastFor(fam, 60);
+
+  return {
+    since,
+    first_time: !mark,
+    changed,
+    decide,
+    open_maintenance: openMaint,
+    meters_pending: metersPending,
+    money: f.needs_balance ? { needs_balance: true }
+      : { now: f.today, low: f.low.amount, low_date: f.low.date, stale_days: f.stale_days, currency: f.currency },
+  };
+}
+app.get('/api/review', auth, (req, res) => res.json(reviewFor(req.user)));
+app.post('/api/review/done', auth, (req, res) => {
+  const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
+  db.prepare('UPDATE users SET last_review_at = ? WHERE id = ?').run(now, req.user.id);
+  res.json({ last_review_at: now });
+});
+
 // ---------- Home Assistant feed ----------
 // A house dashboard cannot sign in, so this is a by-token feed like the calendar one. It is
 // deliberately one-way and read-only: Home Assistant learns numbers, Family Hub learns nothing
