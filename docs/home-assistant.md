@@ -27,6 +27,11 @@ Lipește blocul de mai jos, **cu adresa ta în loc de `PUNE-ADRESA-AICI`**.
 > chei duplicate și configurația nu va mai porni. Adaugă în schimb elementele de mai jos în lista
 > care există deja (sub `rest:` există o listă de resurse, deci mai adaugi un `- resource: …`).
 
+> Cele doua senzoare de sold folosesc `availability` in loc sa scrie `unknown` in `value_template`.
+> Un senzor cu `device_class: monetary` refuza o stare text: Home Assistant arunca eroare si nu mai
+> creeaza deloc entitatea. Cu `availability`, cand nu e introdus niciun sold in Family Hub senzorul
+> apare `unavailable`, ceea ce e adevarat si vizibil.
+
 ```yaml
 rest:
   - resource: "PUNE-ADRESA-AICI"
@@ -34,13 +39,15 @@ rest:
     timeout: 20
     sensor:
       - name: "Family Hub sold"
-        value_template: "{{ value_json.balance_now if value_json.balance_now is not none else 'unknown' }}"
+        availability: "{{ value_json.balance_now is not none }}"
+        value_template: "{{ value_json.balance_now }}"
         unit_of_measurement: "RON"
         device_class: monetary
         state_class: total
 
       - name: "Family Hub sold minim"
-        value_template: "{{ value_json.balance_low if value_json.balance_low is not none else 'unknown' }}"
+        availability: "{{ value_json.balance_low is not none }}"
+        value_template: "{{ value_json.balance_low }}"
         unit_of_measurement: "RON"
         device_class: monetary
         state_class: total
