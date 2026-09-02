@@ -100,6 +100,29 @@ CREATE TABLE IF NOT EXISTS warranties (
 );
 CREATE INDEX IF NOT EXISTS idx_warranties_family ON warranties(family_id, expires_at);
 
+-- Invoices forwarded by email, parsed into a DRAFT bill and never anything more. An amount read
+-- wrong and posted silently is worse than no feature at all, so nothing here becomes a real bill
+-- until a person taps accept. It is also the security boundary: a From header can be forged by
+-- anyone, so the provider allow-list is a convenience, not a defence — the defence is that the
+-- worst a forged mail can do is put a draft in front of somebody who then declines it.
+CREATE TABLE IF NOT EXISTS mail_drafts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  family_id INTEGER NOT NULL REFERENCES families(id) ON DELETE CASCADE,
+  from_addr TEXT,
+  subject TEXT,
+  provider TEXT,             -- matched supplier key: eon, orange, hidroelectrica...
+  category TEXT,             -- bill category the provider maps to
+  amount REAL,               -- NULL when the parser could not find one; the person types it
+  due_date TEXT,
+  invoice_no TEXT,
+  snippet TEXT,              -- a short extract, so a wrong reading can be checked against the source
+  attachment TEXT,           -- the PDF, when one came with it
+  received_at TEXT NOT NULL DEFAULT (datetime('now')),
+  status TEXT NOT NULL DEFAULT 'new' CHECK (status IN ('new','accepted','rejected')),
+  bill_id INTEGER REFERENCES bills(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_mail_drafts_family ON mail_drafts(family_id, status);
+
 CREATE TABLE IF NOT EXISTS expenses (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   family_id INTEGER NOT NULL REFERENCES families(id) ON DELETE CASCADE,
@@ -728,6 +751,8 @@ if (!famCols.includes('cal_token')) db.exec('ALTER TABLE families ADD COLUMN cal
 // the by-token feed a house dashboard reads; separate from the calendar one so revoking either
 // does not disturb the other
 if (!famCols.includes('ha_token')) db.exec('ALTER TABLE families ADD COLUMN ha_token TEXT');
+// the address invoices are forwarded to writes in by this token; see mail_drafts
+if (!famCols.includes('mail_token')) db.exec('ALTER TABLE families ADD COLUMN mail_token TEXT');
 
 const expCols = db.prepare('PRAGMA table_info(expenses)').all().map((c) => c.name);
 if (!expCols.includes('property_id')) db.exec('ALTER TABLE expenses ADD COLUMN property_id INTEGER REFERENCES properties(id) ON DELETE SET NULL');

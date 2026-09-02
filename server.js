@@ -2889,6 +2889,152 @@ app.get('/api/reminders', auth, (req, res) => {
   res.json(collectReminders(req.user.family_id, horizon, scope));
 });
 
+// Reading an invoice out of a supplier's mail lives in its own module: its input is written by
+// somebody else and changes without warning, so it is tested directly against real wording.
+const { parseInvoiceEmail, PROVIDERS } = require('./lib/invoice-parser');
+// the stored key is what the parser matched; the label is what a person calls it
+const providerLabel = (key) => (PROVIDERS.find((p) => p.key === key) || {}).label || key || null;
+
+// Enough MIME to read a forwarded invoice: headers, the readable part, and a PDF if one rode
+// along. Not a general mail parser — it handles what suppliers send, and when it cannot make
+// sense of a message the draft still appears with the subject and the attachment, for a person
+// to finish by hand. Failing into "somebody looks at it" is the whole design.
+function decodePart(body, encoding, charset) {
+  const enc = String(encoding || '').toLowerCase();
+  if (enc === 'base64') return Buffer.from(body.replace(/\s+/g, ''), 'base64');
+  if (enc === 'quoted-printable') {
+    const t = body.replace(/=\r?\n/g, '').replace(/=([0-9A-F]{2})/gi, (_, h) => String.fromCharCode(parseInt(h, 16)));
+    return Buffer.from(t, 'binary');
+  }
+  return Buffer.from(body, charset && /utf-?8/i.test(charset) ? 'utf8' : 'binary');
+}
+function splitHeaders(block) {
+  const h = {};
+  block.replace(/\r?\n[ \t]+/g, ' ').split(/\r?\n/).forEach((line) => {
+    const m = /^([A-Za-z-]+):\s*(.*)$/.exec(line);
+    if (m) h[m[1].toLowerCase()] = m[2];
+  });
+  return h;
+}
+const htmlToText = (html) => String(html)
+  .replace(/<(script|style)[\s\S]*?<\/\1>/gi, ' ')
+  .replace(/<br\s*\/?>|<\/p>|<\/div>|<\/tr>/gi, '\n')
+  .replace(/<[^>]+>/g, ' ')
+  .replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&lt;/gi, '<').replace(/&gt;/gi, '>')
+  .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)));
+
+function parseMime(raw) {
+  const src = String(raw);
+  const split = src.search(/\r?\n\r?\n/);
+  const head = splitHeaders(split < 0 ? src : src.slice(0, split));
+  const body = split < 0 ? '' : src.slice(split).replace(/^\r?\n\r?\n/, '');
+  const ctype = head['content-type'] || 'text/plain';
+  const bnd = /boundary="?([^";]+)"?/i.exec(ctype);
+  const out = { from: head.from || '', subject: head.subject || '', text: '', pdf: null, pdfName: null };
+
+  if (!bnd) {
+    const decoded = decodePart(body, head['content-transfer-encoding'], /charset="?([^";]+)/i.exec(ctype)?.[1]).toString('utf8');
+    out.text = /html/i.test(ctype) ? htmlToText(decoded) : decoded;
+    return out;
+  }
+  const parts = body.split(new RegExp('--' + bnd[1].replace(/[.*+?^`${}()|[\\]\\\\]/g, '\\\\// ---------- the weekly two minutes ----------')));
+  let html = null;
+  for (const part of parts) {
+    const ps = part.search(/\r?\n\r?\n/);
+    if (ps < 0) continue;
+    const ph = splitHeaders(part.slice(0, ps));
+    const pb = part.slice(ps).replace(/^\r?\n\r?\n/, '');
+    const pct = ph['content-type'] || '';
+    const disp = ph['content-disposition'] || '';
+    if (/application\/pdf/i.test(pct) || /\.pdf/i.test(disp)) {
+      out.pdf = decodePart(pb, ph['content-transfer-encoding'], null);
+      out.pdfName = (/filename="?([^";]+)"?/i.exec(disp) || /name="?([^";]+)"?/i.exec(pct) || [])[1] || 'factura.pdf';
+      continue;
+    }
+    if (/nested|multipart/i.test(pct)) continue;
+    const txt = decodePart(pb, ph['content-transfer-encoding'], /charset="?([^";]+)/i.exec(pct)?.[1]).toString('utf8');
+    if (/text\/plain/i.test(pct) && !out.text) out.text = txt;
+    else if (/text\/html/i.test(pct) && !html) html = txt;
+  }
+  if (!out.text && html) out.text = htmlToText(html);
+  return out;
+}
+
+// The address invoices are forwarded to posts here. It is reachable without a session — a mail
+// pipe has none — so it carries its own token, and the only thing it can create is a draft.
+app.get('/api/mail/info', auth, (req, res) => {
+  const fam = db.prepare('SELECT mail_token FROM families WHERE id = ?').get(req.user.family_id);
+  const base = `${req.protocol}://${req.get('host')}`;
+  res.json({ url: fam?.mail_token ? `${base}/api/mail/inbound/${fam.mail_token}` : null });
+});
+app.post('/api/mail/token', auth, canWrite, (req, res) => {
+  const token = crypto.randomBytes(20).toString('hex');
+  db.prepare('UPDATE families SET mail_token = ? WHERE id = ?').run(token, req.user.family_id);
+  const base = `${req.protocol}://${req.get('host')}`;
+  res.json({ url: `${base}/api/mail/inbound/${token}` });
+});
+app.post('/api/mail/inbound/:token', express.text({ type: '*/*', limit: '12mb' }), (req, res) => {
+  const fam = db.prepare('SELECT * FROM families WHERE mail_token = ?').get(req.params.token);
+  if (!fam) return res.status(404).json({ error: 'Not found' });
+  const raw = typeof req.body === 'string' ? req.body : '';
+  if (!raw.trim()) return res.status(400).json({ error: 'Empty message' });
+  const mail = parseMime(raw);
+  const parsed = parseInvoiceEmail(mail);
+
+  let attachment = null;
+  if (mail.pdf && mail.pdf.length && mail.pdf.length <= 10 * 1024 * 1024) {
+    attachment = crypto.randomBytes(8).toString('hex') + '.pdf';
+    try { fs.writeFileSync(path.join(UPLOAD_DIR, attachment), mail.pdf); } catch { attachment = null; }
+  }
+  const info = db.prepare(`INSERT INTO mail_drafts (family_id, from_addr, subject, provider, category, amount, due_date, invoice_no, snippet, attachment) VALUES (?,?,?,?,?,?,?,?,?,?)`)
+    .run(fam.id, str(mail.from).slice(0, 200), str(mail.subject).slice(0, 200), parsed.provider, parsed.category,
+      parsed.amount, parsed.due_date, parsed.invoice_no, parsed.snippet, attachment);
+
+  generateNotifications(fam.id);
+  res.json({ ok: true, id: info.lastInsertRowid, provider: parsed.provider, amount: parsed.amount, due_date: parsed.due_date });
+});
+
+app.get('/api/mail-drafts', auth, (req, res) => {
+  res.json(db.prepare(
+    "SELECT * FROM mail_drafts WHERE family_id = ? AND status = 'new' ORDER BY received_at DESC, id DESC",
+  ).all(req.user.family_id));
+});
+app.get('/api/mail-drafts/:id/attachment', auth, (req, res) => {
+  const d = db.prepare('SELECT attachment FROM mail_drafts WHERE id = ? AND family_id = ?').get(req.params.id, req.user.family_id);
+  if (!d || !d.attachment) return res.status(404).json({ error: 'No attachment' });
+  res.sendFile(path.join(UPLOAD_DIR, d.attachment));
+});
+// Accepting is where a suggestion becomes money the household owes, so the person can correct
+// anything the parser got wrong on the way through — that is the point of the step existing.
+app.post('/api/mail-drafts/:id/accept', auth, canWrite, (req, res) => {
+  const d = db.prepare("SELECT * FROM mail_drafts WHERE id = ? AND family_id = ? AND status = 'new'").get(req.params.id, req.user.family_id);
+  if (!d) return res.status(404).json({ error: 'Not found' });
+  const b = req.body || {};
+  const amount = b.amount != null ? Number(b.amount) : d.amount;
+  const due = isDate(b.due_date) ? b.due_date : d.due_date;
+  if (!(amount > 0)) return res.status(400).json({ error: 'Amount must be greater than 0' });
+  if (!isDate(due)) return res.status(400).json({ error: 'Date must be YYYY-MM-DD' });
+  const name = str(b.name) || providerLabel(d.provider) || str(d.subject).slice(0, 60) || 'Factură';
+  const category = BILL_CAT_MAP[b.category] ? b.category : (d.category || 'other');
+  const bill = db.transaction(() => {
+    const ins = db.prepare('INSERT INTO bills (family_id, name, provider, category, amount, due_date, attachment, notes) VALUES (?,?,?,?,?,?,?,?)')
+      .run(req.user.family_id, name, d.provider, category, amount, due, d.attachment,
+        d.invoice_no ? `Factura ${d.invoice_no}` : null);
+    db.prepare("UPDATE mail_drafts SET status = 'accepted', bill_id = ? WHERE id = ?").run(ins.lastInsertRowid, d.id);
+    return ins.lastInsertRowid;
+  })();
+  generateNotifications(req.user.family_id);
+  res.json(db.prepare('SELECT * FROM bills WHERE id = ?').get(bill));
+});
+app.post('/api/mail-drafts/:id/reject', auth, canWrite, (req, res) => {
+  const d = db.prepare("SELECT * FROM mail_drafts WHERE id = ? AND family_id = ? AND status = 'new'").get(req.params.id, req.user.family_id);
+  if (!d) return res.status(404).json({ error: 'Not found' });
+  if (d.attachment) { try { fs.unlinkSync(path.join(UPLOAD_DIR, d.attachment)); } catch {} }
+  db.prepare("UPDATE mail_drafts SET status = 'rejected', attachment = NULL WHERE id = ?").run(d.id);
+  generateNotifications(req.user.family_id);
+  res.json({ ok: true });
+});
+
 // ---------- the weekly two minutes ----------
 // This app has sixteen tabs. This is the one screen that makes the other fifteen optional: what
 // changed since you last looked, what only a person can decide, and whether the money holds.
@@ -3569,7 +3715,7 @@ function inQuietHours(qs, qe, h = bucharestHour()) {
 const ALERT_PAGE = {
   rca: '/#vehicles', casco: '/#vehicles', vignette: '/#vehicles', itp: '/#vehicles', road_tax: '/#vehicles',
   property_insurance: '/#properties', tenant_unpaid: '/#properties', maintenance: '/#properties', meter_pending: '/#properties',
-  document: '/#acte', birthday: '/#family', watch: '/#watch', warranty: '/#garantii',
+  document: '/#acte', birthday: '/#family', watch: '/#watch', warranty: '/#garantii', billdraft: '/#bills',
 };
 function alertUrl(key) { return ALERT_PAGE[String(key).split(':')[0]] || '/#alerts'; }
 // the thing an alert is about, without the threshold: "rca:3:2026-08-16:14" -> "rca:3:2026-08-16".
@@ -3592,6 +3738,19 @@ function alertText(lang, p) {
     return {
       title: ro ? `Anunț nou: ${p.title}` : `New notice: ${p.title}`,
       body: p.source || (ro ? "pagină urmărită" : "watched page"),
+    };
+  }
+  if (p.t === 'draft') {
+    // The question this answers before the app is even opened is "how much is it". So the amount
+    // is in the title, and when the parser could not find one that is said outright rather than
+    // dressed up as a number.
+    const money = p.amount ? p.amount : (ro ? 'sumă necitită' : 'amount not read');
+    return {
+      title: ro ? `Factură nouă${p.provider ? ' de la ' + p.provider : ''}: ${money}`
+        : `New invoice${p.provider ? ' from ' + p.provider : ''}: ${money}`,
+      body: ro
+        ? `${p.due ? 'scadentă ' + p.due + ' — ' : ''}confirmă în aplicație`
+        : `${p.due ? 'due ' + p.due + ' — ' : ''}confirm it in the app`,
     };
   }
   if (p.t === 'maint') {
@@ -3660,6 +3819,18 @@ function generateNotifications(fid) {
         break; // only the tightest threshold crossed right now
       }
     }
+  }
+  // Invoices that arrived by email and are waiting for somebody to say yes. push = true: this is
+  // exactly the kind of thing worth a phone buzz, because it has a due date attached to it.
+  for (const d of db.prepare(
+    "SELECT * FROM mail_drafts WHERE family_id = ? AND status = 'new' ORDER BY id",
+  ).all(fid)) {
+    add(`billdraft:${d.id}:new`, {
+      t: 'draft',
+      provider: providerLabel(d.provider),
+      amount: d.amount != null ? `${Number(d.amount).toFixed(2)} ${cur}` : null,
+      due: d.due_date ? mailDate(d.due_date) : null,
+    }, null);
   }
   // maintenance the tenant reported and nobody has fixed yet. Not a dated deadline, so it is not
   // routed through collectReminders — on the dashboard "3d overdue" would misread; it is open, not late.

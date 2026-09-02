@@ -295,6 +295,14 @@ const RO = {
   'Enter what is in the account on the dashboard and this answers itself.': 'Scrie pe dashboard cât ai în cont și răspunsul apare singur.',
   'Everything below is from the last seven days. Once you tick this off, next time shows only what is new since then.':
     'Tot ce e mai jos e din ultimele șapte zile. După ce bifezi, data viitoare vezi doar ce e nou de atunci.',
+  // invoices forwarded by email
+  'Invoices by email': 'Facturi pe email', 'Invoices to confirm': 'Facturi de confirmat',
+  'Add as bill': 'Adaugă ca factură', 'Not a bill': 'Nu e factură', 'Added to bills': 'Adăugată la facturi',
+  'Invoice PDF': 'PDF factură', 'What the email said': 'Ce scria în email', 'not read — type it': 'necitită — scrie-o',
+  'Arrived by email. Nothing is counted until you accept it — check the amount first.':
+    'Au venit pe email. Nimic nu se numără până nu accepți — verifică întâi suma.',
+  'Forward an invoice to this address and it lands in Bills as a draft, with the amount read out of it. Nothing is counted until you accept it.':
+    'Trimite o factură pe adresa asta și apare la Facturi ca ciornă, cu suma citită din ea. Nimic nu se numără până nu o accepți.',
   // house dashboard feed
   'House dashboard': 'Panou în casă', 'New address': 'Adresă nouă', 'Create the address': 'Creează adresa',
   'Address ready': 'Adresă gata', 'Copy': 'Copiază',
@@ -3106,11 +3114,44 @@ function subsCard(bills, recurLabel) {
     </details>
   </div>`;
 }
+/* Invoices that arrived by email and are waiting for a yes.
+   Every field stays editable here: the parser reads a supplier's wording, and wording changes.
+   Showing what it read, next to a line from the mail it read it from, is what makes a wrong
+   reading correctable instead of just wrong. */
+function draftsCard(drafts) {
+  if (!drafts || !drafts.length) return '';
+  return `<section class="card draftcard" style="margin-bottom:16px">
+    <div class="row" style="justify-content:space-between;align-items:baseline;gap:10px">
+      <h3 style="margin:0">${tr('Invoices to confirm')}</h3>
+      <span class="badge unpaid">${drafts.length}</span></div>
+    <p class="muted" style="margin:6px 0 12px">${tr('Arrived by email. Nothing is counted until you accept it — check the amount first.')}</p>
+    ${drafts.map((d) => `<div class="draftrow" data-draft="${d.id}">
+      <div class="row" style="justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:baseline">
+        <b>${esc(d.provider ? PROVIDER_NAMES[d.provider] || d.provider : (d.subject || tr('Invoice')))}</b>
+        ${d.attachment ? `<a class="btn ghost small" href="/api/mail-drafts/${d.id}/attachment" target="_blank">${tr('Invoice PDF')}</a>` : ''}
+      </div>
+      <div class="formgrid" style="margin-top:8px">
+        <div><label>${tr('Amount')} (${cur()})</label>
+          <input type="number" step="0.01" min="0.01" data-amount value="${d.amount ?? ''}"
+            placeholder="${d.amount == null ? tr('not read — type it') : ''}" ${d.amount == null ? 'class="needs"' : ''}></div>
+        <div><label>${tr('Due')}</label><input type="date" data-due value="${d.due_date || ''}"></div>
+        <div><label>${tr('Category')}</label><select data-cat>${Object.entries(BILL_CATS).map(([k, v]) =>
+          `<option value="${k}" ${k === d.category ? 'selected' : ''}>${v}</option>`).join('')}</select></div>
+      </div>
+      <div class="row" style="gap:8px;margin-top:8px;align-items:center;flex-wrap:wrap">
+        <button class="btn small" data-accept="${d.id}">${tr('Add as bill')}</button>
+        <button class="btn ghost small" data-reject="${d.id}">${tr('Not a bill')}</button>
+        ${d.snippet ? `<details class="draftsrc"><summary>${tr('What the email said')}</summary>
+          <p class="muted">${esc(String(d.snippet).slice(0, 300))}…</p></details>` : ''}
+      </div></div>`).join('')}</section>`;
+}
+const PROVIDER_NAMES = { eon: 'E.ON', orange: 'Orange', hidroelectrica: 'Hidroelectrica', digi: 'Digi' };
 async function viewBills(el) {
-  const [bills, members, properties, vehicles] = await Promise.all([api('/bills'), api('/family/members'), api('/properties'), api('/vehicles')]);
+  const [bills, members, properties, vehicles, drafts] = await Promise.all([api('/bills'), api('/family/members'), api('/properties'), api('/vehicles'), api('/mail-drafts').catch(() => [])]);
   const t = today();
   const recurLabel = (b) => (RECUR_OPTS.find(([v]) => v === recurValue(b)) || [])[1];
   el.innerHTML = `<div class="pagehead"><div><h1>Bills & invoices</h1><p>Electricity, gas, internet, water, taxes — with due dates, owner, attachments and payment history. Auto-paid subscriptions are marked paid automatically once due.</p></div></div>
+    ${draftsCard(drafts)}
     ${subsCard(bills, recurLabel)}
     ${canWrite() ? addBox('Add bill', `<form id="billform" class="formgrid">
       ${billFormFields(members, properties, vehicles)}
@@ -3144,6 +3185,23 @@ async function viewBills(el) {
       : `<div class="empty"><b>No bills yet</b>Add recurring utilities once — Family Hub rolls the due date forward every time you mark them paid.</div>`}
     </div>`;
   const billsById = Object.fromEntries(bills.map((b) => [b.id, b]));
+  el.querySelectorAll('[data-accept]').forEach((b) => (b.onclick = async () => {
+    const row = b.closest('[data-draft]');
+    const body = {
+      amount: row.querySelector('[data-amount]').value,
+      due_date: row.querySelector('[data-due]').value,
+      category: row.querySelector('[data-cat]').value,
+    };
+    try {
+      await api(`/mail-drafts/${b.dataset.accept}/accept`, { method: 'POST', body });
+      toast(tr('Added to bills'), 'success'); viewBills(el);
+    } catch (err) { toast(err.message); }
+  }));
+  el.querySelectorAll('[data-reject]').forEach((b) => (b.onclick = async () => {
+    if (!confirm('Discard this? The email and its PDF are deleted.')) return;
+    try { await api(`/mail-drafts/${b.dataset.reject}/reject`, { method: 'POST' }); viewBills(el); }
+    catch (err) { toast(err.message); }
+  }));
   $('#billform')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     try { await api('/bills', { method: 'POST', body: unpackBillBody(Object.fromEntries(new FormData(e.target))) }); toast('Bill added'); viewBills(el); }
@@ -5105,7 +5163,7 @@ async function viewFamily(el) {
 
 /* ---------- settings: profile picture, theme, name ---------- */
 async function viewSettings(el) {
-  const [members, haInfo] = await Promise.all([api('/family/members'), api('/ha/info').catch(() => ({ url: null }))]);
+  const [members, haInfo, mailInfo] = await Promise.all([api('/family/members'), api('/ha/info').catch(() => ({ url: null })), api('/mail/info').catch(() => ({ url: null }))]);
   const kids = members.filter((m) => m.role === 'child');
   const canEditKids = ME.role === 'admin' || ME.role === 'adult';
   el.innerHTML = `<div class="pagehead"><div><h1>Settings</h1><p>Your profile, theme and family pictures.</p></div></div>
@@ -5154,7 +5212,15 @@ async function viewSettings(el) {
         <div class="row" style="justify-content:center;margin-top:4px">
           <label class="btn ghost small" style="display:inline-block">Upload<input type="file" data-avatar="${k.id}" accept="image/*" hidden></label>
           ${k.avatar ? `<button class="btn danger small" data-avadel="${k.id}">✕</button>` : ''}</div></div>`).join('')}</div></div>` : ''}
-    ${ME.role === 'admin' ? `<div class="card" style="margin-top:16px"><h3>${tr('House dashboard')}</h3>
+    ${ME.role === 'admin' ? `<div class="card" style="margin-top:16px"><h3>${tr('Invoices by email')}</h3>
+      <p class="muted" style="margin-top:0">${tr('Forward an invoice to this address and it lands in Bills as a draft, with the amount read out of it. Nothing is counted until you accept it.')}</p>
+      ${mailInfo.url
+        ? `<div class="row" style="gap:8px;flex-wrap:wrap;align-items:center">
+            <code class="tokenline">${esc(mailInfo.url)}</code>
+            <button class="btn ghost small" data-copy="${esc(mailInfo.url)}">${tr('Copy')}</button>
+            <button class="btn ghost small" id="mailrotate">${tr('New address')}</button></div>`
+        : `<button class="btn small" id="mailgen">${tr('Create the address')}</button>`}</div>
+    <div class="card" style="margin-top:16px"><h3>${tr('House dashboard')}</h3>
       <p class="muted" style="margin-top:0">${tr('A read-only address Home Assistant can read to show these numbers on a wall panel. It gives out figures only — no names, no notes, no addresses — and it cannot change anything here.')}</p>
       ${haInfo.url
         ? `<div class="row" style="gap:8px;flex-wrap:wrap;align-items:center">
@@ -5173,6 +5239,14 @@ async function viewSettings(el) {
     try { const u = await api('/settings', { method: 'POST', body: { lang: b.dataset.lang } }); ME = { ...ME, ...u }; applyLang(); render(); }
     catch (err) { toast(err.message); }
   }));
+  const mailGen = async () => {
+    try { await api('/mail/token', { method: 'POST' }); toast(tr('Address ready'), 'success'); viewSettings(el); }
+    catch (err) { toast(err.message); }
+  };
+  $('#mailgen')?.addEventListener('click', mailGen);
+  $('#mailrotate')?.addEventListener('click', async () => {
+    if (confirm('Generate a new address? The old one stops working.')) await mailGen();
+  });
   const haGen = async () => {
     try { await api('/ha/token', { method: 'POST' }); toast(tr('Address ready'), 'success'); viewSettings(el); }
     catch (err) { toast(err.message); }
