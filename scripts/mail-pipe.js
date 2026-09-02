@@ -27,7 +27,9 @@ const os = require('node:os');
 const LOG = process.env.INBOUND_LOG || require('node:path').join(os.homedir() || '/tmp', 'mail-pipe.log');
 
 const log = (msg) => {
-  try { fs.appendFileSync(LOG, `${new Date().toISOString()} ${msg}\n`); } catch { /* nothing to do */ }
+  const line = `${new Date().toISOString()} ${msg}\n`;
+  try { fs.appendFileSync(LOG, line); }
+  catch { try { process.stderr.write(line); } catch { /* nowhere left to say it */ } }
 };
 
 if (!URL_STR) { log(`no inbound URL: set INBOUND_URL or write it into ${CONF}`); process.exit(0); }
