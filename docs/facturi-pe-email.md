@@ -43,35 +43,39 @@ https://lafamiliapop.ro/api/mail/inbound/<token>
 
 **Adresă nouă** îl schimbă și îl scoate imediat din uz pe cel vechi.
 
-### 2. Pune scriptul pe server
+### 2. Pune adresa pe server, în afara repo-ului
 
-Există în repo: `scripts/mail-pipe.js`. După `git pull` e deja acolo. Fă-l executabil:
+Scriptul citește adresa dintr-un fișier care **nu** e în git — altfel următorul `git pull` ar
+suprascrie-o, iar tokenul ar rămâne în istoricul repository-ului.
 
 ```bash
+echo 'https://lafamiliapop.ro/api/mail/inbound/<token>' > ~/.family-hub-mail
+chmod 600 ~/.family-hub-mail
 chmod +x ~/repos/family-hub/scripts/mail-pipe.js
 ```
 
-### 3. Fă adresa de email și legătura în cPanel
+### 3. Fă legătura în cPanel
 
-cPanel → **Email Accounts** → creezi `facturi@lafamiliapop.ro`.
-
-Apoi cPanel → **Forwarders** → *Add Forwarder* → adresa `facturi@lafamiliapop.ro` →
-**Pipe to a Program**, iar în câmp:
+cPanel → **Forwarders** → *Add Forwarder* → adresa `facturi@lafamiliapop.ro` → **Pipe to a
+Program**, iar în câmp calea relativă la home:
 
 ```
 repos/family-hub/scripts/mail-pipe.js
 ```
 
-Calea e relativă la home-ul contului. Scriptul citește adresa din variabila `INBOUND_URL`, așa că
-mai simplu e să o scrii direct în script, pe linia cu `process.env.INBOUND_URL || ''`:
+**Nu ai nevoie de cont de email** pentru asta — un forwarder cu pipe funcționează pe o adresă fără
+căsuță, deci nu creezi nicio parolă nouă.
 
-```js
-const URL_STR = process.env.INBOUND_URL || 'https://lafamiliapop.ro/api/mail/inbound/<token>';
-```
-
-> Dacă hostingul nu acceptă pipe-uri, alternativa e un cron cu IMAP — dar aia cere o parolă de email
-> stocată pe server, și nu o recomand.
-
+> **Capcana cu `node`.** Prima linie din script e `#!/usr/bin/env node`. Exim rulează pipe-ul cu un
+> PATH sărac, în care `node` s-ar putea să nu existe — și atunci nu se întâmplă nimic, tăcut.
+> Află calea absolută și pune-o în locul liniei, dacă e cazul:
+>
+> ```bash
+> which node       # ex.: /opt/alt/alt-nodejs20/root/usr/bin/node
+> ```
+>
+> Apoi prima linie devine `#!/opt/alt/alt-nodejs20/root/usr/bin/node`. Asta e singura modificare
+> care merită făcută în fișierul urmărit de git — și e nevoie de refăcut după un pull.
 ### 4. Probează
 
 Trimite orice email pe `facturi@lafamiliapop.ro`. În câteva secunde:

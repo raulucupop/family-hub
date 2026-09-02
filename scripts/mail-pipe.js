@@ -11,15 +11,22 @@ const https = require('node:https');
 const http = require('node:http');
 const fs = require('node:fs');
 
-// Set by the forwarder line in cPanel:  INBOUND_URL=https://lafamiliapop.ro/api/mail/inbound/<token>
-const URL_STR = process.env.INBOUND_URL || '';
+// The address comes from a file OUTSIDE the repo, not from a constant in here: this script is
+// tracked by git, and a token pasted into it would be overwritten by the next pull (and would sit
+// in the repository history). ~/.family-hub-mail holds one line — the inbound URL.
+const CONF = process.env.INBOUND_CONF || (process.env.HOME || '') + '/.family-hub-mail';
+function readUrl() {
+  if (process.env.INBOUND_URL) return process.env.INBOUND_URL.trim();
+  try { return fs.readFileSync(CONF, 'utf8').trim(); } catch { return ''; }
+}
+const URL_STR = readUrl();
 const LOG = process.env.INBOUND_LOG || '/home/lafamiliapop/mail-pipe.log';
 
 const log = (msg) => {
   try { fs.appendFileSync(LOG, `${new Date().toISOString()} ${msg}\n`); } catch { /* nothing to do */ }
 };
 
-if (!URL_STR) { log('INBOUND_URL is not set — message dropped'); process.exit(0); }
+if (!URL_STR) { log(`no inbound URL: set INBOUND_URL or write it into ${CONF}`); process.exit(0); }
 
 const chunks = [];
 process.stdin.on('data', (c) => chunks.push(c));
