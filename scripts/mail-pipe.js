@@ -20,7 +20,11 @@ function readUrl() {
   try { return fs.readFileSync(CONF, 'utf8').trim(); } catch { return ''; }
 }
 const URL_STR = readUrl();
-const LOG = process.env.INBOUND_LOG || '/home/lafamiliapop/mail-pipe.log';
+// The log path is derived, never hardcoded: a wrong absolute path made every write throw into the
+// catch below, so the script looked like it had run and left no trace at all — which is the worst
+// possible failure for something whose only debugging surface is this file.
+const os = require('node:os');
+const LOG = process.env.INBOUND_LOG || require('node:path').join(os.homedir() || '/tmp', 'mail-pipe.log');
 
 const log = (msg) => {
   try { fs.appendFileSync(LOG, `${new Date().toISOString()} ${msg}\n`); } catch { /* nothing to do */ }
