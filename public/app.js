@@ -3142,7 +3142,7 @@ function draftsCard(drafts) {
         <button class="btn small" data-accept="${d.id}">${tr('Add as bill')}</button>
         <button class="btn ghost small" data-reject="${d.id}">${tr('Not a bill')}</button>
         ${d.snippet ? `<details class="draftsrc"><summary>${tr('What the email said')}</summary>
-          <p class="muted">${esc(String(d.snippet).slice(0, 300))}…</p></details>` : ''}
+          <p class="muted">${esc(String(d.snippet))}</p></details>` : ''}
       </div></div>`).join('')}</section>`;
 }
 const PROVIDER_NAMES = { eon: 'E.ON', orange: 'Orange', hidroelectrica: 'Hidroelectrica', digi: 'Digi' };

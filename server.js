@@ -2960,6 +2960,11 @@ function parseMime(raw) {
   return out;
 }
 
+// Two limits keep a forwarding rule that is wider than intended from filling the disk: how many
+// drafts may wait at once, and how long an ignored one is kept before it is swept.
+const MAX_PENDING_DRAFTS = Number(process.env.MAX_PENDING_DRAFTS) || 100;
+const DRAFT_KEEP_DAYS = Number(process.env.DRAFT_KEEP_DAYS) || 90;
+
 // The address invoices are forwarded to posts here. It is reachable without a session — a mail
 // pipe has none — so it carries its own token, and the only thing it can create is a draft.
 app.get('/api/mail/info', auth, (req, res) => {
@@ -2978,6 +2983,14 @@ app.post('/api/mail/inbound/:token', express.text({ type: '*/*', limit: '12mb' }
   if (!fam) return res.status(404).json({ error: 'Not found' });
   const raw = typeof req.body === 'string' ? req.body : '';
   if (!raw.trim()) return res.status(400).json({ error: 'Empty message' });
+  // A forwarding rule that is wider than intended — or a sender nobody meant to subscribe to —
+  // turns this endpoint into a way to fill a shared disk one PDF at a time. Past this many drafts
+  // waiting for a person, stop storing: whoever is meant to read them plainly is not reading them.
+  // Still a 200, because anything else makes Exim bounce the mail back to the supplier.
+  const pending = db.prepare("SELECT COUNT(*) AS n FROM mail_drafts WHERE family_id = ? AND status = 'new'").get(fam.id).n;
+  if (pending >= MAX_PENDING_DRAFTS) {
+    return res.json({ ok: false, skipped: 'too many drafts waiting', pending });
+  }
   const mail = parseMime(raw);
   const parsed = parseInvoiceEmail(mail);
 
@@ -4550,8 +4563,12 @@ async function runWeeklyBackup() {
 // leaves its scans behind forever. Sweep anything no row references any more.
 function sweepOrphanUploads() {
   const referenced = new Set();
+  // mail_drafts belongs in this list: its PDF is often the only place the amount is written, and
+  // leaving the table out meant a draft nobody had got to within a day lost the very attachment a
+  // person would open it for.
   for (const [table, col] of [['users', 'avatar'], ['documents', 'attachment'], ['bills', 'attachment'],
-    ['tenant_charges', 'attachment'], ['meter_requests', 'photo'], ['maintenance_requests', 'photo']]) {
+    ['tenant_charges', 'attachment'], ['meter_requests', 'photo'], ['maintenance_requests', 'photo'],
+    ['mail_drafts', 'attachment']]) {
     for (const r of db.prepare(`SELECT ${col} AS f FROM ${table} WHERE ${col} IS NOT NULL AND ${col} != ''`).all()) referenced.add(r.f);
   }
   let removed = 0;
@@ -4570,6 +4587,18 @@ function sweepOrphanUploads() {
   return removed;
 }
 
+// Drafts are a queue, not an archive. An accepted one has already become a bill and a rejected one
+// was refused on purpose, so neither needs keeping; one still marked 'new' after three months is
+// not going to be read now. Their PDFs are left to sweepOrphanUploads, which runs just after this
+// and deletes what no row points at any more.
+function sweepMailDrafts() {
+  const gone = db.prepare(
+    `DELETE FROM mail_drafts WHERE received_at < datetime('now', ?)`,
+  ).run(`-${DRAFT_KEEP_DAYS} days`).changes;
+  if (gone) console.log(`swept ${gone} mail draft(s) older than ${DRAFT_KEEP_DAYS} days`);
+  return gone;
+}
+
 // runs shortly after every start (visits wake the app) and every 6 hours while it stays alive;
 // a cron hitting /api/cron/email-reminders guarantees a daily check even with zero visits
 async function emailReminderTick() {
@@ -4583,6 +4612,8 @@ async function emailReminderTick() {
   // belt and braces: if the hourly /api/cron/watch was never wired up, at least check once a day
   try { await runWatchers('daily'); } catch (err) { console.error('page watch:', err.message); }
   try { await runWeeklyBackup(); } catch (err) { console.error('weekly backup:', err.message); }
+  // before the orphan sweep, so the PDFs it frees are collected in the same pass
+  try { sweepMailDrafts(); } catch (err) { console.error('draft sweep:', err.message); }
   try { sweepOrphanUploads(); } catch (err) { console.error('orphan sweep:', err.message); }
   // spent reset links have no further use — stop the table growing a row per request
   try { db.prepare("DELETE FROM password_resets WHERE used = 1 OR expires_at < datetime('now')").run(); } catch (err) { console.error('reset cleanup:', err.message); }

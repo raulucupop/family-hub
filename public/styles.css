@@ -1152,3 +1152,7 @@ body.seat-dragging { cursor: grabbing; user-select: none; -webkit-user-select: n
 
 .tokenline { font-size: 12px; word-break: break-all; background: var(--surface-2, #eff2f1); padding: 6px 8px; border-radius: 6px; max-width: 100%; }
 :root[data-theme="dark"] .cardbadge { background: #2f2a40; color: #cdc2ee; border-color: #443a5e; }
+
+/* The stored excerpt is long enough to answer a question by reading it, which on a phone is a wall
+   of text. Cap the height and let it scroll inside its own box instead of pushing the buttons off. */
+.draftsrc p { max-height: 40vh; overflow-y: auto; overflow-wrap: anywhere; margin-top: 6px; }
