@@ -101,8 +101,27 @@ Problemele de livrare se scriu în jurnal, nu se întorc la furnizor.
 
 Manual merge din prima: apeși *Forward* pe email. Dacă vrei automat:
 
-- **Gmail** → Settings → Forwarding → adaugi `facturi@lafamiliapop.ro`, apoi confirmi codul primit
-  acolo, apoi un filtru `from:(orange.ro)` → *Forward to*.
-- **Proton** → Settings → Filters → regulă după expeditor, cu acțiune *Forward*.
+**Proton — filtrele obișnuite nu pot redirecta.** În interfața de filtre acțiunile sunt doar
+etichetare, mutare, marcare și auto-reply; nu există *Forward*. Se face din Settings → Filters →
+**Add sieve filter**:
+
+```
+require ["envelope"];
+if anyof (address :domain :contains "from" "eon-romania.ro",
+          address :domain :contains "from" "orange.ro",
+          address :domain :contains "from" "hidroelectrica.ro")
+{
+  redirect "facturi@lafamiliapop.ro";
+  keep;
+}
+```
+
+> **`keep;` nu e opțional.** În Sieve, `redirect` anulează păstrarea implicită a mesajului
+> (RFC 5228, §2.10.2). Fără linia asta factura pleacă spre Family Hub și **dispare din inboxul
+> Proton** — exact emailul de care ai nevoie când ai o dispută cu furnizorul.
+
+**Gmail** → Settings → Forwarding → adaugi `facturi@lafamiliapop.ro`, confirmi codul primit acolo,
+apoi un filtru `from:(orange.ro)` → *Forward to*. Gmail oferă și o redirectare globală, care trimite
+**tot** ce primești în Family Hub, adică o ciornă per email — nu e ce vrei.
 
 Confirmarea de la Gmail cere un click în emailul de verificare — ăla ajunge în ciorne, nu în facturi.
