@@ -316,6 +316,14 @@ const RO = {
   'Nothing due drops the balance below where it is now.': 'Nimic din ce urmează nu duce soldul sub cât e acum.',
   'Type in what is in the account and the app works out the rest — bills, rates, salary, rent.':
     'Scrie cât ai în cont și aplicația calculează restul — facturi, rate, salariu, chirie.',
+  'That is what goes out. Add what is in the account and the app also tells you what is left, day by day.':
+    'Ăsta e ce iese. Adaugă și cât ai în cont și îți spun și cât rămâne, zi de zi.',
+  // dashboard: currency strip, setup gaps, folded reports
+  'Owed to us': 'De încasat', 'Credit left to pay': 'Rest de plată la credite',
+  'Not set up yet': 'Încă nesetate', 'Add your balance': 'Adaugă soldul',
+  'Set budgets': 'Setează bugete', 'Add a savings goal': 'Adaugă un obiectiv',
+  'Loans with no due date': 'Împrumuturi fără scadență',
+  'Charts and calendar': 'Grafice și calendar',
   // warranties
   'Warranties': 'Garanții', 'Warranty': 'Garanție', 'Add warranty': 'Adaugă garanție', 'Warranty added': 'Garanție adăugată',
   'Thing': 'Obiect', 'Bought from': 'Cumpărat de la', 'Bought': 'Cumpărat', 'Cover ends': 'Garanția expiră',
@@ -1586,39 +1594,38 @@ function safeToSpendHtml(stats, months, upcoming) {
     <div class="muted" style="font-size:13px">${note}</div>
   </section>`;
 }
-function dashInsight(stats, suggest, months, upcoming) {
-  if (months !== 1) return '';
-  const ro = LANG === 'ro';
+/* Where this month's spending lands if the rest of it looks like the part already lived.
+   Split out of dashInsight because the answer belongs in one place — the card about how the month
+   ends — rather than in a second card that used almost the same words for a different quantity.
+   Returns null when it is too early in the month for a run-rate to mean anything. */
+function monthProjection(stats, upcoming) {
   const now = new Date();
   const day = now.getUTCDate();
   const inMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0)).getUTCDate();
+  if (day < 4 || !(stats.spent > 0) || day >= inMonth) return null;
+  // A credit instalment is one fixed posting for the month, not a daily habit. Left inside the
+  // run-rate it gets multiplied across every remaining day — pay 1.005 on the 10th and the
+  // forecast behaves as if you paid it daily. So: hold the one-off amounts aside, project only
+  // what actually varies day to day, then add the fixed part back once.
+  const oneOff = (stats.byCategory || [])
+    .filter((c) => PROJECTION_FIXED.has(c.category)).reduce((s, c) => s + c.total, 0);
+  const variable = Math.max(0, stats.spent - oneOff);
+  // ...and the fixed charges still ahead of you this month (instalments, auto-paid bills,
+  // recurring costs) are added at face value: they are committed, and they are not daily habits
+  // either. Without them the forecast read low all month and only came true on the last day.
+  const committed = Number(upcoming?.total) || 0;
+  const projected = oneOff + committed + (variable / day) * inMonth;
+  return {
+    projected, committed,
+    income: Number(stats.income) || 0,
+    diff: (Number(stats.income) || 0) - projected,
+    monthName: now.toLocaleDateString(LANG === 'ro' ? 'ro-RO' : 'en-GB', { month: 'long', timeZone: 'UTC' }),
+  };
+}
+function dashInsight(stats, suggest, months) {
+  if (months !== 1) return '';
+  const ro = LANG === 'ro';
   const bits = [];
-  if (day >= 4 && stats.spent > 0 && day < inMonth) {
-    // A credit instalment is one fixed posting for the month, not a daily habit. Left inside the
-    // run-rate it gets multiplied across every remaining day — pay 1.005 on the 10th and the
-    // forecast behaves as if you paid it daily. So: hold the one-off amounts aside, project only
-    // what actually varies day to day, then add the fixed part back once.
-    const oneOff = (stats.byCategory || [])
-      .filter((c) => PROJECTION_FIXED.has(c.category)).reduce((s, c) => s + c.total, 0);
-    const variable = Math.max(0, stats.spent - oneOff);
-    // ...and the fixed charges still ahead of you this month (instalments, auto-paid bills,
-    // recurring costs) are added at face value: they are committed, and they are not daily habits
-    // either. Without them the forecast read low all month and only came true on the last day.
-    const committed = Number(upcoming?.total) || 0;
-    const projected = oneOff + committed + (variable / day) * inMonth;
-    const monthName = now.toLocaleDateString(ro ? 'ro-RO' : 'en-GB', { month: 'long', timeZone: 'UTC' });
-    bits.push(ro
-      ? `În ritmul ăsta, ${monthName} se închide pe la <b class="amount">${money(projected)}</b>${committed > 0 ? ` (include <b class="amount">${money(committed)}</b> deja programați)` : ''}.`
-      : `At this pace, ${monthName} closes around <b class="amount">${money(projected)}</b>${committed > 0 ? ` (including <b class="amount">${money(committed)}</b> already scheduled)` : ''}.`);
-    if (stats.income > 0) {
-      const diff = stats.income - projected;
-      bits.push(diff >= 0
-        ? (ro ? `Îți rămân aproximativ <b class="amount" style="color:var(--ok)">${money(diff)}</b> din venituri.`
-          : `That leaves about <b class="amount" style="color:var(--ok)">${money(diff)}</b> of your income.`)
-        : (ro ? `Ai depăși veniturile cu circa <b class="amount" style="color:var(--red)">${money(-diff)}</b>.`
-          : `That is about <b class="amount" style="color:var(--red)">${money(-diff)}</b> more than you earn.`));
-    }
-  }
   // the category most above its own 3-month average (needs a real gap, not rounding noise)
   const avg = Object.fromEntries((suggest?.categories || []).map((c) => [c.category, c.avg]));
   let worst = null;
@@ -1652,7 +1659,7 @@ async function viewDashboard(el) {
   const userQ = DASH_VIEW === 'all' ? '' : `&user=${DASH_VIEW}`;
   // the KPI tiles follow the period selector, but a trend chart of ONE bar teaches nothing —
   // so the history chart always pulls a rolling 12 months, whatever the tiles are showing
-  const [reminders, stats, trend12, budgets, rent, savings, suggest, upcoming, chores, forecast] = await Promise.all([
+  const [reminders, stats, trend12, budgets, rent, savings, suggest, upcoming, chores, forecast, loans, credits] = await Promise.all([
     api(`/reminders?days=60${userQ}`), api(`/stats?months=${DASH_MONTHS}${userQ}`),
     DASH_MONTHS >= 12 ? null : api(`/stats?months=12${userQ}`).catch(() => null), api('/budgets'),
     api('/rent-status').catch(() => []), api('/savings').catch(() => ({ goals: [] })),
@@ -1662,6 +1669,9 @@ async function viewDashboard(el) {
     api('/chores').catch(() => []),
     // the forecast is one balance on one timeline: it has no per-person or multi-month reading
     (DASH_MONTHS === 1 && DASH_VIEW === 'all') ? api('/forecast').catch(() => null) : null,
+    // what the household is owed and what it still owes — the only figures on this page that can
+    // be in a currency other than the household's own, which is why they get their own strip
+    api('/loans').catch(() => []), api('/credits').catch(() => []),
   ]);
   const trendStats = trend12 || stats;
   // monthly series behind each KPI, for the sparklines under the numbers
@@ -1675,6 +1685,18 @@ async function viewDashboard(el) {
   const periodLabel = PERIOD_LABELS[DASH_MONTHS];
   // a brand-new family lands on a dashboard of zeroes with nothing telling them where to begin
   const blank = !reminders.length && !stats.byCategory.length && !stats.income && !stats.spent && !budgets.budgets.length;
+  const proj = (DASH_MONTHS === 1) ? monthProjection(stats, upcoming) : null;
+  const openGoals = (savings.goals || []).filter((g) => !g.done);
+  // Each gap is named where it is a gap, rather than all of them being hidden behind one welcome
+  // card that only appears when the entire app is empty.
+  const gaps = blank || !canWrite() ? [] : [
+    (DASH_MONTHS === 1 && DASH_VIEW === 'all' && forecast?.needs_balance)
+      && { label: tr('Add your balance'), action: 'balance' },
+    !budgets.budgets.length && { label: tr('Set budgets'), href: '#money' },
+    !openGoals.length && { label: tr('Add a savings goal'), href: '#money' },
+    (loans || []).some((l) => !l.settled && !l.due_date)
+      && { label: tr('Loans with no due date'), href: '#money' },
+  ].filter(Boolean);
   el.querySelector('#dash').innerHTML = `
     ${blank ? `<section class="card" style="margin-bottom:18px">
       <h3>Welcome — start here</h3>
@@ -1688,71 +1710,112 @@ async function viewDashboard(el) {
       </div></section>` : ''}
     <section>
       <h2>Coming up — next 60 days${scopeNote}</h2>
-      ${reminders.length ? `<div class="ribbon">${reminders.map((r) => `
-        ${(() => { const href = reminderHref(r); const T = href ? 'a' : 'div';
-          return `<${T} class="stub ${remClass(r)}"${href ? ` href="${href}"` : ''}>
-          <div class="days">${daysLabel(r.days_left)}</div>
-          <div class="what">${esc(remLabel(r))}</div>
-          <div class="who">${esc(r.entity || '')} · ${fdate(r.date)}${r.amount ? ` · <span class="amount">${money(r.amount)}</span>` : ''}</div>
-        </${T}>`; })()}`).join('')}</div>`
+      ${reminders.length ? ribbonHtml(reminders)
       : `<div class="card empty"><b>Nothing due soon</b>${DASH_VIEW === 'all' ? 'Add bills, vehicle or property deadlines and they will line up here.' : 'Nothing assigned to this person is coming up.'}</div>`}
     </section>
+    ${(DASH_MONTHS === 1 && DASH_VIEW === 'all') ? forecastCard(forecast, proj) : ''}
+    ${safeToSpendHtml(stats, DASH_MONTHS, upcoming)}
     ${choresCard(chores)}
     <section class="kpi" style="margin-top:18px">
       <a class="card clickcard" href="#money" data-tab="income"><div class="label"><span class="kpi-ic">${icon('wallet')}</span>${tr('Income')}</div>${pctPill(stats.income, stats.prev?.income, 'up-good')}<div class="value" data-cu="${stats.income}">${money(stats.income)}</div>${deltaAmountHtml(stats.income, stats.prev?.income)}<span class="spark-pos">${sparkline(incomeSeries)}</span></a>
       <a class="card clickcard" href="#money" data-tab="expenses"><div class="label"><span class="kpi-ic">${icon('receipt')}</span>${tr('Spent')}</div>${pctPill(stats.spent, stats.prev?.spent, 'up-bad')}<div class="value" data-cu="${stats.spent}">${money(stats.spent)}</div>${deltaAmountHtml(stats.spent, stats.prev?.spent)}${stats.card?.total > 0 ? `<div class="muted" style="font-size:12px;margin-top:2px">+ ${money(stats.card.total)} ${tr('on card')}</div>` : ''}<span class="spark-neg">${sparkline(spendSeries)}</span></a>
       <div class="card"><div class="label"><span class="kpi-ic">${icon('coins')}</span>Left over</div>${pctPill(net, (stats.prev?.income ?? 0) - (stats.prev?.spent ?? 0), 'up-good')}<div class="value ${net < 0 ? 'neg' : ''}" data-cu="${net}">${money(net)}</div>${deltaAmountHtml(net, (stats.prev?.income ?? 0) - (stats.prev?.spent ?? 0))}${savingsRateHtml(stats.income, net)}<span class="spark-pos">${sparkline(netSeries)}</span></div>
     </section>
-    ${safeToSpendHtml(stats, DASH_MONTHS, upcoming)}
-    ${(DASH_MONTHS === 1 && DASH_VIEW === 'all') ? forecastCard(forecast) : ''}
-    ${dashInsight(stats, suggest, DASH_MONTHS, upcoming)}
+    ${exposureHtml(loans, credits)}
+    ${dashInsight(stats, suggest, DASH_MONTHS)}
     ${rentHtml(rent)}
-    <section class="grid2" style="margin-top:18px">
-      <div class="card"><h3>${tr('Spending by category')} · ${esc(tr(periodLabel))}</h3>
-        <div class="chartbox"><canvas id="catChart"></canvas></div>
-        <ul class="catlegend" id="catLegend"></ul></div>
-      <div class="card"><h3>Income vs spending</h3><div class="chartbox"><canvas id="trendChart"></canvas></div></div>
-    </section>
-    <section class="card" style="margin-top:18px">
-      <h3 style="margin-top:0">${tr('What you kept')}</h3>
-      <p class="muted" style="margin:-4px 0 8px;font-size:13px">${tr('Income minus spending, month by month. Below the line means you spent more than came in.')}</p>
-      <div class="chartbox"><canvas id="netChart"></canvas></div>
-    </section>
-    <section class="card" style="margin-top:18px">
+    ${gapsHtml(gaps)}
+    ${goalsHtml(savings.goals)}
+    ${budgets.budgets.length ? `<section class="card" style="margin-top:18px">
       <h3>${tr('Budget vs actual')} · ${budgets.month}</h3>
-      ${budgets.budgets.length ? budgets.budgets.map((b) => {
+      ${budgets.budgets.map((b) => {
         const s = spentMap[b.category] || 0; const pct = Math.min(100, (s / b.amount) * 100 || 0);
         const truePct = b.amount > 0 ? Math.round((s / b.amount) * 100) : 0;
         return `<div style="margin-bottom:10px"><div class="row" style="justify-content:space-between">
           <span>${esc(b.category)}</span><span class="amount muted">${money(s)} / ${money(b.amount)} · ${truePct}%</span></div>
           <div class="bar"><i class="${budgetClass(s, b.amount)}" style="width:${pct}%"></i></div></div>`;
-      }).join('') : `<p class="muted" style="margin-top:0">No budgets set for this month yet.</p>
-        ${canWrite() && suggest?.categories?.length ? `<button class="btn small" id="budgetkick">${tr('Set from my 3-month average')}</button>
-          <span class="muted" style="margin-left:8px">${tr('You can fine-tune them afterwards.')}</span>`
-        : `<p class="muted">${tr('Set them in')} <a href="#money">Budget & expenses</a>.</p>`}`}
-    </section>
-    ${goalsHtml(savings.goals)}
-    <details class="card foldcard" style="margin-top:18px"><summary>${tr('Calendar')}</summary>
-      <div id="dashcal" style="padding-top:12px"><div class="skel" style="height:220px"></div></div></details>`;
+      }).join('')}</section>` : ''}
+    <!-- Charts are how a month is reviewed, not how a Tuesday is answered. They were 40% of the
+         page height above the fold-and-a-half; folded away, the dashboard answers "what do I owe
+         and what is left" in one screen, and the analysis is one tap behind. -->
+    <details class="card foldcard reports" id="reports" style="margin-top:18px"><summary>${tr('Charts and calendar')}</summary>
+      <div class="reportsbody">
+        <section class="grid2">
+          <div class="card"><h3>${tr('Spending by category')} · ${esc(tr(periodLabel))}</h3>
+            <div class="chartbox"><canvas id="catChart"></canvas></div>
+            <ul class="catlegend" id="catLegend"></ul></div>
+          <div class="card"><h3>Income vs spending</h3><div class="chartbox"><canvas id="trendChart"></canvas></div></div>
+        </section>
+        <section class="card" style="margin-top:18px">
+          <h3 style="margin-top:0">${tr('What you kept')}</h3>
+          <p class="muted" style="margin:-4px 0 8px;font-size:13px">${tr('Income minus spending, month by month. Below the line means you spent more than came in.')}</p>
+          <div class="chartbox"><canvas id="netChart"></canvas></div>
+        </section>
+        ${!budgets.budgets.length && canWrite() && suggest?.categories?.length ? `<section class="card" style="margin-top:18px">
+          <h3>${tr('Budget vs actual')} · ${budgets.month}</h3>
+          <p class="muted" style="margin-top:0">No budgets set for this month yet.</p>
+          <button class="btn small" id="budgetkick">${tr('Set from my 3-month average')}</button>
+          <span class="muted" style="margin-left:8px">${tr('You can fine-tune them afterwards.')}</span>
+        </section>` : ''}
+        <div id="dashcal" style="padding-top:18px"><div class="skel" style="height:220px"></div></div>
+      </div></details>`;
   wireBalance(el, () => viewDashboard(el));
   el.querySelector('#dash').querySelectorAll('[data-tab]').forEach((a) => a.addEventListener('click', () => { PENDING_MONEY_TAB = a.dataset.tab; }));
-  el.querySelector('#budgetkick')?.addEventListener('click', async (e) => {
+  // the button lives inside the folded reports section now, so it is wired when that is drawn
+  const budgetKick = async (e) => {
     e.target.disabled = true;
     try {
       const r = await api('/budgets/bulk', { method: 'POST', body: { month: budgets.month, items: suggest.categories } });
       toast(LANG === 'ro' ? `${r.saved} bugete setate din media ultimelor 3 luni` : `${r.saved} budgets set from your 3-month average`, 'success');
       viewDashboard(el);
     } catch (err) { e.target.disabled = false; toast(err.message, 'error'); }
-  });
+  };
   // ticking a chore from the dashboard re-renders it, so the count and the list stay honest
   el.querySelectorAll('[data-dashchore]').forEach((cb) => (cb.onchange = async () => {
     cb.closest('.chorerow').classList.add('is-done');
     try { await api(`/chores/${cb.dataset.dashchore}/toggle`, { method: 'POST' }); viewDashboard(el); }
     catch (err) { toast(err.message, 'error'); viewDashboard(el); }
   }));
+  el.querySelector('#ribbonmore')?.addEventListener('click', (e) => {
+    e.target.closest('section').querySelector('.ribbon').classList.add('all');
+    e.target.remove();
+  });
+  // "Add your balance" opens the card that needs it and puts the cursor in the field, rather than
+  // sending you somewhere to look for it
+  el.querySelectorAll('[data-gap]').forEach((b) => (b.onclick = () => {
+    if (b.dataset.gap !== 'balance') return;
+    const form = el.querySelector('#balform');
+    if (!form) return;
+    form.closest('details')?.setAttribute('open', '');
+    form.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    form.querySelector('input[name=balance]')?.focus();
+  }));
   countUpAll(el.querySelector('#dash'));
-  drawCharts(stats, DASH_VIEW, DASH_MONTHS, trendStats);
-  renderCalendar(el.querySelector('#dashcal'), true);
+  // Chart.js measures its container, and a container inside a closed <details> measures zero — so
+  // the charts are drawn the first time the section is actually opened, not on every dashboard
+  // render. That also means the 200 KB library is not fetched at all for someone who never opens it.
+  const reports = el.querySelector('#reports');
+  let drawn = false;
+  const drawReports = () => {
+    if (drawn) return;
+    drawn = true;
+    // A canvas inside a <details> that has only just been opened still measures zero on the same
+    // tick, and Chart.js sizes itself from whatever it reads then — which drew charts 72px and 0px
+    // wide. Two frames later the box has been laid out. The timeout is not belt-and-braces: a
+    // hidden tab never runs an animation frame at all, so on its own the rAF would leave someone
+    // who opened this and switched away with three empty boxes when they came back.
+    let done = false;
+    const draw = () => {
+      if (done) return;
+      done = true;
+      drawCharts(stats, DASH_VIEW, DASH_MONTHS, trendStats);
+      renderCalendar(el.querySelector('#dashcal'), true);
+    };
+    requestAnimationFrame(() => requestAnimationFrame(draw));
+    setTimeout(draw, 300);
+    el.querySelector('#budgetkick')?.addEventListener('click', budgetKick);
+  };
+  if (reports) { reports.addEventListener('toggle', () => { if (reports.open) drawReports(); }); if (reports.open) drawReports(); }
 }
 /* A number on its own says little: 5.589 spent is only meaningful next to what it usually is.
    `sense` says which direction is good, so spending more reads amber and earning more reads green.
@@ -1848,6 +1911,65 @@ function choresCard(chores) {
       : `<p class="muted" style="margin:8px 0 0"><a href="#chores">${tr('Chores')} →</a></p>`}</section>`;
 }
 /* goals only nudge you if you see them; they lived two clicks away under Money → Savings */
+/* The deadlines strip. On a phone this used to be a sideways scroller: nine cards at 168px each
+   is about 1500px of content on a 390px screen, so seven of them lived off-screen behind a gesture
+   with nothing on the page to suggest it. The same mistake the alerts badge made. Now the phone
+   gets a plain vertical list of the next three, and a button that says how many more there are. */
+const RIBBON_SHOWN = 3;
+function ribbonHtml(reminders) {
+  const more = reminders.length - RIBBON_SHOWN;
+  return `<div class="ribbon">${reminders.map((r) => {
+    const href = reminderHref(r); const T = href ? 'a' : 'div';
+    return `<${T} class="stub ${remClass(r)}"${href ? ` href="${href}"` : ''}>
+      <div class="days">${daysLabel(r.days_left)}</div>
+      <div class="what">${esc(remLabel(r))}</div>
+      <div class="who">${esc(r.entity || '')} · ${fdate(r.date)}${r.amount ? ` · <span class="amount">${money(r.amount)}</span>` : ''}</div>
+    </${T}>`;
+  }).join('')}</div>
+  ${more > 0 ? `<button class="btn ghost small ribbon-more" id="ribbonmore">${LANG === 'ro' ? `Vezi toate (${reminders.length})` : `Show all (${reminders.length})`}</button>` : ''}`;
+}
+
+/* Money that lives outside the household currency is invisible on a dashboard that totals one
+   number: 28.000 € lent out does not show up anywhere in a RON figure. Currencies are never added
+   together — each one gets its own chip, which is the same rule the rest of the app follows. */
+function exposureHtml(loans, credits) {
+  const owed = {};
+  for (const l of loans || []) {
+    if (l.settled) continue;
+    const bal = Number(l.balance ?? l.amount) || 0;
+    if (bal <= 0) continue;
+    const c = l.currency || cur();
+    owed[c] = (owed[c] || 0) + bal;
+  }
+  const debt = (credits || []).reduce((s, c) => s + (Number(c.balance) || 0), 0);
+  const chips = [];
+  // one chip per idea, the currencies listed side by side inside it — repeating the label once per
+  // currency read like two separate debts rather than one amount that happens to be in two monies
+  const owedAmounts = Object.entries(owed).sort((a, b) => b[1] - a[1]);
+  if (owedAmounts.length) {
+    chips.push(`<a class="expchip owed" href="#money"><span>${tr('Owed to us')}</span>${
+      owedAmounts.map(([c, amt]) => `<b class="amount">${moneyIn(amt, c)}</b>`).join('<i class="expsep">·</i>')}</a>`);
+  }
+  if (debt > 0) chips.push(`<a class="expchip debt" href="#money"><span>${tr('Credit left to pay')}</span><b class="amount">${money(debt)}</b></a>`);
+  if (!chips.length) return '';
+  return `<div class="exposure">${chips.join('')}</div>`;
+}
+
+/* One thin row instead of several full cards that each say "nothing here yet".
+   An empty budget card and an empty goals card took the same space as real content; worse, the
+   only prompt that ever mentioned the missing balance was the welcome card, which requires the
+   WHOLE app to be empty — so a household with 145 expenses and no balance was never told why its
+   forecast was blank. Each gap now speaks for itself, and only when it is actually a gap. */
+function gapsHtml(gaps) {
+  if (!gaps.length) return '';
+  return `<section class="card setuprow">
+    <span class="setuplabel">${tr('Not set up yet')}</span>
+    ${gaps.map((g) => (g.action
+      ? `<button class="btn ghost small" data-gap="${g.action}">${g.label}</button>`
+      : `<a class="btn ghost small" href="${g.href}">${g.label}</a>`)).join('')}
+  </section>`;
+}
+
 function goalsHtml(goals) {
   const open = (goals || []).filter((g) => !g.done
     && (DASH_VIEW === 'all' || g.user_id == null || String(g.user_id) === String(DASH_VIEW)));
@@ -4068,11 +4190,37 @@ async function viewReview(el) {
    which is the question people actually open a money app to ask. It is drawn from one number the
    household types in, so the card leads with that number and how old it is: a forecast built on a
    three-week-old balance is a guess, and it should look like one. */
-function forecastCard(f) {
-  if (!f || f.needs_balance) return `<section class="card" style="margin-top:18px"><div class="row" style="justify-content:space-between;gap:10px;align-items:baseline">
+/* The run-rate sentence, worded so it can never be mistaken for the balance projection sitting
+   next to it: one is money going out, the other is money left. They used to be two cards that both
+   said "how the month ends", about two different quantities. */
+function paceLine(proj) {
+  if (!proj) return '';
+  const ro = LANG === 'ro';
+  const spend = ro
+    ? `În ritmul ăsta, cheltuielile pe ${proj.monthName} ajung la <b class="amount">${money(proj.projected)}</b>${proj.committed > 0 ? ` (include <b class="amount">${money(proj.committed)}</b> deja programați)` : ''}.`
+    : `At this pace, spending in ${proj.monthName} reaches <b class="amount">${money(proj.projected)}</b>${proj.committed > 0 ? ` (including <b class="amount">${money(proj.committed)}</b> already scheduled)` : ''}.`;
+  if (!(proj.income > 0)) return spend;
+  const rest = proj.diff >= 0
+    ? (ro ? ` Îți rămân aproximativ <b class="amount" style="color:var(--ok)">${money(proj.diff)}</b> din venituri.`
+      : ` That leaves about <b class="amount" style="color:var(--ok)">${money(proj.diff)}</b> of your income.`)
+    : (ro ? ` Ai depăși veniturile cu circa <b class="amount" style="color:var(--red)">${money(-proj.diff)}</b>.`
+      : ` That is about <b class="amount" style="color:var(--red)">${money(-proj.diff)}</b> more than you earn.`);
+  return spend + rest;
+}
+function forecastCard(f, proj) {
+  // Without a balance the card is not empty: the run-rate already answers half the question, and
+  // saying "I cannot tell you" directly above a second card that did tell you was the confusion
+  // worth removing. The balance is offered as what makes the answer complete, not as a gate.
+  if (!f || f.needs_balance) {
+    const pace = paceLine(proj);
+    return `<section class="card" style="margin-top:18px"><div class="row" style="justify-content:space-between;gap:10px;align-items:baseline">
       <h3 style="margin:0">${tr('How the month ends')}</h3></div>
-    <p class="muted" style="margin:6px 0 10px">${tr('Type in what is in the account and the app works out the rest — bills, rates, salary, rent.')}</p>
+    ${pace ? `<p class="fcpace">${pace}</p>` : ''}
+    <p class="muted" style="margin:6px 0 10px">${pace
+      ? tr('That is what goes out. Add what is in the account and the app also tells you what is left, day by day.')
+      : tr('Type in what is in the account and the app works out the rest — bills, rates, salary, rent.')}</p>
     ${balanceForm(null)}</section>`;
+  }
   const dip = f.low.amount < f.today;
   const tight = f.low.amount < 0;
   // the line is drawn from the series, scaled to its own range; zero gets a rule of its own so
@@ -4098,6 +4246,7 @@ function forecastCard(f) {
       <path d="${path}"/>
     </svg>
     <p class="muted fcend">${tr('Until')} ${fdate(f.horizon)}: <b class="amount">${money(f.end.amount)}</b></p>
+    ${paceLine(proj) ? `<p class="fcpace">${paceLine(proj)}</p>` : ''}
     ${f.items.length ? `<details class="fcitems"><summary>${tr('What moves it')} (${f.items.length})</summary>
       <table class="cards"><tbody>${f.items.map((i) => `<tr>
         <td>${fdate(i.date)}</td><td>${esc(i.label)}</td>

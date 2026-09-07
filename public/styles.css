@@ -109,6 +109,10 @@ label { display: block; font-size: 12.5px; font-weight: 600; color: var(--ink-so
   display: grid; grid-template-columns: repeat(auto-fill, minmax(178px, 1fr));
   gap: 12px; padding: 4px 2px 10px;
 }
+/* The deadlines strip shows everything on a desktop, where the grid simply wraps — "show all" is
+   a phone answer to a phone problem, so it is not a control here. Declared before the narrow
+   breakpoint that reveals it: same specificity, so whichever comes last would win. */
+.ribbon-more { display: none; }
 .stub {
   min-width: 0; background: var(--card); border: 1px solid var(--line); border-radius: 10px;
   padding: 10px 12px 10px 16px; position: relative;
@@ -238,9 +242,14 @@ tr.guest-no > td { opacity: .5; }
 /* Kept for clarity; the global [hidden] rule at the end of this file now covers it. */
 .quickadd .qmore[hidden] { display: none; }
 @media (max-width: 860px) {
-  /* on a phone the deadlines go back to a swipeable strip — sideways is the natural gesture there */
-  .ribbon { display: flex; overflow-x: auto; scrollbar-width: thin; }
-  .ribbon .stub { min-width: 168px; flex-shrink: 0; }
+  /* Nine deadlines at 168px each is ~1500px of sideways content on a 390px screen: six of them
+     lived off-screen behind a gesture the page never hinted at — the same way the alerts badge
+     used to sit 680px out of view. A phone gets the next three stacked, and a button that says
+     how many more there are. */
+  .ribbon { display: flex; flex-direction: column; overflow: visible; }
+  .ribbon .stub { min-width: 0; width: 100%; }
+  .ribbon:not(.all) .stub:nth-child(n+4) { display: none; }
+  .ribbon-more { display: block; width: 100%; margin-top: 2px; }
   /* the amount takes its own full-width line to type into; category + Add share the next one */
   .quickadd .qrow { flex-wrap: wrap; }
   .quickadd .qamt { flex: 1 1 100%; font-size: 22px; min-height: 46px; }
@@ -1156,3 +1165,32 @@ body.seat-dragging { cursor: grabbing; user-select: none; -webkit-user-select: n
 /* The stored excerpt is long enough to answer a question by reading it, which on a phone is a wall
    of text. Cap the height and let it scroll inside its own box instead of pushing the buttons off. */
 .draftsrc p { max-height: 40vh; overflow-y: auto; overflow-wrap: anywhere; margin-top: 6px; }
+
+
+/* Money outside the household currency. Never added together: one chip per currency, which is the
+   same rule the totals everywhere else in the app follow. A 28.000 € loan is otherwise invisible
+   on a dashboard whose every figure is in lei. */
+.exposure { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.expchip {
+  display: inline-flex; align-items: baseline; gap: 8px; text-decoration: none; color: inherit;
+  border: 1px solid var(--line); border-radius: 999px; padding: 6px 14px; background: var(--card);
+  font-size: 13px;
+}
+.expchip span { color: var(--ink-soft); }
+.expchip:hover { border-color: var(--accent); }
+.expchip.owed b { color: var(--ok); }
+.expchip.debt b { color: var(--ink); }
+
+/* What is missing, as one thin row rather than one empty card per gap. Deliberately quiet: these
+   are invitations, not problems, and they sit below the answers rather than above them. */
+.setuprow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 18px; padding: 12px 14px; }
+.setuplabel { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--ink-soft); margin-right: 2px; }
+
+/* the run-rate sentence, inside the card about how the month ends */
+.fcpace { margin: 8px 0 0; font-size: 13.5px; line-height: 1.5; }
+
+/* Folded analysis. The inner cards are already boxed, so the wrapper drops its own frame and
+   padding — otherwise every chart sits in a card inside a card. */
+.reports > .reportsbody { padding-top: 4px; }
+.reports .grid2 > .card:first-child { margin-top: 0; }
+.expchip .expsep { font-style: normal; color: var(--ink-soft); opacity: .6; margin: 0 2px; }
