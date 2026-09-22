@@ -376,3 +376,53 @@ test('search says which way the money went', async (t) => {
   assert.equal(ralu?.kind, 'loan');
   assert.equal(mihai?.kind, 'debt', 'the direction is the kind, so the label can be translated');
 });
+
+/* A euro amount printed with the household's own suffix is not a formatting slip — it is a wrong
+   number on the screen. 400 € and 400 RON are five times apart. These pin the places where an
+   amount that carries its own currency was being labelled with the family's instead. */
+test('an overdue euro charge stays in euro everywhere it surfaces', async (t) => {
+  const api = await startServer();
+  t.after(() => api.stop());
+  const prop = (await api.post('/api/properties', {
+    name: 'Apartament', rent_amount: 400, rent_currency: 'EUR', rent_due_day: 5,
+  })).body;
+  await api.post(`/api/properties/${prop.id}/charges`, {
+    type: 'rent', title: 'Chirie', amount: 400, due_date: plusDays(-10),
+  });
+
+  await t.test('the reminder carries it, so the dashboard strip can print it', async () => {
+    const rem = (await api.get('/api/reminders?days=60')).body.find((r) => r.kind === 'tenant_unpaid');
+    assert.ok(rem, 'an unpaid charge past its date is a reminder');
+    assert.equal(rem.amount, 400);
+    assert.equal(rem.currency, 'EUR', 'without this the ribbon reads "400,00 RON"');
+  });
+
+  await t.test('and the alert built from it says euro too', async () => {
+    const { items } = (await api.get('/api/notifications')).body;
+    const hit = items.find((i) => /400/.test(i.title + ' ' + i.body));
+    assert.ok(hit, 'the overdue charge raises an alert');
+    assert.match(hit.title + ' ' + hit.body, /400\.00 €/, 'the alert text is built on the server');
+  });
+});
+
+test('the rent card is told what currency the lease is in', async (t) => {
+  const api = await startServer();
+  t.after(() => api.stop());
+  const prop = (await api.post('/api/properties', {
+    name: 'Apartament', rent_amount: 400, rent_currency: 'EUR', rent_due_day: 5,
+  })).body;
+  // the card lists the month's generated rent charge, which only exists once a tenant has joined;
+  // this is the row ensureRentCharge writes, put there directly so the test stays about currency
+  const { DatabaseSync } = require('node:sqlite');
+  const path = require('node:path');
+  const period = new Date().toISOString().slice(0, 7);
+  const d = new DatabaseSync(path.join(api.dir, 'familyhub.db'));
+  d.prepare("INSERT INTO tenant_charges (family_id, property_id, type, title, amount, due_date, period, currency)"
+    + " VALUES (1, ?, 'rent', 'Chirie', 400, ?, ?, 'EUR')").run(prop.id, today(), period);
+  d.close();
+
+  const row = (await api.get('/api/rent-status')).body.find((r) => r.property_id === prop.id);
+  assert.ok(row, 'a rent charge for this month is what the card lists');
+  assert.equal(row.amount, 400);
+  assert.equal(row.currency, 'EUR', 'the card prints whatever this says — without it, 400 € read as 400 RON');
+});

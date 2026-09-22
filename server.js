@@ -1945,7 +1945,10 @@ app.get('/api/rent-status', auth, (req, res) => {
     const c = db.prepare("SELECT * FROM tenant_charges WHERE property_id = ? AND type = 'rent' AND period = ?").get(p.id, period);
     if (!c) continue; // rent set but nobody renting yet — nothing to chase
     out.push({
-      property_id: p.id, property: p.name, amount: c.amount, status: c.status, due_date: c.due_date,
+      // the charge's own currency travels with the amount: a lease written in euro is euro, and
+      // the dashboard card was printing 400 € as "400,00 RON"
+      property_id: p.id, property: p.name, amount: c.amount, currency: c.currency || p.rent_currency || null,
+      status: c.status, due_date: c.due_date,
       days_late: c.status !== 'paid' && c.due_date < today ? Math.round((new Date(today) - new Date(c.due_date)) / 86400000) : 0,
     });
   }
@@ -1989,6 +1992,9 @@ function propOwnerEmails(prop) {
 // the symbol. The client's CURRENCIES map is the same three, kept in step by hand.
 const CURRENCY_SYMBOL = { RON: 'RON', EUR: '€', GBP: '£' };
 const curSymbol = (code) => CURRENCY_SYMBOL[code] || code || 'RON';
+// A row that carries its own currency is written in that one; a row that does not is in the
+// household's. Passing the household symbol as the fallback keeps both readings honest.
+const rowCur = (code, householdSymbol) => (code ? curSymbol(code) : householdSymbol);
 function familyCurrency(fid) {
   return curSymbol(db.prepare('SELECT currency FROM families WHERE id = ?').get(fid)?.currency);
 }
@@ -2314,7 +2320,7 @@ app.post('/api/tenant/charges/:cid/pay', auth, (req, res) => {
   const prop = tenantProp(req);
   if (prop) {
     const cur = familyCurrency(prop.family_id);
-    const amountStr = `${Number(ch.amount).toFixed(2)} ${cur}`;
+    const amountStr = `${Number(ch.amount).toFixed(2)} ${rowCur(ch.currency, cur)}`;
     notifyOwners(prop, `Payment marked as paid — ${prop.name}`,
       `Hello,\n\n${req.user.name} marked this as paid for ${prop.name}:\n\n- ${ch.title}: ${amountStr}, due ${mailDate(ch.due_date)}\n\nOpen Family Hub to confirm (or reject) it:\n${siteBase()}/#properties\n`,
       `${req.user.name} paid ${ch.title} — ${amountStr}. Confirm it in Family Hub.`,
@@ -2410,8 +2416,8 @@ app.post('/api/tenant/remind', auth, (req, res) => {
   const cur = familyCurrency(prop.family_id);
   const parts = [], htmlParts = [];
   if (pending.length) {
-    parts.push(`Payments marked as paid, waiting for you to confirm:\n${pending.map((c) => `- ${c.title}: ${Number(c.amount).toFixed(2)} ${cur}, due ${mailDate(c.due_date)}`).join('\n')}`);
-    htmlParts.push(`<p><b>Payments marked as paid, waiting for you to confirm:</b></p>${pending.map((c) => `<div style="margin:6px 0;padding:10px 14px;background:#eff2f1;border-radius:8px;"><b>${htmlEsc(c.title)}</b><br><span style="font-family:monospace">${Number(c.amount).toFixed(2)} ${cur}</span> · due ${mailDate(c.due_date)}</div>`).join('')}`);
+    parts.push(`Payments marked as paid, waiting for you to confirm:\n${pending.map((c) => `- ${c.title}: ${Number(c.amount).toFixed(2)} ${rowCur(c.currency, cur)}, due ${mailDate(c.due_date)}`).join('\n')}`);
+    htmlParts.push(`<p><b>Payments marked as paid, waiting for you to confirm:</b></p>${pending.map((c) => `<div style="margin:6px 0;padding:10px 14px;background:#eff2f1;border-radius:8px;"><b>${htmlEsc(c.title)}</b><br><span style="font-family:monospace">${Number(c.amount).toFixed(2)} ${rowCur(c.currency, cur)}</span> · due ${mailDate(c.due_date)}</div>`).join('')}`);
   }
   if (open.length) {
     parts.push(`Maintenance still open:\n${open.map((m) => `- ${m.title}`).join('\n')}`);
@@ -2867,7 +2873,8 @@ function collectReminders(fid, horizon, scopeUserId = null) {
   `).all(fid, todayISO)) {
     // property_id travels too: ref_id is the charge, but the useful place to land is the property's
     // own dashboard, which is where you confirm the payment
-    push('tenant_unpaid', `${c.title} — unpaid by tenant`, c.property_name, c.due_date, c.id, c.owner_id, { amount: c.amount, property_id: c.property_id });
+    push('tenant_unpaid', `${c.title} — unpaid by tenant`, c.property_name, c.due_date, c.id, c.owner_id,
+      { amount: c.amount, currency: c.currency || null, property_id: c.property_id });
   }
   // Readings the tenant has been asked for and has not sent back. The request is raised on the
   // scheduled day and the tenant is emailed then; this is the other half — the owner chasing it.
@@ -3840,7 +3847,7 @@ function generateNotifications(fid) {
   for (const r of collectReminders(fid, 31)) {
     if (!ALERT_KINDS.has(r.kind)) continue;
     const prefix = `${r.kind}:${r.ref_id}:${r.date}:`;
-    const base = { label: r.label, entity: r.entity || '', date: r.date, amount: r.amount ? `${Number(r.amount).toFixed(2)} ${cur}` : '' };
+    const base = { label: r.label, entity: r.entity || '', date: r.date, amount: r.amount ? `${Number(r.amount).toFixed(2)} ${rowCur(r.currency, cur)}` : '' };
     if (r.days_left < 0) {
       // the days-late count keeps the text moving, so an unsolved overdue item resurfaces daily
       add(`${prefix}overdue`, { ...base, days: r.days_left }, r.owner_id);
@@ -4006,10 +4013,10 @@ function familyDigestMail(lang, famName, items, cur) {
   const ro = lang === 'ro';
   const lines = items.map((i) => `- ${mailLabel(lang, i.label)}${i.entity ? ` (${i.entity})` : ''}: `
     + `${ro ? 'scadent' : 'due'} ${mailDate(i.date)}, ${mailDays(lang, i.days_left)}`
-    + `${i.amount ? ` — ${Number(i.amount).toFixed(2)} ${cur}` : ''}`).join('\n');
+    + `${i.amount ? ` — ${Number(i.amount).toFixed(2)} ${rowCur(i.currency, cur)}` : ''}`).join('\n');
   const rows = items.map((i) => `<div style="margin:6px 0;padding:10px 14px;background:#eff2f1;border-radius:8px;">
       <b>${htmlEsc(mailLabel(lang, i.label))}</b>${i.entity ? ` <span style="color:#45565f">${htmlEsc(i.entity)}</span>` : ''}<br>
-      <span style="font-size:13px;color:#45565f;">${ro ? 'scadent' : 'due'} ${mailDate(i.date)} · ${mailDays(lang, i.days_left)}${i.amount ? ` · <span style="font-family:monospace">${Number(i.amount).toFixed(2)} ${cur}</span>` : ''}</span>
+      <span style="font-size:13px;color:#45565f;">${ro ? 'scadent' : 'due'} ${mailDate(i.date)} · ${mailDays(lang, i.days_left)}${i.amount ? ` · <span style="font-family:monospace">${Number(i.amount).toFixed(2)} ${rowCur(i.currency, cur)}</span>` : ''}</span>
     </div>`).join('');
   const subject = ro ? `Family Hub — ${items.length} ${items.length === 1 ? 'termen se apropie' : 'termene se apropie'}`
     : `Family Hub — ${items.length} deadline${items.length === 1 ? '' : 's'} coming up`;

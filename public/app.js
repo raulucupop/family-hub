@@ -1871,7 +1871,7 @@ function rentHtml(rent) {
   return `<section class="card" style="margin-top:18px"><h3>Rent this month</h3>
     ${rent.map((r) => `<div class="row" style="justify-content:space-between;gap:10px;flex-wrap:wrap;padding:5px 0">
       <span><b>${esc(r.property)}</b> <span class="muted">· ${tr('due')} ${fdate(r.due_date)}</span></span>
-      <span class="row" style="gap:8px"><span class="amount">${money(r.amount)}</span>
+      <span class="row" style="gap:8px"><span class="amount">${moneyIn(r.amount, r.currency)}</span>
         ${r.status === 'paid' ? `<span class="badge paid">${tr('paid')}</span>`
           : r.status === 'pending' ? `<span class="badge role">${tr('confirmation pending')}</span>`
           : r.days_late ? `<span class="badge late">${r.days_late} ${tr(r.days_late === 1 ? 'day late' : 'days late')}</span>`
@@ -1931,7 +1931,7 @@ function ribbonHtml(reminders) {
     return `<${T} class="stub ${remClass(r)}"${href ? ` href="${href}"` : ''}>
       <div class="days">${daysLabel(r.days_left)}</div>
       <div class="what">${esc(remLabel(r))}</div>
-      <div class="who">${esc(r.entity || '')} · ${fdate(r.date)}${r.amount ? ` · <span class="amount">${money(r.amount)}</span>` : ''}</div>
+      <div class="who">${esc(r.entity || '')} · ${fdate(r.date)}${r.amount ? ` · <span class="amount">${moneyIn(r.amount, r.currency)}</span>` : ''}</div>
     </${T}>`;
   }).join('')}</div>
   ${more > 0 ? `<button class="btn ghost small ribbon-more" id="ribbonmore">${LANG === 'ro' ? `Vezi toate (${reminders.length})` : `Show all (${reminders.length})`}</button>` : ''}`;
@@ -5761,6 +5761,14 @@ document.addEventListener('click', (e) => {
 /* money fields: a number input can't carry thousands separators, so echo the grouped value under
    it. 247500 and 24750 are one keystroke and one glance apart otherwise. */
 const AMOUNT_FIELDS = 'input[type="number"][name="amount"], input[type="number"][name="principal"], input[type="number"][name="target"], input[type="number"][name="mortgage_payment"], input[type="number"][name="rent_amount"]';
+// Some of these forms let you pick the currency — a loan in euro, rent written in euro. The echo
+// has to speak the currency the form is set to, or it contradicts the dropdown next to it: 12000
+// with EUR chosen read "12.000,00 RON" underneath.
+const CURRENCY_FIELDS = 'select[name="currency"], select[name="rent_currency"]';
+const formCurrency = (input) => {
+  const scope = input.closest('form') || input.closest('.formgrid') || input.parentElement;
+  return scope?.querySelector(CURRENCY_FIELDS)?.value || FAMILY?.currency || 'RON';
+};
 document.addEventListener('input', (e) => {
   const t = e.target;
   if (!t.matches || !t.matches(AMOUNT_FIELDS) || !t.parentElement) return;
@@ -5768,7 +5776,14 @@ document.addEventListener('input', (e) => {
   const v = Number(t.value);
   if (!t.value || !isFinite(v) || v === 0) { if (hint) hint.remove(); return; }
   if (!hint) { hint = document.createElement('small'); hint.className = 'amounthint'; t.parentElement.appendChild(hint); }
-  hint.textContent = money(v);
+  hint.textContent = moneyIn(v, formCurrency(t));
+});
+// Changing the currency after typing the amount left the old label underneath — the same
+// contradiction arriving the other way round.
+document.addEventListener('change', (e) => {
+  if (!e.target.matches || !e.target.matches(CURRENCY_FIELDS)) return;
+  const scope = e.target.closest('form') || e.target.closest('.formgrid');
+  scope?.querySelectorAll(AMOUNT_FIELDS).forEach((inp) => inp.dispatchEvent(new Event('input', { bubbles: true })));
 });
 
 /* double-submit guard: on a slow phone connection a double-tap on "Add" fires the handler twice
