@@ -1096,7 +1096,10 @@ function applyTheme() {
   // that strip looked identical whichever theme you picked — on a phone, where the app fills the
   // screen, that top band is a good part of what "dark mode" is supposed to change. Read the value
   // back from the stylesheet so it always matches the header actually being drawn underneath it.
-  const bar = getComputedStyle(document.documentElement).getPropertyValue('--sidebar').trim();
+  // --bar-solid is the opaque colour behind the translucent top bar; --sidebar is the fallback for
+  // a stylesheet that predates it. The bar is see-through, but the status bar above it cannot be.
+  const css = getComputedStyle(document.documentElement);
+  const bar = (css.getPropertyValue('--bar-solid') || css.getPropertyValue('--sidebar')).trim();
   const meta = document.querySelector('meta[name="theme-color"]');
   if (meta && bar) meta.content = bar;
 }
@@ -2963,7 +2966,7 @@ async function moneySavings(body) {
     <div class="card" style="margin-top:16px"><h3>History</h3>
       ${data.entries.length ? `<table><thead><tr><th>Date</th><th>By</th><th>Goal</th><th>Note</th><th class="right">Amount</th><th></th></tr></thead><tbody>
         ${data.entries.map((r) => `<tr><td>${fdate(r.date)}</td><td>${esc(r.user_name || '—')}</td><td>${esc(r.goal_title || '—')}</td><td>${esc(r.note || '')}</td>
-          <td class="right amount" style="color:${r.kind === 'deposit' ? '#2f6b5a' : 'var(--red)'}">${r.kind === 'deposit' ? '+' : '−'}${money(r.amount)}</td>
+          <td class="right amount" style="color:${r.kind === 'deposit' ? 'var(--ok)' : 'var(--red)'}">${r.kind === 'deposit' ? '+' : '−'}${money(r.amount)}</td>
           <td class="right">${canWrite() ? `<button class="btn danger small" data-del="${r.id}">✕</button>` : ''}</td></tr>`).join('')}
       </tbody></table>` : `<div class="empty"><b>No savings entries yet</b>Deposit funds above to start the family economy account.</div>`}
     </div>`;
@@ -3079,7 +3082,7 @@ function creditCard(c, members, properties, refresh) {
         <div class="dead"><span class="muted">Balance today</span><div class="d">${money(c.balance)}</div></div>
         <div class="dead"><span class="muted">Payoff</span><div class="d">${fdate(c.payoff_date)} · ${c.months_left} ${tr('mo left')}</div></div>
         <div class="dead"><span class="muted">Anticipated payments</span><div class="d">${money(c.prepaid_total)}</div></div>
-        <div class="dead"><span class="muted">Money saved (interest)</span><div class="d" style="color:#2f6b5a">${money(c.interest_saved)}</div></div>
+        <div class="dead"><span class="muted">Money saved (interest)</span><div class="d" style="color:var(--ok)">${money(c.interest_saved)}</div></div>
         <div class="dead"><span class="muted">Total interest projected</span><div class="d">${money(c.total_interest)} <span class="muted">${tr('vs')} ${money(c.base_total_interest)} ${tr('without')}</span></div></div>
       </div>
       <h3 style="margin-top:16px">Anticipated payments</h3>
@@ -3142,8 +3145,8 @@ function creditCard(c, members, properties, refresh) {
       const when = `${String(d.getUTCMonth() + 1).padStart(2, '0')}/${d.getUTCFullYear()}`;
       // whole sentences per language — the dictionary is exact-match, gluing words does not survive RO
       out.innerHTML = LANG === 'ro'
-        ? `Cu <b>+${money(extra)}</b> pe lună ai termina cu <b>${cut} ${cut === 1 ? 'lună' : 'luni'}</b> mai devreme (${when}) și ai economisi <b class="amount" style="color:#2f6b5a">${money(saved)}</b> dobândă.`
-        : `With <b>+${money(extra)}</b> a month you would finish <b>${cut} month${cut === 1 ? '' : 's'}</b> earlier (${when}) and save <b class="amount" style="color:#2f6b5a">${money(saved)}</b> in dobândă.`;
+        ? `Cu <b>+${money(extra)}</b> pe lună ai termina cu <b>${cut} ${cut === 1 ? 'lună' : 'luni'}</b> mai devreme (${when}) și ai economisi <b class="amount" style="color:var(--ok)">${money(saved)}</b> dobândă.`
+        : `With <b>+${money(extra)}</b> a month you would finish <b>${cut} month${cut === 1 ? '' : 's'}</b> earlier (${when}) and save <b class="amount" style="color:var(--ok)">${money(saved)}</b> in dobândă.`;
     };
     wfInput.addEventListener('input', show);
     wrap.querySelectorAll('[data-wq]').forEach((b) => (b.onclick = () => { wfInput.value = b.dataset.wq; show(); }));
@@ -4009,12 +4012,12 @@ function entityCard(item, cfg) {
       summary = `<div class="row" style="gap:18px;flex-wrap:wrap;margin-bottom:10px">
         <span class="muted">Money in this property:</span>
         <span>Spent <b class="amount">${money(spent)}</b></span>
-        <span>Income <b class="amount" style="color:#2f6b5a">${money(income)}</b></span>
-        <span>Net <b class="amount" style="color:${net < 0 ? '#b23a2e' : '#2f6b5a'}">${money(net)}</b></span></div>`;
+        <span>Income <b class="amount" style="color:var(--ok)">${money(income)}</b></span>
+        <span>Net <b class="amount" style="color:${net < 0 ? 'var(--red)' : 'var(--ok)'}">${money(net)}</b></span></div>`;
     }
     box.innerHTML = recs.length ? `${summary}<table><thead><tr><th>Date</th><th>Type</th><th>Note</th>${cfg.showRecordUser ? '<th>Paid by</th>' : ''}<th class="right">Amount</th><th></th></tr></thead><tbody>
       ${recs.map((r) => `<tr><td>${fdate(r.date)}</td><td>${tr(cfg.recordTypes[r.type] || r.type)}${r.odometer ? ` <span class="muted">(${r.odometer.toLocaleString('ro-RO')} km)</span>` : ''}</td>
-        <td>${esc(r.note || '')}</td>${cfg.showRecordUser ? `<td>${esc(r.user_name || (isIncome(r) ? '—' : ''))}</td>` : ''}<td class="right amount" ${isIncome(r) ? 'style="color:#2f6b5a"' : ''}>${isIncome(r) ? '+' : ''}${money(r.amount)}</td>
+        <td>${esc(r.note || '')}</td>${cfg.showRecordUser ? `<td>${esc(r.user_name || (isIncome(r) ? '—' : ''))}</td>` : ''}<td class="right amount" ${isIncome(r) ? 'style="color:var(--ok)"' : ''}>${isIncome(r) ? '+' : ''}${money(r.amount)}</td>
         <td class="right">${canWrite() ? `<button class="btn danger small" data-recdel="${r.id}">✕</button>` : ''}</td></tr>`).join('')}</tbody></table>`
       : `<p class="muted">No records yet.</p>`;
     box.querySelectorAll('[data-recdel]').forEach((b) => (b.onclick = () => {
@@ -4288,7 +4291,7 @@ function forecastCard(f, proj) {
     ${f.items.length ? `<details class="fcitems"><summary>${tr('What moves it')} (${f.items.length})</summary>
       <table class="cards"><tbody>${f.items.map((i) => `<tr>
         <td>${fdate(i.date)}</td><td>${esc(i.label)}</td>
-        <td class="right amount" style="color:${i.amount < 0 ? 'var(--red)' : '#2f6b5a'}">${i.amount > 0 ? '+' : ''}${money(i.amount)}</td>
+        <td class="right amount" style="color:${i.amount < 0 ? 'var(--red)' : 'var(--ok)'}">${i.amount > 0 ? '+' : ''}${money(i.amount)}</td>
       </tr>`).join('')}</tbody></table></details>` : ''}
     ${f.skipped.length ? `<p class="muted" style="font-size:12.5px">${tr('Not counted, another currency:')} ${f.skipped.map((x2) => `${esc(x2.label)} ${Number(x2.amount).toFixed(2)} ${esc(x2.currency)}`).join(' · ')}</p>` : ''}
     ${balanceForm(f)}</section>`;
