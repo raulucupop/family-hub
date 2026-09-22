@@ -42,10 +42,8 @@ app.disable('x-powered-by'); // no reason to advertise Express + its version
 const CSP = [
   "default-src 'self'",
   "script-src 'self'",
-  "style-src 'self' 'unsafe-inline'",
-  // No web fonts any more — the system face needs nothing fetched, so no outside host is trusted
-  // for styles or fonts. One fewer third party, the same reason Chart.js is served from here.
-  "font-src 'self'",
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  'font-src https://fonts.gstatic.com',
   "img-src 'self' data:",
   "connect-src 'self'",
   "object-src 'none'",
