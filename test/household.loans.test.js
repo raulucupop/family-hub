@@ -293,3 +293,86 @@ test('search results carry the currency of the row they came from', async (t) =>
   const chargeHit = (await api.get('/api/search?q=centrala')).body.results.find((r) => r.kind === 'charge');
   assert.equal(chargeHit.currency, 'EUR');
 });
+
+/* Debt between people runs both ways. It is the same row with a direction rather than a second
+   table, so what has to be proved is that the two directions never mix: not in the totals, not in
+   the repayment history, and not when an old row written before the column existed is read back. */
+test('money owed to somebody is the same shape, pointed the other way', async (t) => {
+  const api = await startServer();
+  t.after(() => api.stop());
+  const debt = (await api.post('/api/loans', {
+    person: 'Mihai', amount: 5000, date: today(), due_date: plusDays(90), direction: 'in',
+  })).body;
+  assert.equal(debt.direction, 'in');
+  assert.equal(debt.balance, 5000);
+
+  await t.test('paying some of it back moves the balance', async () => {
+    const after = (await api.post(`/api/loans/${debt.id}/payments`, { amount: 1200, date: today() })).body;
+    assert.equal(after.repaid, 1200);
+    assert.equal(after.balance, 3800);
+    assert.equal(after.direction, 'in', 'a payment must not change which way the debt runs');
+  });
+
+  await t.test('and it cannot be paid before it was borrowed', async () => {
+    const bad = await api.post(`/api/loans/${debt.id}/payments`, { amount: 10, date: plusDays(-5) });
+    assert.equal(bad.status, 400, bad.text);
+    assert.match(bad.body.error, /borrowed/i, 'the message has to describe the direction it is about');
+  });
+});
+
+test('lending and owing are kept apart', async (t) => {
+  const api = await startServer();
+  t.after(() => api.stop());
+  await api.post('/api/loans', { person: 'Ralu', amount: 2500, date: today() });
+  await api.post('/api/loans', { person: 'Mihai', amount: 5000, date: today(), direction: 'in' });
+
+  const rows = (await api.get('/api/loans')).body;
+  const out = rows.filter((l) => l.direction === 'out');
+  const owed = rows.filter((l) => l.direction === 'in');
+  assert.equal(out.length, 1);
+  assert.equal(owed.length, 1);
+  assert.equal(out[0].person, 'Ralu');
+  assert.equal(owed[0].person, 'Mihai');
+  assert.notEqual(out.reduce((s, l) => s + l.balance, 0), rows.reduce((s, l) => s + l.balance, 0),
+    'a single total across both directions would report a debt as an asset');
+});
+
+test('a loan written before the column existed is money lent out', async (t) => {
+  const api = await startServer();
+  t.after(() => api.stop());
+  const loan = (await api.post('/api/loans', { person: 'Vechi', amount: 100, date: today() })).body;
+  // exactly what an upgraded database holds: the row is there, the column is not filled in
+  const { DatabaseSync } = require('node:sqlite');
+  const path = require('node:path');
+  const d = new DatabaseSync(path.join(api.dir, 'familyhub.db'));
+  d.prepare('UPDATE personal_loans SET direction = NULL WHERE id = ?').run(loan.id);
+  d.close();
+
+  const row = (await api.get('/api/loans')).body.find((l) => l.id === loan.id);
+  assert.equal(row.direction, 'out', 'every row that predates the column was money the household lent');
+});
+
+test('which way a debt runs is not something an edit can flip', async (t) => {
+  const api = await startServer();
+  t.after(() => api.stop());
+  const debt = (await api.post('/api/loans', { person: 'Mihai', amount: 5000, date: today(), direction: 'in' })).body;
+  await api.post(`/api/loans/${debt.id}/payments`, { amount: 1000, date: today() });
+  // turning it round would make money paid out read as money that came back
+  const edited = (await api.put(`/api/loans/${debt.id}`, {
+    person: 'Mihai', amount: 5000, date: today(), direction: 'out',
+  })).body;
+  assert.equal(edited.direction, 'in');
+  assert.equal(edited.repaid, 1000, 'the repayment history stays attached to the direction it was made in');
+});
+
+test('search says which way the money went', async (t) => {
+  const api = await startServer();
+  t.after(() => api.stop());
+  await api.post('/api/loans', { person: 'Ralu', amount: 2500, date: today() });
+  await api.post('/api/loans', { person: 'Mihai', amount: 5000, date: today(), direction: 'in' });
+
+  const ralu = (await api.get('/api/search?q=Ralu')).body.results.find((h) => h.title === 'Ralu');
+  const mihai = (await api.get('/api/search?q=Mihai')).body.results.find((h) => h.title === 'Mihai');
+  assert.equal(ralu?.kind, 'loan');
+  assert.equal(mihai?.kind, 'debt', 'the direction is the kind, so the label can be translated');
+});

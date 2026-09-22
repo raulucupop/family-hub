@@ -626,11 +626,17 @@ app.get('/api/search', auth, (req, res) => {
     WHERE t.family_id = ? AND (lower(t.title) LIKE ? OR lower(COALESCE(t.note,'')) LIKE ?) ORDER BY t.done, t.id LIMIT 10
   `).all(fid, like, like), (r) => ({ id: r.id, title: r.title, sub: [r.who, r.done ? 'done' : null].filter(Boolean).join(' · '), date: r.due_date }));
 
-  // a loan is findable by the person holding the money — that is the only name anyone remembers
-  add('loan', 'money', db.prepare(`
-    SELECT l.id, l.person, l.amount, l.currency, l.date, l.due_date, l.note FROM personal_loans l
-    WHERE l.family_id = ? AND (lower(l.person) LIKE ? OR lower(COALESCE(l.note,'')) LIKE ?) ORDER BY l.date DESC LIMIT 10
-  `).all(fid, like, like), (r) => ({ id: r.id, title: r.person, sub: r.note || '', date: r.due_date || r.date, amount: r.amount, currency: r.currency }));
+  // A loan is findable by the person holding the money — that is the only name anyone remembers.
+  // Which way it runs is the kind rather than a word inside the subtitle: the subtitle is free text
+  // rendered as-is, so a direction written there would stay English on a Romanian screen, while the
+  // kind is a label the client already translates.
+  const loanRows = db.prepare(`
+    SELECT l.id, l.person, l.amount, l.currency, l.date, l.due_date, l.note, l.direction FROM personal_loans l
+    WHERE l.family_id = ? AND (lower(l.person) LIKE ? OR lower(COALESCE(l.note,'')) LIKE ?) ORDER BY l.date DESC LIMIT 20
+  `).all(fid, like, like);
+  const loanHit = (r) => ({ id: r.id, title: r.person, sub: r.note || '', date: r.due_date || r.date, amount: r.amount, currency: r.currency });
+  add('loan', 'money', loanRows.filter((r) => loanDirection(r.direction) === 'out').slice(0, 10), loanHit);
+  add('debt', 'money', loanRows.filter((r) => loanDirection(r.direction) === 'in').slice(0, 10), loanHit);
 
   add('goal', 'money', db.prepare(`
     SELECT g.id, g.title, g.target, u.name AS who FROM savings_goals g LEFT JOIN users u ON u.id = g.user_id
@@ -1328,20 +1334,26 @@ const LOAN_SELECT = `
 // stays €500 however the household reports itself. NULL is a row written before this existed,
 // which was necessarily household currency.
 const loanCurrency = (r, famCurrency) => r.currency || famCurrency || 'RON';
+// 'out' is money the household lent; 'in' is money it owes. Anything else — including the NULL in
+// every row written before the column existed — is money lent out.
+const loanDirection = (d) => (d === 'in' ? 'in' : 'out');
 const loanRow = (r, famCurrency) => {
   const balance = Math.round((Number(r.amount) - Number(r.repaid)) * 100) / 100;
   return {
-    ...r, currency: loanCurrency(r, famCurrency),
+    ...r, currency: loanCurrency(r, famCurrency), direction: loanDirection(r.direction),
     repaid: Math.round(Number(r.repaid) * 100) / 100, balance, settled: balance <= 0.005,
   };
 };
 function validateLoan(b) {
-  if (!str(b.person)) return 'Say who the money went to';
+  const owed = loanDirection(b.direction) === 'in';
+  if (!str(b.person)) return owed ? 'Say who the money is owed to' : 'Say who the money went to';
   const amount = Number(b.amount);
   if (!(amount > 0)) return 'Amount must be greater than zero';
   if (!isDate(b.date)) return 'Pick the date the money was handed over';
   if (b.due_date && !isDate(b.due_date)) return 'Due date must be a real date';
-  if (b.due_date && b.due_date < b.date) return 'The money cannot be due back before it was lent';
+  if (b.due_date && b.due_date < b.date) {
+    return owed ? 'The money cannot be due back before it was borrowed' : 'The money cannot be due back before it was lent';
+  }
   if (b.currency != null && b.currency !== '' && !CURRENCY_SYMBOL[b.currency]) return 'Currency must be RON, EUR or GBP';
   return null;
 }
@@ -1359,8 +1371,8 @@ app.post('/api/loans', auth, canWrite, (req, res) => {
     return res.status(400).json({ error: 'Person must be a member of the family' });
   }
   const currency = b.currency || familyCurrencyCode(req.user.family_id);
-  const info = db.prepare('INSERT INTO personal_loans (family_id, person, amount, date, due_date, user_id, note, currency) VALUES (?,?,?,?,?,?,?,?)')
-    .run(req.user.family_id, str(b.person), Number(b.amount), b.date, b.due_date || null, uid, str(b.note), currency);
+  const info = db.prepare('INSERT INTO personal_loans (family_id, person, amount, date, due_date, user_id, note, currency, direction) VALUES (?,?,?,?,?,?,?,?,?)')
+    .run(req.user.family_id, str(b.person), Number(b.amount), b.date, b.due_date || null, uid, str(b.note), currency, loanDirection(b.direction));
   res.json(loanRow(db.prepare(`${LOAN_SELECT} WHERE l.id = ?`).get(info.lastInsertRowid), currency));
 });
 app.put('/api/loans/:id', auth, canWrite, (req, res) => {
@@ -1373,6 +1385,8 @@ app.put('/api/loans/:id', auth, canWrite, (req, res) => {
   if (uid != null && !db.prepare('SELECT id FROM users WHERE id = ? AND family_id = ?').get(uid, req.user.family_id)) {
     return res.status(400).json({ error: 'Person must be a member of the family' });
   }
+  // direction is not editable in place: flipping it would turn a repayment history inside out —
+  // money that came back becoming money paid out. Delete and re-enter is the honest way round.
   db.prepare('UPDATE personal_loans SET person = ?, amount = ?, date = ?, due_date = ?, user_id = ?, note = ?, currency = ? WHERE id = ?')
     .run(str(b.person), Number(b.amount), b.date, b.due_date || null, uid, str(b.note),
       b.currency || row.currency || familyCurrencyCode(req.user.family_id), row.id);
@@ -1394,9 +1408,15 @@ app.post('/api/loans/:id/payments', auth, canWrite, (req, res) => {
   const amount = Number(b.amount);
   if (!(amount > 0)) return res.status(400).json({ error: 'Amount must be greater than zero' });
   if (!isDate(b.date)) return res.status(400).json({ error: 'Pick a date' });
-  // Money cannot come back before it went out. The loan already refuses a due date that precedes
-  // it; the repayment was the same mistake left unguarded.
-  if (b.date < loan.date) return res.status(400).json({ error: `That is before the money was lent (${loan.date})` });
+  // Money cannot be paid back before it changed hands. The loan already refuses a due date that
+  // precedes it; the repayment was the same mistake left unguarded.
+  if (b.date < loan.date) {
+    return res.status(400).json({
+      error: loanDirection(loan.direction) === 'in'
+        ? `That is before the money was borrowed (${loan.date})`
+        : `That is before the money was lent (${loan.date})`,
+    });
+  }
   // paying back more than was lent is a data-entry slip, not a generous friend
   if (amount > loanRow(loan).balance + 0.005) return res.status(400).json({ error: 'That is more than is still owed' });
   db.prepare('INSERT INTO personal_loan_payments (loan_id, family_id, amount, date, note) VALUES (?,?,?,?,?)')

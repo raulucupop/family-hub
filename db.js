@@ -721,6 +721,13 @@ if (!db.prepare('PRAGMA table_info(watched_sites)').all().some((c) => c.name ===
 if (!db.prepare('PRAGMA table_info(personal_loans)').all().some((c) => c.name === 'currency')) {
   db.exec('ALTER TABLE personal_loans ADD COLUMN currency TEXT');
 }
+// Debt between people runs both ways, and the two directions need the same things: a name, an
+// amount, a date it was agreed, and a record of what has been paid off since. So this is one
+// column rather than a second table — 'out' is money the household lent, 'in' is money it owes.
+// NULL is a row written before the column existed, and every one of those was money lent out.
+if (!db.prepare('PRAGMA table_info(personal_loans)').all().some((c) => c.name === 'direction')) {
+  db.exec('ALTER TABLE personal_loans ADD COLUMN direction TEXT');
+}
 if (!db.prepare('PRAGMA table_info(watched_items)').all().some((c) => c.name === 'announced')) {
   db.exec('ALTER TABLE watched_items ADD COLUMN announced INTEGER NOT NULL DEFAULT 1');
 }

@@ -411,6 +411,14 @@ const RO = {
   'Nobody owes you anything': 'Nu-ți datorează nimeni nimic',
   'Record money you lend out and what comes back is tracked here.': 'Notează banii pe care îi dai cu împrumut, iar ce se întoarce se ține minte aici.',
   'Lend money': 'Împrumută bani', 'Who has it': 'La cine sunt', 'Due back': 'De returnat până',
+  // the same debt seen from the other end
+  'Money we owe': 'Bani datorați altora', 'Still to pay back': 'Rest de dat',
+  'You owe nobody': 'Nu datorezi nimănui',
+  'Record money you borrow and what you pay back is tracked here.': 'Notează banii pe care îi iei cu împrumut, iar ce plătești înapoi se ține minte aici.',
+  'Record a debt': 'Adaugă o datorie', 'Who lent it': 'De la cine', 'Repay by': 'De dat până',
+  'borrowed': 'luat', 'paid': 'plătit', 'to repay by': 'de dat până',
+  'Record payment': 'Notează o plată', 'Debt recorded': 'Datorie notată',
+  'We owe people': 'De dat',
   // year in review
   'Year': 'An', 'Monthly average': 'Media lunară',
   'months with spending': 'luni cu cheltuieli', 'month with spending': 'lună cu cheltuieli',
@@ -1933,23 +1941,27 @@ function ribbonHtml(reminders) {
    number: 28.000 € lent out does not show up anywhere in a RON figure. Currencies are never added
    together — each one gets its own chip, which is the same rule the rest of the app follows. */
 function exposureHtml(loans, credits) {
-  const owed = {};
+  const owed = {}, owing = {};
   for (const l of loans || []) {
     if (l.settled) continue;
     const bal = Number(l.balance ?? l.amount) || 0;
     if (bal <= 0) continue;
     const c = l.currency || cur();
-    owed[c] = (owed[c] || 0) + bal;
+    const bucket = (l.direction || 'out') === 'in' ? owing : owed;
+    bucket[c] = (bucket[c] || 0) + bal;
   }
   const debt = (credits || []).reduce((s, c) => s + (Number(c.balance) || 0), 0);
   const chips = [];
   // one chip per idea, the currencies listed side by side inside it — repeating the label once per
   // currency read like two separate debts rather than one amount that happens to be in two monies
-  const owedAmounts = Object.entries(owed).sort((a, b) => b[1] - a[1]);
-  if (owedAmounts.length) {
-    chips.push(`<a class="expchip owed" href="#money"><span>${tr('Owed to us')}</span>${
-      owedAmounts.map(([c, amt]) => `<b class="amount">${moneyIn(amt, c)}</b>`).join('<i class="expsep">·</i>')}</a>`);
-  }
+  const chip = (cls, label, amounts) => {
+    const sorted = Object.entries(amounts).sort((a, b) => b[1] - a[1]);
+    if (!sorted.length) return;
+    chips.push(`<a class="expchip ${cls}" href="#money"><span>${tr(label)}</span>${
+      sorted.map(([c, amt]) => `<b class="amount">${moneyIn(amt, c)}</b>`).join('<i class="expsep">·</i>')}</a>`);
+  };
+  chip('owed', 'Owed to us', owed);
+  chip('owing', 'We owe people', owing);
   if (debt > 0) chips.push(`<a class="expchip debt" href="#money"><span>${tr('Credit left to pay')}</span><b class="amount">${money(debt)}</b></a>`);
   if (!chips.length) return '';
   return `<div class="exposure">${chips.join('')}</div>`;
@@ -2326,27 +2338,45 @@ async function moneyDebt(body) {
    A bank loan has a schedule; lending your brother 2.000 lei has a name and whatever comes back. The
    outstanding figure is recomputed from the repayments on every render rather than kept anywhere, so
    it cannot drift from the rows underneath it. */
-function renderLent(el, loans, members, refresh) {
-  if (!el) return;
-  const open = loans.filter((l) => !l.settled);
+/* Debt between people, both ways round. Lending a friend 2.000 lei and owing your brother 5.000
+   are the same object seen from either end — a name, an amount, a date, and what has been paid off
+   since — so they share one renderer and differ only in wording. Two cards rather than one list
+   with a marker: "who owes me" and "what I owe" are different questions, and the answer to each is
+   a total you want to read without filtering anything. */
+const LOAN_WORDS = {
+  out: {
+    title: 'Money lent', total: 'Still out with people',
+    emptyTitle: 'Nobody owes you anything', emptyBody: 'Record money you lend out and what comes back is tracked here.',
+    addTitle: 'Lend money', who: 'Who has it', placeholder: 'Andrei',
+    principal: 'lent', paid: 'back', due: 'due back', pay: 'Record repayment', saved: 'Loan recorded',
+  },
+  in: {
+    title: 'Money we owe', total: 'Still to pay back',
+    emptyTitle: 'You owe nobody', emptyBody: 'Record money you borrow and what you pay back is tracked here.',
+    addTitle: 'Record a debt', who: 'Who lent it', placeholder: 'Mihai',
+    principal: 'borrowed', paid: 'paid', due: 'to repay by', pay: 'Record payment', saved: 'Debt recorded',
+  },
+};
+function loanSection(dir, rows, members) {
+  const w = LOAN_WORDS[dir];
+  const iso = new Date().toISOString().slice(0, 10);
+  const open = rows.filter((l) => !l.settled);
   const outstanding = open.reduce((m, l) => {
     const c = l.currency || FAMILY?.currency || 'RON';
     m[c] = (m[c] || 0) + Number(l.balance || 0);
     return m;
   }, {});
   const outstandingText = Object.entries(outstanding).map(([c, v]) => moneyIn(v, c)).join(' · ');
-  const iso = new Date().toISOString().slice(0, 10);
   const overdue = open.filter((l) => l.due_date && l.due_date < iso);
-
-  el.innerHTML = `<section class="card" style="margin-top:18px">
+  return `<section class="card" style="margin-top:18px">
     <div class="row" style="justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap">
-      <h3 style="margin:0">${tr('Money lent')}</h3>
-      ${open.length ? `<div style="text-align:right"><div class="muted" style="font-size:12.5px">${tr('Still out with people')}</div>
+      <h3 style="margin:0">${tr(w.title)}</h3>
+      ${open.length ? `<div style="text-align:right"><div class="muted" style="font-size:12.5px">${tr(w.total)}</div>
         <div class="amount"><b>${outstandingText}</b></div></div>` : ''}
     </div>
     ${overdue.length ? `<p class="badge warn" style="margin:10px 0 0">${overdue.length} ${tr(overdue.length === 1 ? 'is past its date' : 'are past their date')}</p>` : ''}
 
-    ${loans.length ? `<ul class="chorelist" style="margin-top:12px">${loans.map((l) => {
+    ${rows.length ? `<ul class="chorelist" style="margin-top:12px">${rows.map((l) => {
     const pct = Number(l.amount) > 0 ? Math.min(100, (Number(l.repaid) / Number(l.amount)) * 100) : 0;
     const late = !l.settled && l.due_date && l.due_date < iso;
     return `<li class="chorerow${l.settled ? ' is-done' : ''}" style="display:block">
@@ -2357,14 +2387,14 @@ function renderLent(el, loans, members, refresh) {
       <div class="bar" style="margin-top:8px"><i style="width:${pct}%"></i></div>
       <div class="row" style="justify-content:space-between;margin-top:4px;gap:8px;flex-wrap:wrap">
         <span class="muted" style="font-size:12.5px">${[
-      `${tr('lent')} ${moneyIn(l.amount, l.currency)}`,
-      Number(l.repaid) > 0 ? `${tr('back')} ${moneyIn(l.repaid, l.currency)}` : null,
-      l.due_date ? `${tr('due back')} ${fdate(l.due_date)}` : tr('no date agreed'),
+      `${tr(w.principal)} ${moneyIn(l.amount, l.currency)}`,
+      Number(l.repaid) > 0 ? `${tr(w.paid)} ${moneyIn(l.repaid, l.currency)}` : null,
+      l.due_date ? `${tr(w.due)} ${fdate(l.due_date)}` : tr('no date agreed'),
       l.user_name ? esc(l.user_name) : null,
       l.note ? esc(l.note) : null,
     ].filter(Boolean).join(' · ')}</span>
         ${canWrite() ? `<span class="row" style="gap:6px">
-          ${l.settled ? '' : `<button class="btn ghost small" data-lenpay="${l.id}">${tr('Record repayment')}</button>`}
+          ${l.settled ? '' : `<button class="btn ghost small" data-lenpay="${l.id}">${tr(w.pay)}</button>`}
           <button class="btn danger small" data-lendel="${l.id}" aria-label="${tr('Delete')}">✕</button></span>` : ''}
       </div>
       <form class="formgrid" data-lenform="${l.id}" hidden style="margin-top:10px">
@@ -2374,23 +2404,29 @@ function renderLent(el, loans, members, refresh) {
       </form>
     </li>`;
   }).join('')}</ul>`
-    : `<div class="empty" style="margin-top:12px"><b>${tr('Nobody owes you anything')}</b>${tr('Record money you lend out and what comes back is tracked here.')}</div>`}
+    : `<div class="empty" style="margin-top:12px"><b>${tr(w.emptyTitle)}</b>${tr(w.emptyBody)}</div>`}
 
     ${canWrite() ? `<div class="subform">
-      <h4>${tr('Lend money')}</h4>
-      <form id="lentform" class="formgrid">
-        <div><label>${tr('Who has it')}</label><input name="person" placeholder="Andrei" required></div>
+      <h4>${tr(w.addTitle)}</h4>
+      <form class="formgrid" data-loanadd="${dir}">
+        <input type="hidden" name="direction" value="${dir}">
+        <div><label>${tr(w.who)}</label><input name="person" placeholder="${w.placeholder}" required></div>
         <div><label>${tr('Amount')}</label><input name="amount" type="number" step="0.01" min="0.01" required></div>
         <div><label>${tr('Currency')}</label><select name="currency">${Object.entries(CURRENCIES).map(([code, sym]) =>
     `<option value="${code}" ${code === FAMILY?.currency ? 'selected' : ''}>${code}${code === sym ? '' : ` (${sym})`}</option>`).join('')}</select></div>
         <div><label>${tr('Date')}</label><input name="date" type="date" value="${iso}" required></div>
-        <div><label>${tr('Due back')} <span class="muted">${tr('optional')}</span></label><input name="due_date" type="date"></div>
+        <div><label>${tr(dir === 'in' ? 'Repay by' : 'Due back')} <span class="muted">${tr('optional')}</span></label><input name="due_date" type="date"></div>
         <div><label>${tr('Person')}</label><select name="user_id"><option value="">${tr('Anyone')}</option>
           ${members.map((m) => `<option value="${m.id}">${esc(m.name)}</option>`).join('')}</select></div>
         <div><label>${tr('Note')} <span class="muted">${tr('optional')}</span></label><input name="note"></div>
         <button class="btn small">${tr('Save')}</button>
       </form></div>` : ''}
   </section>`;
+}
+function renderLent(el, loans, members, refresh) {
+  if (!el) return;
+  const byDir = (d) => loans.filter((l) => (l.direction || 'out') === d);
+  el.innerHTML = loanSection('out', byDir('out'), members) + loanSection('in', byDir('in'), members);
 
   el.querySelectorAll('[data-lenpay]').forEach((b) => (b.onclick = () => {
     const f = el.querySelector(`[data-lenform="${b.dataset.lenpay}"]`);
@@ -2408,11 +2444,13 @@ function renderLent(el, loans, members, refresh) {
     const { hide, restore } = rowHide(b);
     undoableDelete({ hide, restore, commit: () => api('/loans/' + b.dataset.lendel, { method: 'DELETE' }).then(refresh) });
   }));
-  el.querySelector('#lentform')?.addEventListener('submit', async (e) => {
+  el.querySelectorAll('[data-loanadd]').forEach((f) => f.addEventListener('submit', async (e) => {
     e.preventDefault();
-    try { await api('/loans', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) }); toast(tr('Loan recorded'), 'success'); refresh(); }
-    catch (err) { toast(err.message, 'error'); }
-  });
+    try {
+      await api('/loans', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) });
+      toast(tr(LOAN_WORDS[f.dataset.loanadd].saved), 'success'); refresh();
+    } catch (err) { toast(err.message, 'error'); }
+  }));
 }
 /* ---------- year in review ----------
    The dashboard answers "how is this month going"; this answers "how was the year". Same stats
@@ -5149,7 +5187,7 @@ async function viewImport(el) {
 
 /* ---------- search ---------- */
 let SEARCH_Q = '';
-const SEARCH_KINDS = { expense: 'Expense', income: 'Income', bill: 'Bill', document: 'Document', credit: 'Credit', vehicle: 'Vehicle', property: 'Property', list: 'List', chore: 'Chore', todo: 'Task', loan: 'Money lent', goal: 'Goal', charge: 'Charge', maintenance: 'Repair', deadline: 'Deadline' };
+const SEARCH_KINDS = { expense: 'Expense', income: 'Income', bill: 'Bill', document: 'Document', credit: 'Credit', vehicle: 'Vehicle', property: 'Property', list: 'List', chore: 'Chore', todo: 'Task', loan: 'Money lent', debt: 'Money we owe', goal: 'Goal', charge: 'Charge', maintenance: 'Repair', deadline: 'Deadline' };
 async function viewSearch(el) {
   el.innerHTML = `<div class="pagehead"><div><h1>Search</h1><p>Across expenses, income, bills, acte, credits, cars, properties and lists.</p></div></div>
     <div class="card">

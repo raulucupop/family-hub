@@ -1194,3 +1194,7 @@ body.seat-dragging { cursor: grabbing; user-select: none; -webkit-user-select: n
 .reports > .reportsbody { padding-top: 4px; }
 .reports .grid2 > .card:first-child { margin-top: 0; }
 .expchip .expsep { font-style: normal; color: var(--ink-soft); opacity: .6; margin: 0 2px; }
+
+/* Money the household owes a person reads as a debt, not as an asset: the same amber the rest of
+   the app uses for "this is on you", so the two chips cannot be mistaken for each other at a glance. */
+.expchip.owing b { color: var(--amber); }
