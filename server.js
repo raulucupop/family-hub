@@ -4481,28 +4481,8 @@ function monthlyReportMail(lang, fam, prev, d, lines, m) {
 // mailed to the admins. The database alone is useless for restoring: it holds the metadata for
 // each act/invoice ("Pașaport, expires 2029") while the actual scan lives in DATA_DIR/uploads.
 
-// Minimal USTAR writer: a tar is just 512-byte headers followed by NUL-padded bodies. Adding a
-// dependency for that on a host where native builds are blocked is not worth it.
-function tarFiles(dir, names) {
-  const parts = [];
-  const padTo512 = (buf) => (buf.length % 512 ? Buffer.concat([buf, Buffer.alloc(512 - (buf.length % 512))]) : buf);
-  for (const name of names) {
-    const body = fs.readFileSync(path.join(dir, name));
-    const h = Buffer.alloc(512);
-    h.write(name.slice(0, 99), 0, 'utf8');                                              // name
-    h.write('0000644\0', 100); h.write('0000000\0', 108); h.write('0000000\0', 116);    // mode, uid, gid
-    h.write(body.length.toString(8).padStart(11, '0') + '\0', 124);                      // size, octal
-    h.write(Math.floor(fs.statSync(path.join(dir, name)).mtimeMs / 1000).toString(8).padStart(11, '0') + '\0', 136);
-    h.write('        ', 148);                                                            // checksum: spaces while summing
-    h.write('0', 156);                                                                   // typeflag: regular file
-    h.write('ustar\0', 257); h.write('00', 263);                                         // magic + version
-    let sum = 0; for (const b of h) sum += b;
-    h.write(sum.toString(8).padStart(6, '0') + '\0 ', 148);                              // real checksum
-    parts.push(h, padTo512(body));
-  }
-  parts.push(Buffer.alloc(1024)); // two zero blocks terminate the archive
-  return Buffer.concat(parts);
-}
+// shared with scripts/nas-backup.js, which builds the same archive for the NAS at home
+const { tarFiles } = require('./lib/tar');
 // The same consistent snapshot the weekly mail takes, but on demand and straight down the wire —
 // an off-site copy without going through cPanel. Admin only: the file is the whole database.
 app.get('/api/backup', auth, (req, res) => {
