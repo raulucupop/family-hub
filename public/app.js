@@ -464,7 +464,7 @@ const RO = {
   'Insurance (PAD)': 'Asigurare (PAD)', 'Additional insurance': 'Asigurare facultativă',
   'Insurance (PAD) due': 'Asigurarea (PAD) expiră', 'Additional insurance due': 'Asigurarea facultativă expiră', 'Property tax due': 'Impozitul scadent',
   'Mortgage lender': 'Banca ipotecii', 'Monthly payment (RON)': 'Rată lunară (RON)', 'Payment day of month': 'Ziua plății în lună',
-  'Rent (RON/mo, if rented out)': 'Chirie (RON/lună, dacă e închiriată)', 'Rent due day (1-31)': 'Ziua scadenței chiriei (1-31)', 'Rent (RON/mo)': 'Chirie (RON/lună)',
+  'Rent (RON/mo, if rented out)': 'Chirie (RON/lună, dacă e închiriată)', 'Rent per month (if rented out)': 'Chirie pe lună (dacă e închiriată)', 'Rent currency': 'Moneda chiriei','Rent due day (1-31)': 'Ziua scadenței chiriei (1-31)', 'Rent (RON/mo)': 'Chirie (RON/lună)',
   'Meter reading day (1-31)': 'Ziua citirii contoarelor (1-31)', 'Meters to read monthly': 'Contoare de citit lunar',
   '— none —': '— niciunul —', 'Electricity + gas': 'Electricitate + gaz', 'Electricity + gas + water': 'Electricitate + gaz + apă',
   'Payment link (Revolut.me)': 'Link de plată (Revolut.me)', 'Mortgage': 'Ipotecă', 'on day': 'în ziua',
@@ -3452,7 +3452,13 @@ async function viewProperties(el) {
       ['owner_id', 'Owner', 'select', ownerOpts],
       ...P_DEADLINES.map(([k, l]) => [k, l + ' due', 'date', '']),
       ['mortgage_lender', 'Mortgage lender', 'text', 'optional'], ['mortgage_payment', `Monthly payment (${cur()})`, 'number', ''], ['mortgage_due_day', 'Payment day of month', 'number', '15'],
-      ['rent_amount', `Rent (${cur()}/mo, if rented out)`, 'number', ''], ['rent_due_day', 'Rent due day (1-31)', 'number', '1'],
+      // the lease's own currency, the household's listed first: a flat let in euro is common, and a
+      // rent typed as 300 must not become 300 RON just because the form had nowhere to say otherwise
+      ['rent_amount', 'Rent per month (if rented out)', 'number', ''],
+      ['rent_currency', 'Rent currency', 'select', Object.entries(CURRENCIES)
+        .sort(([a], [b]) => (b === FAMILY?.currency) - (a === FAMILY?.currency))
+        .map(([code, sym]) => [code, code === sym ? code : `${code} (${sym})`])],
+      ['rent_due_day', 'Rent due day (1-31)', 'number', '1'],
       ['payment_link', 'Payment link (Revolut.me)', 'text', 'https://revolut.me/...'],
       ['managed', 'Ownership', 'select', MANAGED_OPTS],
     ]) : ''}
