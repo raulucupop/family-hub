@@ -4476,15 +4476,11 @@ function monthlyReportMail(lang, fam, prev, d, lines, m) {
   return { subject: t.subject, text: text + '\n', html };
 }
 
-// ---------- weekly backup by email ----------
-// A consistent snapshot (VACUUM INTO) of the database, plus the uploaded files, gzipped and
-// mailed to the admins. The database alone is useless for restoring: it holds the metadata for
-// each act/invoice ("Pașaport, expires 2029") while the actual scan lives in DATA_DIR/uploads.
-
-// shared with scripts/nas-backup.js, which builds the same archive for the NAS at home
-const { tarFiles } = require('./lib/tar');
-// The same consistent snapshot the weekly mail takes, but on demand and straight down the wire —
-// an off-site copy without going through cPanel. Admin only: the file is the whole database.
+// ---------- backup ----------
+// The nightly copy is pulled by the NAS at home over SSH (scripts/nas-backup.js). It replaced a
+// weekly backup by email, which had to drop the scans once they outgrew an attachment.
+// This is the same consistent snapshot (VACUUM INTO), on demand and straight down the wire.
+// Admin only: the file is the whole database.
 app.get('/api/backup', auth, (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admins only' });
   const tmp = path.join(DATA_DIR, `backup-dl-${crypto.randomBytes(6).toString('hex')}.db`);
@@ -4501,70 +4497,6 @@ app.get('/api/backup', auth, (req, res) => {
     try { fs.unlinkSync(tmp); } catch {} // the snapshot is a temp file whatever happened
   }
 });
-async function runWeeklyBackup() {
-  if (!process.env.MAIL_FROM) return;
-  const fams = db.prepare('SELECT id FROM families').all();
-  if (fams.length !== 1) return; // the file contains every family — only safe on a single-family install
-  const to = db.prepare("SELECT email FROM users WHERE role = 'admin' AND email IS NOT NULL").all().map((u) => u.email);
-  if (!to.length) return;
-  const now = new Date();
-  const week = Math.ceil(((now.getTime() - Date.UTC(now.getUTCFullYear(), 0, 1)) / 86400000 + 1) / 7);
-  const key = `backup:${now.getUTCFullYear()}-W${week}`;
-  if (!claimKeys([key]).length) return;
-  const tmp = path.join(DATA_DIR, `backup-tmp-${Date.now()}.db`);
-  const size = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${(n / 1024).toFixed(1)} KB`);
-  const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
-  const CAP = 20 * 1024 * 1024; // keep the whole message under the usual ~25 MB mailbox limit
-  try {
-    const zlib = require('zlib');
-    db.exec(`VACUUM INTO '${tmp.replace(/\\/g, '/').replace(/'/g, "''")}'`);
-    const gz = zlib.gzipSync(fs.readFileSync(tmp));
-    fs.unlinkSync(tmp);
-    const stamp = now.toISOString().slice(0, 10);
-    if (gz.length > CAP) {
-      await sendMail(to, `Family Hub — backup ${stamp} too large to email`,
-        `The weekly database backup is ${size(gz.length)} — too large to attach.\nCopy DATA_DIR/familyhub.db and DATA_DIR/uploads off the server manually.\n`,
-        undefined,
-        htmlEmail(`<p>The weekly database backup is <b>${size(gz.length)}</b> — too large to attach.</p>
-          <p>Copy <code style="background:#eff2f1;padding:1px 5px;border-radius:4px">DATA_DIR/familyhub.db</code> and <code style="background:#eff2f1;padding:1px 5px;border-radius:4px">DATA_DIR/uploads</code> off the server manually.</p>`));
-      return;
-    }
-    const attachments = [{ filename: `familyhub-${stamp}.db.gz`, content: gz }];
-
-    // the uploads (scans, invoices, meter photos, avatars) — the database is only metadata without them
-    const names = fs.readdirSync(UPLOAD_DIR).filter((f) => { try { return fs.statSync(path.join(UPLOAD_DIR, f)).isFile(); } catch { return false; } });
-    let filesNote;
-    if (!names.length) {
-      filesNote = 'There are no uploaded files yet.';
-    } else {
-      const tgz = zlib.gzipSync(tarFiles(UPLOAD_DIR, names));
-      if (gz.length + tgz.length > CAP) {
-        // already-compressed jpg/pdf will not shrink, so this is the honest failure mode:
-        // say so loudly instead of quietly shipping a backup that cannot restore the scans
-        filesNote = `⚠ The ${plural(names.length, 'uploaded file', 'uploaded files')} (${size(tgz.length)}) were TOO LARGE to attach and are NOT in this backup.\n`
-          + `  Copy DATA_DIR/uploads off the server yourself — without it the scans and invoices cannot be restored.`;
-      } else {
-        attachments.push({ filename: `familyhub-uploads-${stamp}.tar.gz`, content: tgz });
-        filesNote = `Also attached: ${plural(names.length, 'uploaded file', 'uploaded files')} (${size(tgz.length)}) — the scans, invoices, meter photos and profile pictures.`;
-      }
-    }
-    await sendMail(to, `Family Hub — weekly backup ${stamp}`,
-      `Attached is this week's backup.\n\n`
-      + `- Database: ${(gz.length / 1024).toFixed(1)} KB gzipped\n- ${filesNote}\n\n`
-      + `To restore: stop the app, gunzip the .db.gz over familyhub.db in your DATA_DIR, and untar the uploads archive into DATA_DIR/uploads. Then start the app.\n`,
-      attachments,
-      htmlEmail(`<p>Attached is this week's backup.</p>
-        <div style="margin:12px 0;padding:10px 14px;background:#eff2f1;border-radius:8px;font-size:14px;">
-          <div>Database: <b>${(gz.length / 1024).toFixed(1)} KB</b> gzipped</div>
-          <div style="margin-top:4px">${htmlEsc(filesNote)}</div>
-        </div>
-        <p style="color:#45565f;font-size:13px;">To restore: stop the app, gunzip the .db.gz over <code style="background:#eff2f1;padding:1px 5px;border-radius:4px">familyhub.db</code> in your DATA_DIR, and untar the uploads archive into <code style="background:#eff2f1;padding:1px 5px;border-radius:4px">DATA_DIR/uploads</code>. Then start the app.</p>`));
-  } catch (err) {
-    try { fs.unlinkSync(tmp); } catch {}
-    releaseKeys([key]);
-    console.error('weekly backup:', err.message);
-  }
-}
 
 // Cascading deletes remove rows, not the files they point at, so a deleted property or vehicle
 // leaves its scans behind forever. Sweep anything no row references any more.
@@ -4618,7 +4550,6 @@ async function emailReminderTick() {
   try { await runMonthlyReports(); } catch (err) { console.error('monthly report:', err.message); }
   // belt and braces: if the hourly /api/cron/watch was never wired up, at least check once a day
   try { await runWatchers('daily'); } catch (err) { console.error('page watch:', err.message); }
-  try { await runWeeklyBackup(); } catch (err) { console.error('weekly backup:', err.message); }
   // before the orphan sweep, so the PDFs it frees are collected in the same pass
   try { sweepMailDrafts(); } catch (err) { console.error('draft sweep:', err.message); }
   try { sweepOrphanUploads(); } catch (err) { console.error('orphan sweep:', err.message); }
