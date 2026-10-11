@@ -18,11 +18,13 @@ const ADULTS = [
   { id: 'bunicul', name: 'Bunicul', color: '#6f7f5c', speed: 62, chase: 106, range: 210, fov: 35, area: 'yard',
     trait: 'Păzește curtea și șopronul. Vede departe, dar mai ațipește pe bancă.',
     spot: ['Ce faci acolo, măi?', 'Lasă pisica-n pace!', 'Stai, că te prind!'],
-    caught: ['Hai, gata cu fuga!', 'Te-am prins, ștrengarule!'], lost: ['Unde a dispărut?', 'Of, copiii ăștia...'] },
+    caught: ['Hai, gata cu fuga!', 'Te-am prins, ștrengarule!'], lost: ['Unde a dispărut?', 'Of, copiii ăștia...'],
+    hello: ['Salut, ce mai faci?', 'Joacă-te frumos!'] },
   { id: 'irina', name: 'Irina', color: '#c76b8e', speed: 76, chase: 122, range: 160, fov: 55, area: 'house', hears: true,
     trait: 'Păzește casa. E iute și aude când alergi pe lângă ea.',
     spot: ['Hei! Unde fugi cu pisica?', 'Pisicile nu intră în casă!', 'Te-am văzut!'],
-    caught: ['Gata, înapoi în curte!', 'Prins!'], lost: ['Unde s-a ascuns?', 'Lasă, că te găsesc eu.'] },
+    caught: ['Gata, înapoi în curte!', 'Prins!'], lost: ['Unde s-a ascuns?', 'Lasă, că te găsesc eu.'],
+    hello: ['Bună! Ți-e foame?', 'Să nu-mi aduci pisici în casă!'] },
 ];
 
 // Ce poate fiecare copil în jocul ăsta. calm = pisicile nu se sperie de el; small = adulții îl văd mai greu.

@@ -182,9 +182,15 @@ function updateAdult(a, dt) {
   // Irina aude când alergi pe lângă ea și se întoarce.
   if (a.hears && k.curSpeed > 92 && dist(a, k) < 85 && !(k.fx.invis > 0) && lineOfSight(a, k)) a.facing = Math.atan2(k.y - a.y, k.x - a.x);
   const sees = canSee(a, k);
+  // Fără pisică în brațe, adulții te lasă în pace; cel mult te salută.
+  const hasCat = k.carrying.length > 0;
+  if (a.state === 'chase' && !hasCat) {
+    a.state = 'return'; a.alert = 0; nextWaypoint(a, true); say(a, pick(['Bine, bine...', 'Așa, fără pisici!']));
+  }
+  if (sees && !hasCat && a.sayT <= 0 && Math.random() < 0.25 * dt) say(a, pick(a.hello));
   if (a.state !== 'chase') {
-    a.alert = sees ? Math.min(1, a.alert + dt * (1.2 + 1.6 * (1 - dist(a, k) / a.range))) : Math.max(0, a.alert - 0.6 * dt);
-    if (sees) a.facing = turnToward(a.facing, Math.atan2(k.y - a.y, k.x - a.x), dt * 4);
+    a.alert = sees && hasCat ? Math.min(1, a.alert + dt * (1.2 + 1.6 * (1 - dist(a, k) / a.range))) : Math.max(0, a.alert - 0.6 * dt);
+    if (sees && hasCat) a.facing = turnToward(a.facing, Math.atan2(k.y - a.y, k.x - a.x), dt * 4);
     if (a.alert >= 1) { a.state = 'chase'; a.lostT = 0; a.think = 0; say(a, pick(a.spot)); sfx('alert'); G.shake = 0.25; }
   }
   if (a.state === 'patrol' || a.state === 'return') {

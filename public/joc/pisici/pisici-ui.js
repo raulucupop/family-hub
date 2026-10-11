@@ -64,7 +64,7 @@ function startGame() {
     <small>${CAT_ABILITIES[id].desc}</small><span class="cd" hidden></span></button>`).join('');
   $('cats').innerHTML = G.cats.map(c => `
     <div class="catchip" data-cat="${c.id}"><span class="paw" style="background:${c.color}"></span><b>${c.name}</b><span class="st"></span></div>`).join('');
-  showToast('E 17:00. Bunicul e în curte, Irina în casă. Coșul e lângă prispă.');
+  showToast('E 17:00. Fără pisică în brațe, Bunicul și Irina te lasă în pace.');
   last = performance.now();
   raf = requestAnimationFrame(frame);
   $('scr-game').scrollIntoView({ block: 'start' });
