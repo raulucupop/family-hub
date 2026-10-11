@@ -18,6 +18,7 @@ const ICON = {
   check: '<path d="M20.5 6.5 9.5 17.5 4 12"/>',
   // a warranty is cover: a shield, with a tick for "still claimable"
   shield: '<path d="M12 3.2 5 6v5.4c0 4.2 2.8 7.6 7 9.4 4.2-1.8 7-5.2 7-9.4V6Z"/><path d="m9 12 2.2 2.2L15.2 10"/>',
+  moon: '<path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5Z"/>',
   radar: '<circle cx="12" cy="12" r="3"/><path d="M12 12 19 5"/><path d="M16.9 7.1a7 7 0 1 1-9.8 0"/><path d="M19.8 4.2a11 11 0 1 1-15.6 0"/>',
   wallet: '<path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H18a1 1 0 0 1 1 1v1.5"/><rect x="3" y="7.5" width="18" height="12" rx="2.5"/><path d="M16.5 13.5h2.5"/>',
   coins: '<ellipse cx="12" cy="6.5" rx="7" ry="3"/><path d="M5 6.5v5c0 1.66 3.13 3 7 3s7-1.34 7-3v-5"/><path d="M5 11.5v5c0 1.66 3.13 3 7 3s7-1.34 7-3v-5"/>',
@@ -469,7 +470,7 @@ const RO = {
   '— none —': '— niciunul —', 'Electricity + gas': 'Electricitate + gaz', 'Electricity + gas + water': 'Electricitate + gaz + apă',
   'Payment link (Revolut.me)': 'Link de plată (Revolut.me)', 'Mortgage': 'Ipotecă', 'on day': 'în ziua',
   // properties we administer for someone else
-  'Property & things': 'Proprietăți și bunuri', 'Household': 'Gospodărie',
+  'Property & things': 'Proprietăți și bunuri', 'Household': 'Gospodărie', 'Family game': 'Joc de familie',
   // one rental at a glance
   'Open dashboard': 'Deschide panoul', 'Full panel': 'Panoul complet', 'Outstanding': 'De încasat',
   'This property': 'Această proprietate', 'This property (not our money)': 'Această proprietate (nu banii noștri)',
@@ -1201,6 +1202,7 @@ function shell(active) {
         ? `<div class="navgroup">${tr(ic)}</div>`
         : `<a class="navlink ${k === active ? 'active' : ''}" href="#${k}">${icon(ic)}<span>${l}</span>${k === 'alerts' ? badgeHtml() : ''}</a>`).join('')}
       <div class="spacer"></div>
+      <a class="navlink" href="/joc/">${icon('moon')}<span>${tr('Family game')}</span></a>
       <a class="whoami row" href="#settings" style="text-decoration:none;color:inherit;gap:8px">${avatarHtml(ME)}<span><b>${esc(ME.name)}</b>${tr(ME.role)} · ${esc(ME.email || '')}</span></a>
       <button class="navlink" data-logout>${icon('logout')}<span>Sign out</span></button>
     </nav>
@@ -1228,6 +1230,7 @@ function shell(active) {
           }
           return out + (open ? '</div>' : '');
         })()}
+        <div class="sheetgrid" style="margin-top:12px"><a class="sheetlink" href="/joc/"><span class="ic">${icon('moon')}</span>${tr('Family game')}</a></div>
         <button class="btn ghost btn-ic" style="width:100%;margin-top:12px" data-logout>${icon('logout')}Sign out</button>
       </div>
     </div>
@@ -1264,6 +1267,9 @@ async function renderAuth(mode = 'login') {
     </form>
     <div class="row" style="justify-content:center;margin-top:16px">
       ${[['en', '🇬🇧 English'], ['ro', '🇷🇴 Română']].map(([lg, lb]) => `<button type="button" class="btn ${LANG === lg ? '' : 'ghost'} small" data-authlang="${lg}">${lb}</button>`).join('')}
+    </div>
+    <div class="row" style="justify-content:center;margin-top:12px">
+      <a class="btn ghost small btn-ic" href="/joc/">${icon('moon')}${tr('Family game')}: Operațiunea Somnul</a>
     </div>
   </div></div>`;
   // sign-in screen language: a device-level choice — it becomes the account language after login
