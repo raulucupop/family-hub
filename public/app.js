@@ -470,7 +470,7 @@ const RO = {
   '— none —': '— niciunul —', 'Electricity + gas': 'Electricitate + gaz', 'Electricity + gas + water': 'Electricitate + gaz + apă',
   'Payment link (Revolut.me)': 'Link de plată (Revolut.me)', 'Mortgage': 'Ipotecă', 'on day': 'în ziua',
   // properties we administer for someone else
-  'Property & things': 'Proprietăți și bunuri', 'Household': 'Gospodărie', 'Family game': 'Joc de familie',
+  'Property & things': 'Proprietăți și bunuri', 'Household': 'Gospodărie', 'Family games': 'Jocuri de familie',
   // one rental at a glance
   'Open dashboard': 'Deschide panoul', 'Full panel': 'Panoul complet', 'Outstanding': 'De încasat',
   'This property': 'Această proprietate', 'This property (not our money)': 'Această proprietate (nu banii noștri)',
@@ -1202,7 +1202,7 @@ function shell(active) {
         ? `<div class="navgroup">${tr(ic)}</div>`
         : `<a class="navlink ${k === active ? 'active' : ''}" href="#${k}">${icon(ic)}<span>${l}</span>${k === 'alerts' ? badgeHtml() : ''}</a>`).join('')}
       <div class="spacer"></div>
-      <a class="navlink" href="/joc/">${icon('moon')}<span>${tr('Family game')}</span></a>
+      <a class="navlink" href="/joc/">${icon('moon')}<span>${tr('Family games')}</span></a>
       <a class="whoami row" href="#settings" style="text-decoration:none;color:inherit;gap:8px">${avatarHtml(ME)}<span><b>${esc(ME.name)}</b>${tr(ME.role)} · ${esc(ME.email || '')}</span></a>
       <button class="navlink" data-logout>${icon('logout')}<span>Sign out</span></button>
     </nav>
@@ -1230,7 +1230,7 @@ function shell(active) {
           }
           return out + (open ? '</div>' : '');
         })()}
-        <div class="sheetgrid" style="margin-top:12px"><a class="sheetlink" href="/joc/"><span class="ic">${icon('moon')}</span>${tr('Family game')}</a></div>
+        <div class="sheetgrid" style="margin-top:12px"><a class="sheetlink" href="/joc/"><span class="ic">${icon('moon')}</span>${tr('Family games')}</a></div>
         <button class="btn ghost btn-ic" style="width:100%;margin-top:12px" data-logout>${icon('logout')}Sign out</button>
       </div>
     </div>
@@ -1268,8 +1268,10 @@ async function renderAuth(mode = 'login') {
     <div class="row" style="justify-content:center;margin-top:16px">
       ${[['en', '🇬🇧 English'], ['ro', '🇷🇴 Română']].map(([lg, lb]) => `<button type="button" class="btn ${LANG === lg ? '' : 'ghost'} small" data-authlang="${lg}">${lb}</button>`).join('')}
     </div>
-    <div class="row" style="justify-content:center;margin-top:12px">
-      <a class="btn ghost small btn-ic" href="/joc/">${icon('moon')}${tr('Family game')}: Operațiunea Somnul</a>
+    <p class="muted" style="text-align:center;margin:16px 0 6px">${tr('Family games')}</p>
+    <div class="row" style="justify-content:center;flex-wrap:wrap;gap:8px">
+      <a class="btn ghost small btn-ic" href="/joc/">${icon('moon')}Operațiunea Somnul</a>
+      <a class="btn ghost small btn-ic" href="/joc/pisici/">${icon('home')}Vânătoare de pisici la bunici</a>
     </div>
   </div></div>`;
   // sign-in screen language: a device-level choice — it becomes the account language after login

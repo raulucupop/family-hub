@@ -46,6 +46,13 @@ const Sfx = (() => {
     ability: () => tone(440, 0.18, 'triangle', 0.08, 440),
     win: () => notes([523, 659, 784, 1047], 'triangle', 0.1, 0.13, 0.3),
     lose: () => notes([392, 330, 262], 'triangle', 0.09, 0.2, 0.35),
+    // Vânătoare de pisici
+    meow: () => { tone(720, 0.12, 'triangle', 0.06, 260); tone(980, 0.22, 'triangle', 0.05, -420, 0.1); },
+    purr: () => { for (let i = 0; i < 4; i++) tone(58 + Math.random() * 8, 0.07, 'sawtooth', 0.035, 0, i * 0.06); },
+    hiss: () => hiss(0.3, 0.09, 3200),
+    alert: () => notes([660, 990], 'square', 0.06, 0.08, 0.12),
+    caught: () => notes([440, 330, 220], 'square', 0.06, 0.1, 0.16),
+    basket: () => notes([523, 784, 1047], 'triangle', 0.09, 0.08, 0.18),
   };
 
   return {
