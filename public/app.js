@@ -4,7 +4,10 @@ if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js');
 const $ = (sel, el = document) => el.querySelector(sel);
 const app = $('#app');
 let ME = null, FAMILY = null;
-const CATEGORIES = ['Groceries', 'Utilities', 'Transportation', 'Entertainment', 'Healthcare', 'Education', 'Taxes', 'Credit', 'Subscriptions', 'Other'];
+// Restaurants sits before Other on purpose: colours are keyed by position, and Other keeps the last,
+// neutral gray. Eating out used to be filed under Entertainment (by the bank import) or Groceries
+// (by hand), so neither category meant one thing.
+const CATEGORIES = ['Groceries', 'Utilities', 'Transportation', 'Entertainment', 'Healthcare', 'Education', 'Taxes', 'Credit', 'Subscriptions', 'Restaurants', 'Other'];
 const BILL_CATS = { electricity: 'Electricity', gas: 'Gas', internet: 'Internet', mobile: 'Mobile', water: 'Water', subscription: 'Subscription', property_tax: 'Property tax', other: 'Other' };
 
 /* ---------- icons ----------
@@ -62,8 +65,9 @@ const ownProps = (list) => (list || []).filter((p) => !p.managed);
    beside every swatch. Identity never rests on the colour.
    Three light-mode hues sit under 3:1 against the surface, which the validator allows only with a
    visible label; every swatch in this app is drawn beside its category name. */
-const CAT_PALETTE_LIGHT = ['#e34948', '#2a78d6', '#8a5a2b', '#a63d8f', '#eda100', '#e87ba4', '#4a3aa7', '#1baf7a', '#eb6834', '#6f7772'];
-const CAT_PALETTE_DARK = ['#e66767', '#3987e5', '#b98047', '#c760ad', '#c98500', '#d55181', '#9085e9', '#199e70', '#d95926', '#9aa39d'];
+// Restaurants (teal) was added later, in front of the gray, so every older category keeps its colour.
+const CAT_PALETTE_LIGHT = ['#e34948', '#2a78d6', '#8a5a2b', '#a63d8f', '#eda100', '#e87ba4', '#4a3aa7', '#1baf7a', '#eb6834', '#0e8c99', '#6f7772'];
+const CAT_PALETTE_DARK = ['#e66767', '#3987e5', '#b98047', '#c760ad', '#c98500', '#d55181', '#9085e9', '#199e70', '#d95926', '#22a8b6', '#9aa39d'];
 function catColor(category) {
   const pal = document.documentElement.dataset.theme === 'dark' ? CAT_PALETTE_DARK : CAT_PALETTE_LIGHT;
   const i = CATEGORIES.indexOf(category);
@@ -276,7 +280,7 @@ const RO = {
   'whole family': 'toată familia', 'day': 'ziua', 'more': 'altele', 'None': 'Niciuna',
   // categories (display only — option values stay English)
   'Groceries': 'Alimente', 'Utilities': 'Utilități', 'Transportation': 'Transport', 'Entertainment': 'Divertisment',
-  'Healthcare': 'Sănătate', 'Education': 'Educație', 'Taxes': 'Taxe', 'Subscriptions': 'Abonamente', 'Other': 'Altele',
+  'Healthcare': 'Sănătate', 'Education': 'Educație', 'Taxes': 'Taxe', 'Subscriptions': 'Abonamente', 'Restaurants': 'Restaurante', 'Other': 'Altele',
   'Electricity': 'Electricitate', 'Gas': 'Gaz', 'Mobile': 'Mobil', 'Water': 'Apă', 'Subscription': 'Abonament',
   'electricity': 'electricitate', 'gas': 'gaz', 'water': 'apă', 'property_tax': 'impozit proprietate', 'other': 'altele',
   // server reminder labels
@@ -5158,7 +5162,8 @@ const CAT_RULES = [
   [/omv|petrom|mol |rompetrol|lukoil|socar|uber|bolt|autostrad|cfr|stb|metrorex|parcare|parking/i, 'Transportation'],
   [/enel|ppc|engie|e-on|eon|electrica|digi|rcs|rds|orange|vodafone|telekom|apa nova|hidroelectrica|nuclearelectrica/i, 'Utilities'],
   [/farmacie|catena|helpnet|sensiblu|dr\.?max|medlife|regina maria|sanador|clinic|dent/i, 'Healthcare'],
-  [/netflix|hbo|spotify|disney|cinema|steam|playstation|xbox|restaurant|glovo|tazz|foodpanda|mcdonald|kfc/i, 'Entertainment'],
+  [/restaurant|glovo|tazz|foodpanda|bolt food|mcdonald|kfc|burger|pizza|shaorma|bistro|catering|trattoria|pub|cafenea|starbucks/i, 'Restaurants'],
+  [/netflix|hbo|spotify|disney|cinema|steam|playstation|xbox|eventim|iabilet/i, 'Entertainment'],
   [/anaf|impozit|taxa|trezorer/i, 'Taxes'],
   [/scoala|gradinita|kids|curs|udemy|carte|librari/i, 'Education'],
 ];

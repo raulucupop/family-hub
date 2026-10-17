@@ -1431,7 +1431,7 @@ app.delete('/api/loans/:id/payments/:pid', auth, canWrite, (req, res) => {
 
 // ---------- bills ----------
 // expense categories a bill may be logged under — mirrors CATEGORIES in public/app.js
-const EXPENSE_CATEGORIES = ['Groceries', 'Utilities', 'Transportation', 'Entertainment', 'Healthcare', 'Education', 'Taxes', 'Credit', 'Subscriptions', 'Other'];
+const EXPENSE_CATEGORIES = ['Groceries', 'Utilities', 'Transportation', 'Entertainment', 'Healthcare', 'Education', 'Taxes', 'Credit', 'Subscriptions', 'Restaurants', 'Other'];
 const BILL_CAT_MAP = { electricity: 'Utilities', gas: 'Utilities', water: 'Utilities', internet: 'Utilities', mobile: 'Utilities', subscription: 'Subscriptions', property_tax: 'Taxes', other: 'Other' };
 const BILL_SELECT = `
   SELECT b.*, u.name AS owner_name, p.name AS property_name, v.name AS vehicle_name,
@@ -3977,7 +3977,7 @@ const MAIL_LABELS_RO = {
 // 'Credit' is the same word in both languages and is deliberately absent.
 const MAIL_CATEGORIES_RO = {
   Groceries: 'Alimente', Utilities: 'Utilități', Transportation: 'Transport', Entertainment: 'Divertisment',
-  Healthcare: 'Sănătate', Education: 'Educație', Taxes: 'Taxe', Subscriptions: 'Abonamente', Other: 'Altele',
+  Healthcare: 'Sănătate', Education: 'Educație', Taxes: 'Taxe', Subscriptions: 'Abonamente', Restaurants: 'Restaurante', Other: 'Altele',
 };
 const catLabel = (lang, cat) => (lang === 'ro' && MAIL_CATEGORIES_RO[cat]) || cat;
 const mailDate = (iso) => { const p = String(iso).slice(0, 10).split('-'); return p.length === 3 ? `${p[2]}/${p[1]}/${p[0]}` : String(iso); };
@@ -4621,7 +4621,7 @@ app.post('/api/import/transactions', auth, canWrite, (req, res) => {
   tx();
   res.json({ imported, skipped, errors });
 });
-const CATEGORY_SET = new Set(['Groceries', 'Utilities', 'Transportation', 'Entertainment', 'Healthcare', 'Education', 'Taxes', 'Credit', 'Subscriptions', 'Other']);
+const CATEGORY_SET = new Set(['Groceries', 'Utilities', 'Transportation', 'Entertainment', 'Healthcare', 'Education', 'Taxes', 'Credit', 'Subscriptions', 'Restaurants', 'Other']);
 
 // ---------- dashboard stats ----------
 // the same month-in-words the report emails, readable from the app so the two can never disagree.
