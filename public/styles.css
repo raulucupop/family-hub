@@ -1198,3 +1198,162 @@ body.seat-dragging { cursor: grabbing; user-select: none; -webkit-user-select: n
 /* Money the household owes a person reads as a debt, not as an asset: the same amber the rest of
    the app uses for "this is on you", so the two chips cannot be mistaken for each other at a glance. */
 .expchip.owing b { color: var(--amber); }
+
+
+/* ======================================================================================
+   scroll-craft layer: the design floor and the scroll behaviour of the scroll-craft skill,
+   applied to a working app rather than to a landing page.
+   One block, appended last. Deleting it (and the "scroll-craft layer" section in app.js) is the
+   whole undo. The palette is the app's own; what changes is type, rhythm, depth and motion.
+   Nothing here pins or hijacks the scroll: a dashboard is used, not watched, so the devices are
+   the ones that read as quality without making anyone wait: reveal on entry, numbers that land,
+   a header that stays, a progress line, chapters you can jump between.
+   ====================================================================================== */
+
+:root {
+  /* one face for prose and one for display; figures line up in the text face (tabular),
+     which retires the third, monospace, family */
+  --mono: var(--body);
+  --s-1: 4px; --s-2: 8px; --s-3: 12px; --s-4: 16px; --s-5: 24px; --s-6: 32px; --s-7: 48px; --s-8: 64px;
+  --r-card: 14px; --r-ctl: 10px;
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  /* elevation in three steps, tinted toward the slate ink instead of black */
+  --e1: 0 1px 2px rgba(28, 43, 51, .06), 0 1px 1px rgba(28, 43, 51, .04);
+  --e2: 0 2px 6px rgba(28, 43, 51, .07), 0 10px 22px rgba(28, 43, 51, .07);
+  --e3: 0 6px 14px rgba(28, 43, 51, .09), 0 24px 48px rgba(28, 43, 51, .11);
+  --edge: inset 0 1px 0 rgba(255, 255, 255, .85);
+  --hair: color-mix(in oklab, var(--ink) 9%, transparent);
+}
+:root[data-theme="dark"] {
+  --e1: 0 1px 2px rgba(0, 0, 0, .35);
+  --e2: 0 2px 6px rgba(0, 0, 0, .35), 0 10px 22px rgba(0, 0, 0, .3);
+  --e3: 0 6px 14px rgba(0, 0, 0, .4), 0 24px 48px rgba(0, 0, 0, .45);
+  --edge: inset 0 1px 0 rgba(255, 255, 255, .05);
+}
+
+/* ---------- the parts you did not draw ---------- */
+::selection { background: var(--accent); color: #fff; }
+:root { caret-color: var(--accent); accent-color: var(--accent); }
+@supports (scrollbar-color: auto) {
+  html { scrollbar-color: color-mix(in oklab, var(--ink) 28%, transparent) transparent; scrollbar-width: thin; }
+}
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+a { text-decoration-thickness: 1px; text-underline-offset: .22em; }
+
+/* ---------- type ---------- */
+body { font-variant-numeric: tabular-nums; -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; letter-spacing: -.003em; }
+h1, h2, h3 { text-wrap: balance; }
+/* tracking tightens as size grows: display type at default tracking reads loose */
+h1 { font-size: clamp(1.75rem, 1.35rem + 1.3vw, 2.35rem); letter-spacing: -.028em; line-height: 1.05; }
+h2 { letter-spacing: -.015em; }
+h3 { letter-spacing: -.008em; }
+p { text-wrap: pretty; }
+:root[data-theme="dark"] body { letter-spacing: .002em; line-height: 1.55; }   /* light on dark: a touch more air */
+
+/* ---------- surfaces: three elevations and an edge light ---------- */
+.card { border-radius: var(--r-card); border-color: var(--hair); box-shadow: var(--e1), var(--edge); }
+:root[data-theme="dark"] .card { box-shadow: var(--e1), var(--edge); }
+.kpi .card, details.entity { box-shadow: var(--e1), var(--edge); }
+@media (hover: hover) and (pointer: fine) {
+  .clickcard:hover { box-shadow: var(--e2), var(--edge); border-color: color-mix(in oklab, var(--accent) 45%, var(--hair)); }
+  .stub:hover { box-shadow: var(--e2); }
+}
+.btn { border-radius: var(--r-ctl); }
+.btn:active { transform: scale(.97); }
+
+/* figures that carry the page get display weight */
+.kpi .value { font-family: var(--display); font-size: 1.55rem; font-weight: 700; letter-spacing: -.02em; line-height: 1.1; margin-top: 6px; }
+.stub .days { font-family: var(--display); font-weight: 700; letter-spacing: -.02em; }
+
+/* the page's own entrance is now per block, on entry (below), so the whole column no longer fades */
+.main > * { animation: none; }
+
+/* ---------- reveal on entry ----------
+   A block rises 14px and fades in once, when it enters the viewport, staggered in reading order.
+   The hidden state exists only while app.js holds a block pending, so if the script never runs
+   or a frame never comes, nothing is ever left invisible. */
+.sc-pending { opacity: 0; transform: translate3d(0, 14px, 0); }
+.sc-shown { opacity: 1; transform: none; transition: opacity 620ms var(--ease-out), transform 620ms var(--ease-out); }
+@media (prefers-reduced-motion: reduce) {
+  .sc-pending { transform: none; }
+  .sc-shown { transition: opacity 220ms linear; }
+}
+
+/* ---------- page progress ---------- */
+.sc-progress {
+  position: fixed; top: 0; left: 232px; right: 0; height: 2px; z-index: 60; pointer-events: none;
+  background: var(--accent); transform-origin: left; transform: scaleX(var(--sc-page, 0));
+}
+@media (max-width: 860px) { .sc-progress { left: 0; top: env(safe-area-inset-top, 0); } }
+
+/* ---------- the header stays (desktop) ---------- */
+@media (min-width: 861px) {
+  .pagehead {
+    position: sticky; top: 0; z-index: 30;
+    margin: -26px -36px 22px; padding: 22px 36px 14px;
+    background: color-mix(in oklab, var(--paper) 90%, transparent);
+    -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+    border-bottom: 1px solid transparent;
+    transition: border-color 200ms var(--ease-out), box-shadow 200ms var(--ease-out);
+  }
+  /* only paint changes once stuck: a header that shrinks while sticky changes the flow under the
+     reader's thumb and the page jitters between the two states */
+  .pagehead.is-stuck { border-bottom-color: var(--hair); box-shadow: 0 8px 18px -14px rgba(28, 43, 51, .25); }
+}
+
+/* ---------- dashboard chapters ----------
+   The dashboard reads top to bottom as four chapters: what is next, this month, what is owed and
+   saved, the analysis. The folio in the header names them and follows the scroll. */
+.chapter { scroll-margin-top: 96px; }
+.chapter + .chapter { margin-top: var(--s-8); }
+.chapter__title {
+  font-size: clamp(1.35rem, 1.1rem + .8vw, 1.75rem); font-weight: 700; letter-spacing: -.022em;
+  margin: 0 0 var(--s-4); line-height: 1.1;
+}
+.folio { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 10px; }
+.folio [data-goto] {
+  background: transparent; font-family: var(--body); cursor: pointer;
+  font-size: 12.5px; font-weight: 600; text-decoration: none; color: var(--ink-soft);
+  padding: 4px 10px; border-radius: 999px; border: 1px solid var(--hair);
+  transition: background-color 160ms var(--ease-out), color 160ms var(--ease-out), border-color 160ms var(--ease-out);
+}
+.folio [data-goto]:hover { color: var(--ink); border-color: var(--rule); }
+.folio [data-goto][aria-current="true"] { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+@media (max-width: 860px) { .folio { display: none; } .chapter + .chapter { margin-top: var(--s-7); } }
+
+/* ---------- the month strip (the signature) ----------
+   Every day of the current month in one row. Passed days are filled, today is dark, and each day
+   that has something due carries its mark; a marked day is a link to that thing. Under it, the
+   spending pace races the calendar: how much of the month has gone against how much of the budget. */
+.mstrip { margin-bottom: var(--s-6); }
+.mstrip__days { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(var(--n, 31), 1fr); gap: 3px; }
+.mstrip__day {
+  position: relative; display: grid; place-items: center; height: 30px; border-radius: 7px;
+  font-size: 11px; font-weight: 600; color: var(--ink-soft); background: color-mix(in oklab, var(--ink) 6%, var(--paper));
+  text-decoration: none;
+}
+.mstrip__day.is-past { background: color-mix(in oklab, var(--accent) 16%, var(--paper)); color: color-mix(in oklab, var(--accent) 70%, var(--ink)); }
+.mstrip__day.is-today { background: var(--ink); color: var(--paper); }
+.mstrip__day.is-weekend:not(.is-past):not(.is-today) { background: color-mix(in oklab, var(--ink) 3%, var(--paper)); }
+.mstrip__day i { position: absolute; bottom: 3px; left: 50%; width: 5px; height: 5px; margin-left: -2.5px; border-radius: 50%; background: var(--ink-soft); }
+.mstrip__day.warn i { background: var(--amber); }
+.mstrip__day.late i { background: var(--red); }
+.mstrip__day.ok i { background: var(--accent); }
+a.mstrip__day:hover { outline: 2px solid var(--accent); outline-offset: 1px; }
+.mstrip__pace { display: grid; gap: 5px; margin-top: 10px; }
+.mstrip__track { position: relative; height: 6px; border-radius: 999px; background: color-mix(in oklab, var(--ink) 7%, var(--paper)); overflow: hidden; }
+.mstrip__track span { position: absolute; inset: 0 auto 0 0; border-radius: inherit; transform-origin: left; }
+.mstrip__track .t { width: 100%; background: color-mix(in oklab, var(--ink) 22%, transparent); transform: scaleX(var(--t, 0)); }
+.mstrip__track .b { width: 100%; height: 3px; top: 1.5px; background: var(--accent); transform: scaleX(var(--b, 0)); }
+.mstrip__track.over .b { background: var(--amber); }
+.mstrip__line { margin: 0; font-size: 13px; color: var(--ink-soft); }
+.mstrip__line b { color: var(--ink); }
+@media (max-width: 860px) {
+  .mstrip__days { gap: 2px; }
+  .mstrip__day { height: 24px; font-size: 0; border-radius: 4px; }
+  .mstrip__day.is-today, .mstrip__days li:nth-child(5n+1) .mstrip__day { font-size: 9.5px; }
+  .mstrip__day i { width: 4px; height: 4px; margin-left: -2px; bottom: 2px; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .mstrip__track .t, .mstrip__track .b { transition: transform 900ms var(--ease-out); }
+}

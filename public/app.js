@@ -126,6 +126,7 @@ const RO = {
   'Mark done': 'Finalizat', 'Reopen': 'Redeschide', 'reached!': 'atins!', '— general —': '— general —',
   'Add credit (loan)': 'Adaugă credit', 'Add credit': 'Adaugă credit', 'Anticipated payments': 'Plăți anticipate', 'Add payment': 'Adaugă plată',
   // dashboard
+  'What is next': 'Ce urmează', 'Owed and saved': 'Datorii și economii', 'Analysis': 'Analiză', 'On this page': 'Pe pagina asta',
   'This month': 'Luna aceasta', 'Last 3 months': 'Ultimele 3 luni', 'Last 6 months': 'Ultimele 6 luni', 'Last 12 months': 'Ultimele 12 luni',
   'Whole family (total)': 'Toată familia (total)', 'Left over': 'Rămas', 'Income vs spending': 'Venituri vs cheltuieli',
   'Coming up — next 60 days': 'Urmează — următoarele 60 de zile', 'Nothing due soon': 'Nimic scadent curând',
@@ -734,18 +735,33 @@ function countUpAll(root) {
   for (const el of root.querySelectorAll('[data-cu]')) {
     const target = Number(el.dataset.cu);
     if (!Number.isFinite(target) || target === 0) continue;
-    el.textContent = money(0); // otherwise the final value flashes for one frame before the roll-up
-    const t0 = performance.now(), D = 650;
-    const tick = (now) => {
-      const p = Math.min(1, (now - t0) / D);
-      const ease = 1 - Math.pow(1 - p, 3);
-      el.textContent = money(target * ease);
-      if (p < 1) requestAnimationFrame(tick);
-    };
-    requestAnimationFrame(tick);
-    // rAF stalls in background tabs — make sure the real number is there regardless
-    setTimeout(() => { el.textContent = money(target); }, D + 150);
+    // A figure below the fold keeps its real value until it is scrolled to, then lands there:
+    // counted while nobody could see it, the roll-up was over before the reader arrived.
+    const r = el.getBoundingClientRect();
+    if ('IntersectionObserver' in window && !(r.top < innerHeight && r.bottom > 0)) {
+      const o = new IntersectionObserver((es) => {
+        if (!es.some((e) => e.isIntersecting)) return;
+        o.disconnect();
+        countUp(el, target);
+      }, { rootMargin: '0px 0px -10% 0px' });
+      o.observe(el);
+      continue;
+    }
+    countUp(el, target);
   }
+}
+function countUp(el, target) {
+  el.textContent = money(0); // otherwise the final value flashes for one frame before the roll-up
+  const t0 = performance.now(), D = 650;
+  const tick = (now) => {
+    const p = Math.min(1, (now - t0) / D);
+    const ease = 1 - Math.pow(1 - p, 3);
+    el.textContent = money(target * ease);
+    if (p < 1) requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+  // rAF stalls in background tabs — make sure the real number is there regardless
+  setTimeout(() => { el.textContent = money(target); }, D + 150);
 }
 // what counts as focusable for autofocus and the focus trap
 const FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
@@ -1141,6 +1157,7 @@ function render() {
   if (page !== 'money') EXP_FORM_OPEN = false; // leaving Money → next visit shows data first, not a form
   const fn = routes[page] || viewDashboard;
   app.innerHTML = shell(page);
+  SC.arm();
   app.querySelectorAll('[data-logout]').forEach((b) => (b.onclick = async () => { await api('/auth/logout', { method: 'POST' }); ME = null; renderAuth(); }));
   const sheet = $('#moresheet');
   const moretab = $('#moretab');
@@ -1655,7 +1672,8 @@ function dashInsight(stats, suggest, months) {
 async function viewDashboard(el) {
   const members = await api('/family/members');
   el.innerHTML = `<div class="pagehead">
-    <div><h1>Dashboard</h1><p>${new Date().toLocaleDateString('ro-RO', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</p></div>
+    <div><h1>Dashboard</h1><p>${new Date().toLocaleDateString('ro-RO', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</p>
+      <nav class="folio" id="dashfolio" aria-label="${tr('On this page')}"></nav></div>
     <div class="row" style="gap:8px">
       <select id="dashperiod" style="width:150px">${[1, 3, 6, 12].map((m) => `<option value="${m}" ${DASH_MONTHS === m ? 'selected' : ''}>${PERIOD_LABELS[m]}</option>`).join('')}</select>
       <select id="dashview" style="width:190px">
@@ -1705,7 +1723,12 @@ async function viewDashboard(el) {
     (loans || []).some((l) => !l.settled && !l.due_date)
       && { label: tr('Loans with no due date'), href: '#money' },
   ].filter(Boolean);
+  const owedSaved = [exposureHtml(loans, credits), gapsHtml(gaps), goalsHtml(savings.goals), budgets.budgets.length ? 'x' : ''].some((x) => x && x.trim());
+  const chapters = [['ch-next', 'What is next'], ['ch-month', periodLabel], ...(owedSaved ? [['ch-money', 'Owed and saved']] : []), ['ch-analysis', 'Analysis']];
+  el.querySelector('#dashfolio').innerHTML = chapters.map(([id, label]) => `<button type="button" data-goto="${id}">${tr(label)}</button>`).join('');
   el.querySelector('#dash').innerHTML = `
+    ${monthStripHtml(reminders, budgets, spentMap)}
+    <div class="chapter" id="ch-next" data-chapter>
     ${blank ? `<section class="card" style="margin-bottom:18px">
       <h3>Welcome — start here</h3>
       <p class="muted" style="margin-top:0">Nothing is set up yet. Add any one of these and this page fills in.</p>
@@ -1721,19 +1744,25 @@ async function viewDashboard(el) {
       ${reminders.length ? ribbonHtml(reminders)
       : `<div class="card empty"><b>Nothing due soon</b>${DASH_VIEW === 'all' ? 'Add bills, vehicle or property deadlines and they will line up here.' : 'Nothing assigned to this person is coming up.'}</div>`}
     </section>
+    ${choresCard(chores)}
+    </div>
+    <div class="chapter" id="ch-month" data-chapter>
+    <h2 class="chapter__title">${tr(periodLabel)}</h2>
     ${(DASH_MONTHS === 1 && DASH_VIEW === 'all') ? forecastCard(forecast, proj) : ''}
     ${safeToSpendHtml(stats, DASH_MONTHS, upcoming)}
-    ${choresCard(chores)}
     <section class="kpi" style="margin-top:18px">
       <a class="card clickcard" href="#money" data-tab="income"><div class="label"><span class="kpi-ic">${icon('wallet')}</span>${tr('Income')}</div>${pctPill(stats.income, stats.prev?.income, 'up-good')}<div class="value" data-cu="${stats.income}">${money(stats.income)}</div>${deltaAmountHtml(stats.income, stats.prev?.income)}<span class="spark-pos">${sparkline(incomeSeries)}</span></a>
       <a class="card clickcard" href="#money" data-tab="expenses"><div class="label"><span class="kpi-ic">${icon('receipt')}</span>${tr('Spent')}</div>${pctPill(stats.spent, stats.prev?.spent, 'up-bad')}<div class="value" data-cu="${stats.spent}">${money(stats.spent)}</div>${deltaAmountHtml(stats.spent, stats.prev?.spent)}${stats.card?.total > 0 ? `<div class="muted" style="font-size:12px;margin-top:2px">+ ${money(stats.card.total)} ${tr('on card')}</div>` : ''}<span class="spark-neg">${sparkline(spendSeries)}</span></a>
       <div class="card"><div class="label"><span class="kpi-ic">${icon('coins')}</span>Left over</div>${pctPill(net, (stats.prev?.income ?? 0) - (stats.prev?.spent ?? 0), 'up-good')}<div class="value ${net < 0 ? 'neg' : ''}" data-cu="${net}">${money(net)}</div>${deltaAmountHtml(net, (stats.prev?.income ?? 0) - (stats.prev?.spent ?? 0))}${savingsRateHtml(stats.income, net)}<span class="spark-pos">${sparkline(netSeries)}</span></div>
     </section>
-    ${exposureHtml(loans, credits)}
     ${dashInsight(stats, suggest, DASH_MONTHS)}
     ${rentHtml(rent)}
+    </div>
+    ${owedSaved ? `<div class="chapter" id="ch-money" data-chapter>
+    <h2 class="chapter__title">${tr('Owed and saved')}</h2>
+    ${exposureHtml(loans, credits)}
     ${gapsHtml(gaps)}
-    ${goalsHtml(savings.goals)}
+    ${goalsHtml(savings.goals)}` : ''}
     ${budgets.budgets.length ? `<section class="card" style="margin-top:18px">
       <h3>${tr('Budget vs actual')} · ${budgets.month}</h3>
       ${budgets.budgets.map((b) => {
@@ -1743,6 +1772,9 @@ async function viewDashboard(el) {
           <span>${esc(b.category)}</span><span class="amount muted">${money(s)} / ${money(b.amount)} · ${truePct}%</span></div>
           <div class="bar"><i class="${budgetClass(s, b.amount)}" style="width:${pct}%"></i></div></div>`;
       }).join('')}</section>` : ''}
+    ${owedSaved ? '</div>' : ''}
+    <div class="chapter" id="ch-analysis" data-chapter>
+    <h2 class="chapter__title">${tr('Analysis')}</h2>
     <!-- Charts are how a month is reviewed, not how a Tuesday is answered. They were 40% of the
          page height above the fold-and-a-half; folded away, the dashboard answers "what do I owe
          and what is left" in one screen, and the analysis is one tap behind. -->
@@ -1766,7 +1798,20 @@ async function viewDashboard(el) {
           <span class="muted" style="margin-left:8px">${tr('You can fine-tune them afterwards.')}</span>
         </section>` : ''}
         <div id="dashcal" style="padding-top:18px"><div class="skel" style="height:220px"></div></div>
-      </div></details>`;
+      </div></details>
+    </div>`;
+  // the folio jumps to a chapter; the header it sits in is sticky, so the chapter's scroll-margin
+  // keeps its heading clear of it
+  el.querySelectorAll('[data-goto]').forEach((b) => (b.onclick = () => {
+    const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    SC.pin(b.dataset.goto);
+    document.getElementById(b.dataset.goto)?.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' });
+  }));
+  // the pace bars grow from zero once they are on the page, so the comparison is something you see happen
+  setTimeout(() => el.querySelectorAll('.mstrip__track').forEach((t) => {
+    t.style.setProperty('--t', t.dataset.t); t.style.setProperty('--b', t.dataset.b || 0);
+  }), 80);
+  SC.paint();
   wireBalance(el, () => viewDashboard(el));
   el.querySelector('#dash').querySelectorAll('[data-tab]').forEach((a) => a.addEventListener('click', () => { PENDING_MONEY_TAB = a.dataset.tab; }));
   // the button lives inside the folded reports section now, so it is wired when that is drawn
@@ -1917,6 +1962,58 @@ function choresCard(chores) {
       </label></li>`).join('')}</ul>
     ${open.length > 5 ? `<p class="muted" style="margin:8px 0 0"><a href="#chores">${tr('See all')} ${open.length} →</a></p>`
       : `<p class="muted" style="margin:8px 0 0"><a href="#chores">${tr('Chores')} →</a></p>`}</section>`;
+}
+/* The month strip: every day of the current month in one row, the dashboard's signature. Passed
+   days are filled and today is dark, so the month's progress is the first thing on the page; a day
+   with something due carries a mark (amber when it is close, red when it is late) and is a link to
+   that thing. Under it the spending pace races the calendar: the share of the month gone against
+   the share of the budget spent, which is the one comparison that says whether the month is on
+   track before it is over. Budgets are the household's, so the pace bar is too. */
+function monthStripHtml(reminders, budgets, spentMap) {
+  // the reader's own calendar day: the header above prints the local date, and a strip that marked
+  // yesterday as today for the first hours after midnight (UTC) would contradict it
+  const now = new Date();
+  const Y = now.getFullYear(), M = now.getMonth() + 1, D = now.getDate();
+  const t = `${Y}-${String(M).padStart(2, '0')}-${String(D).padStart(2, '0')}`;
+  const n = new Date(Date.UTC(Y, M, 0)).getUTCDate();
+  const monthWord = new Date(Date.UTC(Y, M - 1, 1)).toLocaleDateString(LANG === 'ro' ? 'ro-RO' : 'en-GB', { month: 'long', timeZone: 'UTC' });
+  const byDay = {};
+  for (const r of reminders || []) if (r.date && r.date.slice(0, 7) === t.slice(0, 7)) (byDay[Number(r.date.slice(8, 10))] ||= []).push(r);
+  const cells = [];
+  for (let d = 1; d <= n; d++) {
+    const items = byDay[d] || [];
+    const wd = new Date(Date.UTC(Y, M - 1, d)).getUTCDay();
+    const marks = items.map(remClass);
+    const mark = !items.length ? '' : marks.includes('late') ? 'late' : marks.includes('warn') ? 'warn' : 'due';
+    const cls = ['mstrip__day', d < D ? 'is-past' : '', d === D ? 'is-today' : '', wd === 0 || wd === 6 ? 'is-weekend' : '', mark].filter(Boolean).join(' ');
+    const label = `${d} ${monthWord}${items.length ? ': ' + items.map(remLabel).join(', ') : ''}`;
+    const href = items.length ? reminderHref(items[0]) : null;
+    const inner = `${d}${items.length ? '<i></i>' : ''}`;
+    cells.push(`<li>${href
+      ? `<a class="${cls}" href="${href}" title="${esc(label)}" aria-label="${esc(label)}">${inner}</a>`
+      : `<span class="${cls}" title="${esc(label)}" aria-label="${esc(label)}">${inner}</span>`}</li>`);
+  }
+  const elapsed = D / n;
+  const list = budgets?.budgets || [];
+  const total = list.reduce((sum, b) => sum + (Number(b.amount) || 0), 0);
+  const spent = list.reduce((sum, b) => sum + (Number(spentMap[b.category]) || 0), 0);
+  const ro = LANG === 'ro';
+  let line, track = '';
+  if (total > 0) {
+    const used = spent / total;
+    const over = used > elapsed + 0.05;
+    track = `<div class="mstrip__track${over ? ' over' : ''}" data-t="${elapsed.toFixed(4)}" data-b="${Math.min(1, used).toFixed(4)}" aria-hidden="true"><span class="t"></span><span class="b"></span></div>`;
+    line = ro
+      ? `Ziua <b>${D}</b> din ${n} · ai folosit <b>${Math.round(used * 100)}%</b> din buget${over ? ' · mai repede decât trece luna' : ''}`
+      : `Day <b>${D}</b> of ${n} · <b>${Math.round(used * 100)}%</b> of the budget used${over ? ' · ahead of the calendar' : ''}`;
+  } else {
+    track = `<div class="mstrip__track" data-t="${elapsed.toFixed(4)}" aria-hidden="true"><span class="t"></span></div>`;
+    line = ro ? `Ziua <b>${D}</b> din ${n}` : `Day <b>${D}</b> of ${n}`;
+  }
+  return `<section class="mstrip" aria-label="${ro ? 'Luna în zile' : 'The month in days'}">
+    <ol class="mstrip__days" style="--n:${n}">${cells.join('')}</ol>
+    <div class="mstrip__pace">${track}<p class="mstrip__line">${line}</p></div>
+  </section>`;
 }
 /* goals only nudge you if you see them; they lived two clicks away under Money → Savings */
 /* The deadlines strip. On a phone this used to be a sideways scroller: nine cards at 168px each
@@ -5839,6 +5936,90 @@ document.addEventListener('submit', (e) => {
     }
     startY = null;
   }, { passive: true });
+})();
+
+/* ---------- scroll-craft layer ----------
+   The scroll behaviour of the scroll-craft skill, adapted to a working app: nothing pins and
+   nothing hijacks the wheel. Each page's blocks rise in once as they enter the viewport, a thin
+   line at the top says how far down the page you are, the page header stays (desktop), and the
+   dashboard's chapter folio follows the scroll. Paired with the "scroll-craft layer" block at the
+   end of styles.css; removing both is the whole undo. */
+const SC = (() => {
+  const BLOCK = '.card, section, details, .ribbon, .kpi, .grid2, .mstrip, .setuprow, table';
+  let armedUntil = 0, io = null, safety = 0, pinned = null, pinnedUntil = 0;
+  const bar = document.createElement('div');
+  bar.className = 'sc-progress';
+  bar.setAttribute('aria-hidden', 'true');
+  document.body.appendChild(bar);
+
+  const show = (el) => { el.classList.remove('sc-pending'); el.classList.add('sc-shown'); };
+  const inView = (el) => { const r = el.getBoundingClientRect(); return r.top < innerHeight && r.bottom > 0; };
+  function watch(el) {
+    if (!('IntersectionObserver' in window)) return;
+    if (!io) io = new IntersectionObserver((entries) => {
+      let i = 0;
+      for (const e of entries) {
+        if (!e.isIntersecting) continue;
+        io.unobserve(e.target);
+        // blocks that arrive together are staggered in reading order, ~300ms at the most
+        e.target.style.transitionDelay = `${Math.min(i++, 6) * 50}ms`;
+        show(e.target);
+      }
+    }, { rootMargin: '0px 0px -6% 0px' });
+    el.classList.add('sc-pending');
+    io.observe(el);
+  }
+  function scan() {
+    const page = document.getElementById('page');
+    if (!page || performance.now() > armedUntil) return;
+    for (const el of page.querySelectorAll(BLOCK)) {
+      if (el.dataset.sc) continue;
+      el.dataset.sc = '1';
+      // only the outermost block moves; a card inside a section rides with it
+      const outer = el.parentElement && el.parentElement.closest(BLOCK);
+      if (outer && page.contains(outer)) continue;
+      watch(el);
+    }
+    // A hidden tab never delivers intersection callbacks, and nothing may stay invisible because
+    // of that: whatever is on screen (or above it) once things settle is shown regardless.
+    clearTimeout(safety);
+    safety = setTimeout(() => page.querySelectorAll('.sc-pending').forEach((el) => {
+      if (inView(el) || el.getBoundingClientRect().bottom <= 0) show(el);
+    }), 1600);
+  }
+  // Views fill #page asynchronously, after their fetches land, so the layer watches for blocks
+  // arriving rather than being called by every view. It only animates for a few seconds after a
+  // navigation: a re-render caused by ticking a box must not make the whole page fade in again.
+  new MutationObserver(() => { if (performance.now() <= armedUntil) scan(); }).observe(app, { childList: true, subtree: true });
+
+  let ticking = false;
+  function paint() {
+    ticking = false;
+    const se = document.scrollingElement;
+    const max = se.scrollHeight - innerHeight;
+    document.documentElement.style.setProperty('--sc-page', max > 40 ? (se.scrollTop / max).toFixed(4) : '0');
+    document.querySelector('#page .pagehead')?.classList.toggle('is-stuck', se.scrollTop > 8);
+    // the dashboard folio: the chapter whose top has passed under the header is the one you are in
+    const links = document.querySelectorAll('.folio [data-goto]');
+    if (links.length) {
+      let current = links[0].dataset.goto;
+      const line = (document.querySelector('#page .pagehead')?.getBoundingClientRect().bottom || 0) + 140;
+      for (const ch of document.querySelectorAll('[data-chapter]')) if (ch.getBoundingClientRect().top <= line) current = ch.id;
+      // the last chapter is short: at the bottom of the page it is the one you are reading,
+      // unless the reader just jumped to another one and the page simply ran out of scroll
+      if (max > 40 && se.scrollTop >= max - 4) current = links[links.length - 1].dataset.goto;
+      if (pinned && performance.now() < pinnedUntil) current = pinned;
+      links.forEach((a) => a.setAttribute('aria-current', a.dataset.goto === current ? 'true' : 'false'));
+    }
+  }
+  const onScroll = () => { if (!ticking) { ticking = true; requestAnimationFrame(paint); } };
+  addEventListener('scroll', onScroll, { passive: true });
+  addEventListener('resize', onScroll);
+  return {
+    arm() { armedUntil = performance.now() + 5000; setTimeout(paint, 0); },
+    pin(id) { pinned = id; pinnedUntil = performance.now() + 1500; paint(); },
+    paint,
+  };
 })();
 
 boot();
