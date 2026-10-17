@@ -5944,19 +5944,31 @@ document.addEventListener('submit', (e) => {
 })();
 
 /* ---------- scroll-craft layer ----------
-   The scroll behaviour of the scroll-craft skill, adapted to a working app: nothing pins and
-   nothing hijacks the wheel. Each page's blocks rise in once as they enter the viewport, a thin
-   line at the top says how far down the page you are, the page header stays (desktop), and the
-   dashboard's chapter folio follows the scroll. Paired with the "scroll-craft layer" block at the
-   end of styles.css; removing both is the whole undo. */
+   The scroll-craft skill's devices, written for a working app. Paired with the two
+   "scroll-craft" blocks at the end of styles.css; removing those and this section is the undo.
+   - reveal: each page's blocks rise in once as they enter the viewport, in reading order
+   - progress: a line at the top says how far down the page you are; the header stays (desktop)
+   - drift: on the dashboard the page ground shifts with the chapter on screen
+   - pan: a long row of deadlines travels sideways while its stage holds (desktop)
+   - scrub: budget bars fill as they come into view, and empty again if you scroll back
+   - kinetic: chapter titles assemble word by word, once
+   - the month strip follows you: a hairline copy rides in the stuck header (desktop)
+   - presence: deadline tickets tilt toward the pointer, the KPI cards catch a light that follows
+     it, the + button leans toward it; a real pointer only
+   - money: each day's date stays at the top while you read that day's rows
+   Reduced motion keeps the colour drift and drops everything that moves. */
 const SC = (() => {
   const BLOCK = '.card, section, details, .ribbon, .kpi, .grid2, .mstrip, .setuprow, table';
+  const reduce = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const fine = () => matchMedia('(hover: hover) and (pointer: fine)').matches;
+  const desktop = () => matchMedia('(min-width: 861px)').matches;
   let armedUntil = 0, io = null, safety = 0, pinned = null, pinnedUntil = 0;
   const bar = document.createElement('div');
   bar.className = 'sc-progress';
   bar.setAttribute('aria-hidden', 'true');
   document.body.appendChild(bar);
 
+  // ---- reveal on entry
   const show = (el) => { el.classList.remove('sc-pending'); el.classList.add('sc-shown'); };
   const inView = (el) => { const r = el.getBoundingClientRect(); return r.top < innerHeight && r.bottom > 0; };
   function watch(el) {
@@ -5974,15 +5986,102 @@ const SC = (() => {
     el.classList.add('sc-pending');
     io.observe(el);
   }
+
+  // ---- one-off upgrades of freshly rendered markup
+  let titleIO = null;
+  function kinetic(h) {
+    if (h.dataset.scK) return;
+    h.dataset.scK = '1';
+    if (reduce() || !('IntersectionObserver' in window)) return;
+    const words = h.textContent.trim().split(/\s+/);
+    h.setAttribute('aria-label', h.textContent.trim());
+    h.innerHTML = words.map((w, i) => `<span class="w" aria-hidden="true"><span style="--i:${i}">${esc(w)}</span></span>`).join(' ');
+    if (!titleIO) titleIO = new IntersectionObserver((es) => es.forEach((e) => {
+      if (e.isIntersecting) { e.target.classList.add('is-in'); titleIO.unobserve(e.target); }
+    }), { rootMargin: '0px 0px -12% 0px' });
+    titleIO.observe(h);
+    setTimeout(() => h.classList.add('is-in'), 4000); // never leave a heading hidden
+  }
+  function miniStrip(page) {
+    const head = page.querySelector('.pagehead');
+    const days = page.querySelector('.mstrip__days');
+    if (!head || !days || head.querySelector('.mstrip-mini')) return;
+    const mini = document.createElement('div');
+    mini.className = 'mstrip-mini';
+    mini.setAttribute('aria-hidden', 'true');
+    mini.style.setProperty('--n', days.children.length);
+    mini.innerHTML = [...days.querySelectorAll('.mstrip__day')].map((d) =>
+      `<span class="${['is-past', 'is-today', 'warn', 'late'].filter((c) => d.classList.contains(c)).join(' ')}"></span>`).join('');
+    head.firstElementChild.appendChild(mini);
+  }
+  function panStage(page) {
+    const ribbon = page.querySelector('#ch-next .ribbon');
+    if (!ribbon || ribbon.closest('.sc-panstage') || !desktop() || reduce()) return;
+    const section = ribbon.parentElement;
+    if (ribbon.children.length < 5) return; // a short row has nowhere to travel
+    const inner = document.createElement('div');
+    inner.className = 'sc-pan-inner';
+    while (section.firstChild) inner.appendChild(section.firstChild);
+    section.appendChild(inner);
+    section.classList.add('sc-panstage');
+    ribbon.classList.add('is-rail');
+  }
+  function presence(page) {
+    if (!fine() || reduce()) return;
+    page.querySelectorAll('.stub:not(.sc-tilt)').forEach((s) => {
+      s.classList.add('sc-tilt');
+      s.addEventListener('pointermove', (e) => {
+        const r = s.getBoundingClientRect();
+        const x = (e.clientX - r.left) / r.width - 0.5, y = (e.clientY - r.top) / r.height - 0.5;
+        s.style.transform = `perspective(700px) rotateX(${(-y * 6).toFixed(2)}deg) rotateY(${(x * 6).toFixed(2)}deg) translateY(-2px)`;
+      });
+      s.addEventListener('pointerleave', () => { s.style.transform = ''; });
+    });
+    page.querySelectorAll('.kpi .card:not(.sc-spot)').forEach((c) => {
+      c.classList.add('sc-spot');
+      c.addEventListener('pointermove', (e) => {
+        const r = c.getBoundingClientRect();
+        c.style.setProperty('--mx', ((e.clientX - r.left) / r.width).toFixed(3));
+        c.style.setProperty('--my', ((e.clientY - r.top) / r.height).toFixed(3));
+      });
+    });
+  }
+  // one listener for the life of the page; the + button is re-created on every navigation, so it
+  // is looked up each time rather than captured
+  let magnetOn = false;
+  function magnet() {
+    const now = document.getElementById('fab');
+    if (now && fine() && !reduce()) now.classList.add('sc-magnet');
+    if (magnetOn || !fine() || reduce()) return;
+    magnetOn = true;
+    const zone = 120;
+    addEventListener('pointermove', (e) => {
+      const fab = document.getElementById('fab');
+      if (!fab) return;
+      const r = fab.getBoundingClientRect();
+      const dx = e.clientX - (r.left + r.width / 2), dy = e.clientY - (r.top + r.height / 2);
+      const d = Math.hypot(dx, dy);
+      fab.style.transform = d < zone ? `translate(${(dx * 0.25).toFixed(1)}px, ${(dy * 0.25).toFixed(1)}px)` : '';
+    }, { passive: true });
+  }
+
   function scan() {
     const page = document.getElementById('page');
-    if (!page || performance.now() > armedUntil) return;
+    if (!page) return;
+    page.querySelectorAll('.chapter__title').forEach(kinetic);
+    miniStrip(page);
+    panStage(page);
+    presence(page);
+    magnet();
+    page.querySelectorAll('.bar i:not(.sc-scrub)').forEach((i) => { if (!reduce()) i.classList.add('sc-scrub'); });
+    if (performance.now() > armedUntil) { paint(); return; }
     for (const el of page.querySelectorAll(BLOCK)) {
       if (el.dataset.sc) continue;
       el.dataset.sc = '1';
       // only the outermost block moves; a card inside a section rides with it
       const outer = el.parentElement && el.parentElement.closest(BLOCK);
       if (outer && page.contains(outer)) continue;
+      if (el.closest('.sc-panstage')) continue; // the pan stage is sticky; a transform on it would unstick it
       watch(el);
     }
     // A hidden tab never delivers intersection callbacks, and nothing may stay invisible because
@@ -5991,25 +6090,85 @@ const SC = (() => {
     safety = setTimeout(() => page.querySelectorAll('.sc-pending').forEach((el) => {
       if (inView(el) || el.getBoundingClientRect().bottom <= 0) show(el);
     }), 1600);
+    paint();
   }
-  // Views fill #page asynchronously, after their fetches land, so the layer watches for blocks
-  // arriving rather than being called by every view. It only animates for a few seconds after a
+  // Views fill #page asynchronously, after their fetches land, so the layer watches for markup
+  // arriving rather than being called by every view. Reveals only run for a few seconds after a
   // navigation: a re-render caused by ticking a box must not make the whole page fade in again.
-  new MutationObserver(() => { if (performance.now() <= armedUntil) scan(); }).observe(app, { childList: true, subtree: true });
+  let scanQueued = false;
+  new MutationObserver(() => {
+    if (scanQueued) return;
+    scanQueued = true;
+    queueMicrotask(() => { scanQueued = false; scan(); });
+  }).observe(app, { childList: true, subtree: true });
 
+  // ---- the per-frame part
+  const parse = (c) => {
+    const m = /^#([0-9a-f]{6})$/i.exec(c.trim());
+    return m ? [0, 2, 4].map((k) => parseInt(m[1].slice(k, k + 2), 16)) : null;
+  };
   let ticking = false;
   function paint() {
     ticking = false;
     const se = document.scrollingElement;
     const max = se.scrollHeight - innerHeight;
-    document.documentElement.style.setProperty('--sc-page', max > 40 ? (se.scrollTop / max).toFixed(4) : '0');
-    document.querySelector('#page .pagehead')?.classList.toggle('is-stuck', se.scrollTop > 8);
+    const root = document.documentElement;
+    root.style.setProperty('--sc-page', max > 40 ? (se.scrollTop / max).toFixed(4) : '0');
+    const head = document.querySelector('#page .pagehead');
+    head?.classList.toggle('is-stuck', se.scrollTop > 8);
+    // what is sticky at the top is the page header on a desktop and the brand bar on a phone;
+    // sticky rows below it start where it ends
+    const topbar = desktop() ? head : document.querySelector('.sidebar');
+    root.style.setProperty('--sc-head', `${Math.max(0, Math.round(topbar?.getBoundingClientRect().bottom || 0))}px`);
+
+    // drift: interpolate the ground between the chapter colours around the reading line
+    const chapters = [...document.querySelectorAll('#page [data-chapter]')];
+    if (chapters.length) {
+      const line = innerHeight * 0.45;
+      let i = 0;
+      for (let k = 0; k < chapters.length; k++) if (chapters[k].getBoundingClientRect().top <= line) i = k;
+      const a = parse(getComputedStyle(chapters[i]).getPropertyValue('--drift'));
+      const nb = chapters[i + 1];
+      const b = nb ? parse(getComputedStyle(nb).getPropertyValue('--drift')) : null;
+      if (a) {
+        let t = 0;
+        if (b) {
+          const top = nb.getBoundingClientRect().top;
+          t = Math.min(1, Math.max(0, (line + innerHeight * 0.35 - top) / (innerHeight * 0.35)));
+        }
+        const c = b ? a.map((v, k) => Math.round(v + (b[k] - v) * t)) : a;
+        root.style.setProperty('--sc-ground', `rgb(${c.join(',')})`);
+      }
+    } else root.style.removeProperty('--sc-ground');
+
+    // pan: the rail travels its whole overflow during the first stretch of scroll, from the top of
+    // the page until it has passed under the header. Not pinned: a short stage held in a tall
+    // viewport leaves a blank band under it for the whole hold, which reads as the page breaking.
+    const stage = document.querySelector('#page .sc-panstage');
+    if (stage) {
+      const rail = stage.querySelector('.ribbon.is-rail');
+      const inner = stage.firstElementChild;
+      const travel = Math.max(0, rail.scrollWidth - inner.clientWidth);
+      if (!stage.dataset.y0) stage.dataset.y0 = String(Math.round(rail.getBoundingClientRect().bottom + se.scrollTop));
+      const headH = parseFloat(getComputedStyle(root).getPropertyValue('--sc-head')) || 0;
+      const range = Math.max(200, Number(stage.dataset.y0) - headH + 160);
+      const p = travel ? Math.min(1, Math.max(0, se.scrollTop / range)) : 0;
+      rail.style.transform = `translate3d(${(-travel * p).toFixed(1)}px,0,0)`;
+    }
+
+    // scrub: a bar is empty as it enters at the bottom and full by the time it is two-thirds up
+    for (const i of document.querySelectorAll('#page .bar i.sc-scrub')) {
+      const r = i.getBoundingClientRect();
+      const p = Math.min(1, Math.max(0, (innerHeight - r.top) / (innerHeight * 0.33)));
+      i.style.transform = `scaleX(${p.toFixed(3)})`;
+    }
+
     // the dashboard folio: the chapter whose top has passed under the header is the one you are in
     const links = document.querySelectorAll('.folio [data-goto]');
     if (links.length) {
       let current = links[0].dataset.goto;
-      const line = (document.querySelector('#page .pagehead')?.getBoundingClientRect().bottom || 0) + 140;
-      for (const ch of document.querySelectorAll('[data-chapter]')) if (ch.getBoundingClientRect().top <= line) current = ch.id;
+      const line = (head?.getBoundingClientRect().bottom || 0) + 140;
+      for (const ch of chapters) if (ch.getBoundingClientRect().top <= line) current = ch.id;
       // the last chapter is short: at the bottom of the page it is the one you are reading,
       // unless the reader just jumped to another one and the page simply ran out of scroll
       if (max > 40 && se.scrollTop >= max - 4) current = links[links.length - 1].dataset.goto;

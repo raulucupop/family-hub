@@ -1357,3 +1357,72 @@ a.mstrip__day:hover { outline: 2px solid var(--accent); outline-offset: 1px; }
 @media (prefers-reduced-motion: no-preference) {
   .mstrip__track .t, .mstrip__track .b { transition: transform 900ms var(--ease-out); }
 }
+
+/* ---------- scroll-craft, second pass: scroll as the timeline ----------
+   Devices from the skill's kit, written for this app: drift (the ground changes with the
+   chapter), pan (the deadlines travel sideways under vertical scroll), scrubbed fills (budget
+   bars grow with the scroll), kinetic chapter titles, pointer presence (tilt, spotlight, magnet),
+   and the month strip shrinking into the sticky header. All of it is off under reduced motion
+   except the colour drift, which moves nothing. */
+
+/* drift: the page ground is whatever the chapter on screen asks for, interpolated in between */
+:root { --sc-ground: var(--paper); }
+body { background: var(--sc-ground); }
+#ch-next { --drift: #eff2f1; }
+#ch-month { --drift: #ecf3ef; }
+#ch-money { --drift: #f3f1ec; }
+#ch-analysis { --drift: #edf0f3; }
+:root[data-theme="dark"] #ch-next { --drift: #131a1d; }
+:root[data-theme="dark"] #ch-month { --drift: #121c19; }
+:root[data-theme="dark"] #ch-money { --drift: #1a1916; }
+:root[data-theme="dark"] #ch-analysis { --drift: #13181d; }
+@media (min-width: 861px) {
+  .pagehead { background: color-mix(in oklab, var(--sc-ground) 90%, transparent); }
+}
+
+/* pan: the deadlines become one row that travels sideways as the page scrolls */
+.sc-panstage { position: relative; }
+.sc-panstage > .sc-pan-inner { overflow: hidden; padding-bottom: 6px; }
+.sc-panstage .ribbon.is-rail { display: flex; flex-wrap: nowrap; gap: 12px; will-change: transform; }
+.sc-panstage .ribbon.is-rail > .stub { flex: 0 0 210px; }
+
+/* scrubbed fills: a bar's fill is driven by how far it has come into view */
+.bar i.sc-scrub { transform-origin: left; }
+
+/* kinetic chapter titles: each word slides up from behind a clean edge, once */
+.chapter__title .w { display: inline-block; overflow: hidden; vertical-align: bottom; padding-bottom: .12em; margin-bottom: -.12em; }
+.chapter__title .w > span { display: inline-block; transform: translateY(105%); transition: transform 700ms var(--ease-out); transition-delay: calc(var(--i) * 70ms); }
+.chapter__title.is-in .w > span { transform: none; }
+
+/* the month follows you: a hairline copy of the strip in the stuck header */
+.mstrip-mini { display: none; }
+@media (min-width: 861px) {
+  .mstrip-mini { display: grid; grid-template-columns: repeat(var(--n, 31), 1fr); gap: 2px; height: 4px; margin-top: 10px;
+    opacity: 0; transform: translateY(-4px); transition: opacity 220ms var(--ease-out), transform 220ms var(--ease-out); }
+  .pagehead.is-stuck .mstrip-mini { opacity: 1; transform: none; }
+  .mstrip-mini span { border-radius: 2px; background: color-mix(in oklab, var(--ink) 9%, transparent); }
+  .mstrip-mini .is-past { background: color-mix(in oklab, var(--accent) 45%, transparent); }
+  .mstrip-mini .is-today { background: var(--ink); }
+  .mstrip-mini .warn { background: var(--amber); }
+  .mstrip-mini .late { background: var(--red); }
+}
+
+/* pointer presence, on a real pointer only */
+@media (hover: hover) and (pointer: fine) {
+  .stub.sc-tilt { transform-style: preserve-3d; transition: transform 160ms var(--ease-out), box-shadow .18s var(--ease); }
+  .kpi .card.sc-spot { overflow: hidden; }
+  .kpi .card.sc-spot::after {
+    content: ""; position: absolute; inset: 0; pointer-events: none; opacity: 0; transition: opacity 200ms var(--ease-out);
+    background: radial-gradient(260px circle at calc(var(--mx, .5) * 100%) calc(var(--my, .5) * 100%), color-mix(in oklab, var(--accent) 12%, transparent), transparent 70%);
+  }
+  .kpi .card.sc-spot:hover::after { opacity: 1; }
+  .fab.sc-magnet { transition: transform 120ms var(--ease-out); }
+}
+
+/* a day's date stays at the top while you read that day's expenses */
+tr.daysep > td { position: sticky; top: var(--sc-head, 0px); z-index: 2; }
+
+@media (prefers-reduced-motion: reduce) {
+  .chapter__title .w > span { transform: none; transition: none; }
+  .mstrip-mini { transition: none; }
+}
