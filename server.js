@@ -1593,9 +1593,14 @@ function dropRejectedUpload(req, res, next) {
   const drop = () => {
     if (settled) return;
     settled = true;
-    if (req.file && res.statusCode >= 400) fs.unlink(path.join(UPLOAD_DIR, req.file.filename), () => {});
+    if (req.file && res.statusCode >= 400) { try { fs.unlinkSync(path.join(UPLOAD_DIR, req.file.filename)); } catch {} }
   };
-  res.on('finish', drop);
+  // Deleted before the refusal leaves, not after: on 'finish' the client already holds the answer,
+  // so for a moment a refused file was still on the disk after the server had said no (and the
+  // test that pins this failed about one run in three). end() is the last thing every response
+  // calls; 'close' stays for a client that hangs up and never gets one.
+  const end = res.end;
+  res.end = function (...args) { drop(); return end.apply(this, args); };
   res.on('close', drop);
   next();
 }
