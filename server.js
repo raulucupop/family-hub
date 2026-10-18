@@ -87,7 +87,9 @@ function setAuthCookie(res, token) {
   res.cookie(COOKIE, token, {
     httpOnly: true,
     sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production' && process.env.INSECURE_COOKIES !== '1',
+    // Secure on any HTTPS request, not only when NODE_ENV says production: a host that forgets to
+    // set it would otherwise hand out a session cookie that also travels over plain http
+    secure: (process.env.NODE_ENV === 'production' || !!res.req?.secure) && process.env.INSECURE_COOKIES !== '1',
     maxAge: 30 * 24 * 3600 * 1000,
   });
 }
@@ -292,7 +294,10 @@ app.post('/api/auth/forgot', async (req, res) => {
     const token = crypto.randomBytes(32).toString('hex');
     db.prepare("INSERT INTO password_resets (user_id, token_hash, expires_at) VALUES (?,?,datetime('now','+1 hour'))")
       .run(user.id, crypto.createHash('sha256').update(token).digest('hex'));
-    const base = `${req.protocol}://${req.get('host')}`;
+    // The site's own address, never the request's Host header: a request for someone else's
+    // address with a forged Host would otherwise mail them a genuine reset link pointing at the
+    // forger's domain, and the token would travel there the moment they clicked it.
+    const base = siteBase();
     try {
       await sendMail([user.email], 'Family Hub — password reset',
         `Hello ${user.name},\n\nSomeone (hopefully you) asked to reset your Family Hub password.\nOpen this link to choose a new one — it works for 1 hour:\n\n${base}/#reset=${token}\n\nIf this wasn't you, just ignore this email and nothing changes.\n`,

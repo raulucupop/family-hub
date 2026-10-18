@@ -922,6 +922,15 @@ const DELETE_WHAT = {
   record: ['entry', 'înregistrarea'], watch: ['watched page', 'pagina urmărită'], chore: ['chore', 'treaba'],
   todo: ['to-do', 'sarcina'], item: ['list item', 'elementul din listă'],
 };
+// "Delete document "Pașaport Ana"?" in the reader's language, through the shared dialog
+function askDelete({ en, ro, name, detailEn = 'This cannot be undone.', detailRo = 'Nu se poate anula.', verbEn, verbRo }) {
+  const q = LANG === 'ro' ? (name ? `${verbRo || 'Șterge'} ${ro} „${name}”?` : `${verbRo || 'Șterge'} ${ro}?`) : (name ? `${verbEn || 'Delete'} ${en} "${name}"?` : `${verbEn || 'Delete'} this ${en}?`);
+  return confirmDestroy({
+    question: q.replace(/^Șterge /, 'Ștergi ').replace(/^Elimină /, 'Elimini ').replace(/^Renunță la /, 'Renunți la '),
+    detail: LANG === 'ro' ? detailRo : detailEn,
+    verb: LANG === 'ro' ? `${verbRo || 'Șterge'} ${ro}` : `${verbEn || 'Delete'} ${en}`,
+  });
+}
 function rowName(btn) {
   if (!btn) return '';
   if (btn.dataset.name) return btn.dataset.name;
@@ -1207,7 +1216,7 @@ function render() {
   const fn = routes[page] || viewDashboard;
   app.innerHTML = shell(page);
   SC.arm();
-  app.querySelectorAll('[data-logout]').forEach((b) => (b.onclick = async () => { await api('/auth/logout', { method: 'POST' }); ME = null; renderAuth(); }));
+  app.querySelectorAll('[data-logout]').forEach((b) => (b.onclick = async () => { await api('/auth/logout', { method: 'POST' }); clearDrafts(); ME = null; renderAuth(); }));
   const sheet = $('#moresheet');
   const moretab = $('#moretab');
   const closeSheet = () => { sheet.hidden = true; moretab.setAttribute('aria-expanded', 'false'); };
@@ -1420,7 +1429,7 @@ function tenantShell(active, prop) {
     </nav>
   </div>`;
 }
-async function tenantLogout() { await api('/auth/logout', { method: 'POST' }); ME = null; renderAuth(); }
+async function tenantLogout() { await api('/auth/logout', { method: 'POST' }); clearDrafts(); ME = null; renderAuth(); }
 // re-pull the account after a profile/lang/avatar change, then rerender the current section
 const tenantRefreshMe = async () => { const me = await api('/me'); ME = me.user; applyLang(); renderTenantPortal(); };
 async function renderTenantPortal() {
@@ -3516,7 +3525,7 @@ async function viewBills(el) {
     } catch (err) { toast(err.message); }
   }));
   el.querySelectorAll('[data-reject]').forEach((b) => (b.onclick = async () => {
-    if (!confirm('Discard this? The email and its PDF are deleted.')) return;
+    if (!(await askDelete({ en: 'email', ro: 'emailul', name: rowName(b), verbEn: 'Discard', verbRo: 'Renunță la', detailEn: 'The email and its PDF are deleted.', detailRo: 'Emailul și PDF-ul lui se șterg.' }))) return;
     try { await api(`/mail-drafts/${b.dataset.reject}/reject`, { method: 'POST' }); viewBills(el); }
     catch (err) { toast(err.message); }
   }));
@@ -3847,7 +3856,7 @@ async function renderEntityDocs(box, kind, item, slots, refresh) {
       toast('Document added'); refresh();
     } catch (err) { toast(err.message); }
   });
-  box.querySelectorAll('[data-docdel]').forEach((b) => (b.onclick = async () => { if (!confirm('Delete this document?')) return; await api('/documents/' + b.dataset.docdel, { method: 'DELETE' }); refresh(); }));
+  box.querySelectorAll('[data-docdel]').forEach((b) => (b.onclick = async () => { if (!(await askDelete({ en: 'document', ro: 'documentul', name: rowName(b) }))) return; await api('/documents/' + b.dataset.docdel, { method: 'DELETE' }); refresh(); }));
   box.querySelectorAll('[data-docattach]').forEach((inp) => (inp.onchange = async () => { const fd = new FormData(); fd.append('file', inp.files[0]); try { await api(`/documents/${inp.dataset.docattach}/attachment`, { method: 'POST', body: fd }); toast('Scan attached'); refresh(); } catch (err) { toast(err.message); } }));
 }
 
@@ -4058,7 +4067,7 @@ async function renderTenantBox(box, p) {
     catch (err) { toast(err.message); }
   }));
   box.querySelectorAll('[data-mdel]').forEach((b) => (b.onclick = async () => {
-    if (!confirm('Delete this maintenance request?')) return;
+    if (!(await askDelete({ en: 'maintenance request', ro: 'cererea de reparație', name: rowName(b) }))) return;
     await api(`/properties/${p.id}/maintenance/${b.dataset.mdel}`, { method: 'DELETE' }); reload();
   }));
   box.querySelectorAll('[data-copy]').forEach((b) => (b.onclick = () => copyText(b.dataset.copy)));
@@ -4066,7 +4075,7 @@ async function renderTenantBox(box, p) {
     await api(`/properties/${p.id}/tenant/invite`, { method: 'POST' }); toast('Tenant code generated'); reload();
   });
   box.querySelectorAll('[data-tdel]').forEach((b) => (b.onclick = async () => {
-    if (!confirm('Remove this tenant? Their account will be deleted.')) return;
+    if (!(await askDelete({ en: 'tenant', ro: 'chiriașul', name: rowName(b), verbEn: 'Remove', verbRo: 'Elimină', detailEn: 'Their account is deleted.', detailRo: 'Contul lui se șterge.' }))) return;
     await api(`/properties/${p.id}/tenant/${b.dataset.tdel}`, { method: 'DELETE' }); reload();
   }));
   box.querySelector('[data-chform]')?.addEventListener('submit', async (e) => {
@@ -4102,7 +4111,7 @@ async function renderTenantBox(box, p) {
     await api(`/properties/${p.id}/charges/${b.dataset.chreject}/reject`, { method: 'POST' }); toast('Marked back as unpaid'); reload();
   }));
   box.querySelectorAll('[data-chdel]').forEach((b) => (b.onclick = async () => {
-    if (!confirm('Delete this charge?')) return;
+    if (!(await askDelete({ en: 'charge', ro: 'plata cerută', name: rowName(b) }))) return;
     await api(`/properties/${p.id}/charges/${b.dataset.chdel}`, { method: 'DELETE' }); reload();
   }));
 }
@@ -4201,7 +4210,7 @@ function entityCard(item, cfg) {
   });
   wrap.querySelector('[data-del]')?.addEventListener('click', async (e) => {
     e.preventDefault();
-    if (!confirm(`${tr('Delete')} „${item.name}” ${tr('and all its history?')}`)) return;
+    if (!(await askDelete({ en: cfg.route === 'vehicles' ? 'vehicle' : 'property', ro: cfg.route === 'vehicles' ? 'vehiculul' : 'proprietatea', name: item.name, detailEn: 'All its history goes with it.', detailRo: 'Se șterge și tot istoricul lui.' }))) return;
     await api(`/${cfg.route}/${item.id}`, { method: 'DELETE' }); cfg.refresh();
   });
   // a link inside <summary> would otherwise expand the card on its way out
@@ -4292,7 +4301,7 @@ async function viewActe(el) {
     } catch (err) { toast(err.message); }
   });
   el.querySelectorAll('[data-del]').forEach((b) => (b.onclick = async () => {
-    if (!confirm('Delete this document (and its scan)?')) return;
+    if (!(await askDelete({ en: 'document', ro: 'documentul', name: rowName(b), detailEn: 'Its scan is deleted too.', detailRo: 'Se șterge și scanarea.' }))) return;
     await api('/documents/' + b.dataset.del, { method: 'DELETE' }); viewActe(el);
   }));
   el.querySelectorAll('[data-attach]').forEach((inp) => (inp.onchange = async () => {
@@ -4552,7 +4561,7 @@ async function viewWarranties(el) {
     } catch (err) { toast(err.message); }
   });
   el.querySelectorAll('[data-del]').forEach((b) => (b.onclick = async () => {
-    if (!confirm('Delete this warranty (and its receipt)?')) return;
+    if (!(await askDelete({ en: 'warranty', ro: 'garanția', name: rowName(b), detailEn: 'Its receipt is deleted too.', detailRo: 'Se șterge și bonul.' }))) return;
     await api('/warranties/' + b.dataset.del, { method: 'DELETE' }); viewWarranties(el);
   }));
   el.querySelectorAll('[data-attach]').forEach((inp) => (inp.onchange = async () => {
@@ -5501,7 +5510,7 @@ async function viewFamily(el) {
     catch (err) { toast(err.message); viewFamily(el); }
   }));
   el.querySelectorAll('[data-del]').forEach((b) => (b.onclick = async () => {
-    if (!confirm('Remove this member? Their account will be deleted.')) return;
+    if (!(await askDelete({ en: 'member', ro: 'membrul', name: rowName(b), verbEn: 'Remove', verbRo: 'Elimină', detailEn: 'Their account is deleted.', detailRo: 'Contul lui se șterge.' }))) return;
     await api('/family/members/' + b.dataset.del, { method: 'DELETE' }); viewFamily(el);
   }));
   $('#famform')?.addEventListener('submit', async (e) => {
@@ -5597,7 +5606,7 @@ async function viewSettings(el) {
   };
   $('#mailgen')?.addEventListener('click', mailGen);
   $('#mailrotate')?.addEventListener('click', async () => {
-    if (confirm('Generate a new address? The old one stops working.')) await mailGen();
+    if (await confirmDestroy({ question: LANG === 'ro' ? 'Generezi o adresă nouă pentru facturi?' : 'Generate a new invoice address?', detail: LANG === 'ro' ? 'Adresa actuală nu mai primește nimic, iar regulile de redirecționare trebuie schimbate.' : 'The current address stops receiving, and forwarding rules must be updated.', verb: LANG === 'ro' ? 'Generează adresă nouă' : 'Generate new address' })) await mailGen();
   });
   const haGen = async () => {
     try { await api('/ha/token', { method: 'POST' }); toast(tr('Address ready'), 'success'); viewSettings(el); }
@@ -5605,7 +5614,7 @@ async function viewSettings(el) {
   };
   $('#hagen')?.addEventListener('click', haGen);
   $('#harotate')?.addEventListener('click', async () => {
-    if (confirm('Generate a new address? The old one stops working.')) await haGen();
+    if (await confirmDestroy({ question: LANG === 'ro' ? 'Generezi o adresă nouă pentru Home Assistant?' : 'Generate a new Home Assistant address?', detail: LANG === 'ro' ? 'Adresa actuală nu mai merge; senzorul din Home Assistant trebuie actualizat.' : 'The current address stops working; the Home Assistant sensor must be updated.', verb: LANG === 'ro' ? 'Generează adresă nouă' : 'Generate new address' })) await haGen();
   });
   el.querySelectorAll('[data-copy]').forEach((b) => (b.onclick = () => copyText(b.dataset.copy)));
   setupPushCard();
@@ -6069,6 +6078,10 @@ document.addEventListener('submit', (e) => {
     .observe(app, { childList: true, subtree: true });
 })();
 
+// a shared phone or laptop: what one person half-typed must not greet the next one after sign-out
+function clearDrafts() {
+  try { Object.keys(localStorage).filter((k) => k.startsWith('fh_draft:')).forEach((k) => localStorage.removeItem(k)); } catch {}
+}
 /* ---------- drafts ----------
    A half-filled form survives a refresh, a closed tab or a wrong tap on the tab bar (VectorLab
    defaults). Every form with an id saves what differs from its defaults to localStorage, per page;
@@ -6078,7 +6091,7 @@ document.addEventListener('submit', (e) => {
 (() => {
   const SKIP = new Set(['authform', 'resetform', 'modalpwform']);
   const MAX_AGE = 14 * 86400000;
-  const key = (f) => `fh_draft:${(location.hash || '#dashboard').split('/')[0]}:${f.id}`;
+  const key = (f) => `fh_draft:${ME?.id ?? 0}:${(location.hash || '#dashboard').split('/')[0]}:${f.id}`;
   const fields = (f) => [...f.elements].filter((e) => e.name && !['password', 'file', 'hidden', 'submit', 'button', 'reset'].includes(e.type));
   const changed = (e) => (e.type === 'checkbox' || e.type === 'radio') ? e.checked !== e.defaultChecked
     : e.tagName === 'SELECT' ? [...e.options].some((o) => o.selected !== o.defaultSelected) : e.value !== e.defaultValue;
