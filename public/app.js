@@ -863,9 +863,9 @@ function quickSearch() {
   const wrap = openModal(`
     <h3 id="qslabel">${tr('Search')}</h3>
     <input id="qsinput" type="search" aria-labelledby="qslabel" placeholder="Digi, pasaport, Kaufland…" autocomplete="off" style="font-size:16px">
-    <div id="qsres" style="margin-top:10px;max-height:46vh;overflow:auto"></div>`, 'wide');
+    <div id="qsres" style="margin-top:12px;max-height:46vh;overflow:auto"></div>`, 'wide');
   const input = wrap.querySelector('#qsinput'), box = wrap.querySelector('#qsres');
-  const hint = (msg) => { box.innerHTML = `<p class="muted" style="margin:10px 0 0">${tr(msg)}</p>`; };
+  const hint = (msg) => { box.innerHTML = `<p class="muted" style="margin:12px 0 0">${tr(msg)}</p>`; };
   let items = [], sel = -1;
   const paint = () => {
     if (!items.length) return hint('Nothing found');
@@ -913,19 +913,42 @@ document.addEventListener('keydown', (e) => {
 // Clicking Undo cancels it — nothing was ever deleted, so no re-creation and no lost links.
 // A second delete (or leaving the page) commits any still-pending one first.
 let _pendingDelete = null;
-function undoableDelete({ message = 'Deleted', hide, restore, commit }) {
+/* Every delete asks first, naming the exact thing (the owner chose confirmation over the old
+   5-second Undo toast). The name comes from the button's data-name, or else from the row the button
+   sits in, so a call site only says what kind of thing it is. Confirmed, it is removed at once. */
+const DELETE_WHAT = {
+  loan: ['loan', 'împrumutul'], expense: ['expense', 'cheltuiala'], income: ['income', 'venitul'],
+  deposit: ['savings entry', 'înregistrarea de economii'], payment: ['payment', 'plata'], bill: ['bill', 'factura'],
+  record: ['entry', 'înregistrarea'], watch: ['watched page', 'pagina urmărită'], chore: ['chore', 'treaba'],
+  todo: ['to-do', 'sarcina'], item: ['list item', 'elementul din listă'],
+};
+function rowName(btn) {
+  if (!btn) return '';
+  if (btn.dataset.name) return btn.dataset.name;
+  const row = btn.closest('tr, li, .chorerow, details, .card');
+  if (!row) return '';
+  // in priority order: a querySelector list would return whichever comes first in the row, which
+  // in an expense row is the date cell
+  const pick = ['b', 'strong', '.choretitle', '.itemtext', 'td[data-label="Note"], td[data-label="Notă"]', 'td'];
+  let text = '';
+  for (const sel of pick) { const t = row.querySelector(sel)?.textContent.trim(); if (t) { text = t; break; } }
+  // an expense with no note is named by what the row says: category and amount
+  if (!text || /^\d{2}\/\d{2}\/\d{4}$/.test(text)) text = [...row.querySelectorAll('td')].slice(1, 5).map((td) => td.textContent.trim()).filter(Boolean).join(', ');
+  return text.replace(/\s+/g, ' ').trim().slice(0, 60);
+}
+async function undoableDelete({ message = 'Deleted', hide, restore, commit, btn, what = 'item' }) {
   if (_pendingDelete) _pendingDelete.flush();
+  const [en, ro] = DELETE_WHAT[what] || DELETE_WHAT.item;
+  const name = rowName(btn);
+  const ok = await confirmDestroy({
+    question: LANG === 'ro' ? (name ? `Ștergi ${ro} „${name}”?` : `Ștergi ${ro}?`) : (name ? `Delete ${en} "${name}"?` : `Delete this ${en}?`),
+    detail: LANG === 'ro' ? 'Nu se poate anula.' : 'This cannot be undone.',
+    verb: LANG === 'ro' ? `Șterge ${ro}` : `Delete ${en}`,
+  });
+  if (!ok) return;
   hide();
-  let settled = false;
-  const timer = setTimeout(doCommit, 5000);
-  function doCommit() {
-    if (settled) return; settled = true; _pendingDelete = null; clearTimeout(timer);
-    Promise.resolve().then(commit).catch((err) => { restore(); toast(err.message); });
-  }
-  _pendingDelete = { flush: doCommit };
-  toast(message, { label: 'Undo', duration: 5000, onAction: () => {
-    if (settled) return; settled = true; _pendingDelete = null; clearTimeout(timer); restore();
-  } });
+  try { await commit(); toast(message, 'success'); }
+  catch (err) { restore(); toast(err.message, 'error'); }
 }
 function flushPendingDelete() { if (_pendingDelete) _pendingDelete.flush(); }
 // hide a table row (and its paired edit row, if any) for the undo window, with a way to bring it back
@@ -1204,9 +1227,9 @@ function render() {
 // callback, and before the next render can replace #page — deferring it raced both.
 function pageError(fn, el, err) {
   console.error(err);
-  el.innerHTML = `<div class="card" style="text-align:center;padding:34px 16px">
+  el.innerHTML = `<div class="card" style="text-align:center;padding:32px 16px">
     <b style="display:block;font-family:var(--display);font-size:1.05rem">${tr("Couldn't load this")}</b>
-    <p class="muted" style="margin:8px 0 14px">${esc(err.message || '')}</p>
+    <p class="muted" style="margin:8px 0 16px">${esc(err.message || '')}</p>
     <div class="row" style="justify-content:center;gap:8px"><button class="btn small" id="pageretry">${tr('Retry')}</button>
     <button class="btn ghost small" id="pagecopy">${LANG === 'ro' ? 'Copiază detaliile erorii' : 'Copy error details'}</button></div></div>`;
   el.querySelector('#pageretry').onclick = () => runView(fn, el);
@@ -1249,7 +1272,7 @@ function shell(active) {
       <a class="whoami row" href="#settings" style="text-decoration:none;color:inherit;gap:8px">${avatarHtml(ME)}<span><b>${esc(ME.name)}</b>${tr(ME.role)} · ${esc(ME.email || '')}</span></a>
       <button class="navlink" data-logout>${icon('logout')}<span>Sign out</span></button>
     </nav>
-    <main class="main" id="page"></main>
+    <main class="main" id="page">${pageSkeleton()}</main>
     ${canWrite() && active !== 'money' ? `<button class="fab" id="fab" aria-label="${tr('Add expense')}" data-tip="${tr('Add expense')}">+</button>` : ''}
     <nav class="tabbar">
       ${TABS.map(([k, ic, l]) => `<a class="tab ${k === active ? 'active' : ''}" href="#${k}">
@@ -1342,7 +1365,7 @@ function renderReset() {
   const token = location.hash.slice('#reset='.length);
   app.innerHTML = `<div class="authwrap"><div class="card authcard">
     <div class="brandmark">Family<span>Hub</span></div>
-    <h2 style="margin-top:14px">Choose a new password</h2>
+    <h2 style="margin-top:16px">Choose a new password</h2>
     <form id="resetform">
       <div class="field"><label>New password (min. 8 characters)</label><input name="password" type="password" required minlength="8"></div>
       <button class="btn" style="width:100%">Save new password</button>
@@ -1390,7 +1413,7 @@ function tenantShell(active, prop) {
       <a class="whoami row" href="#account" style="text-decoration:none;color:inherit;gap:8px">${avatarHtml(ME)}<span><b>${esc(ME.name)}</b>${tr('Tenant')} · ${esc(ME.email || '')}</span></a>
       <button class="navlink" data-logout>${icon('logout')}<span>Sign out</span></button>
     </nav>
-    <main class="main" id="page"></main>
+    <main class="main" id="page">${pageSkeleton()}</main>
     <nav class="tabbar">
       ${TENANT_NAV.map(([k, ic, l]) => `<a class="tab ${k === active ? 'active' : ''}" href="#${k}">
         <span class="ic">${icon(ic)}</span><span class="tl">${tr(l)}</span></a>`).join('')}
@@ -1436,9 +1459,9 @@ function tenantDashboardView(el, data) {
       <a class="card clickcard" href="#maintenance"><div class="label">${tr('Open maintenance')}</div><div class="value">${openMaint}</div></a>
       <div class="card"><div class="label">${tr('Meter readings due')}</div><div class="value">${pendingMeters.length}</div></div>
     </section>
-    ${(pendingMeters.length || doneMeters.length) ? `<section class="card" style="margin-top:18px"><h3 style="margin-top:0">${tr('Meter readings')}</h3>
+    ${(pendingMeters.length || doneMeters.length) ? `<section class="card" style="margin-top:16px"><h3 style="margin-top:0">${tr('Meter readings')}</h3>
       ${pendingMeters.map((m) => `
-        <div class="row" style="flex-wrap:wrap;border:1px solid var(--line);border-radius:10px;padding:10px;margin-bottom:8px">
+        <div class="row" style="flex-wrap:wrap;border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:8px">
           <b style="text-transform:capitalize">${esc(tr(m.utility))}</b><span class="muted">${tr('requested')} ${fdate(m.requested_at?.slice(0, 10))}</span>
           <input data-mval="${m.id}" inputmode="decimal" placeholder="meter value" style="max-width:140px">
           <button class="btn small" data-msend="${m.id}">Send reading</button>
@@ -1478,7 +1501,7 @@ function tenantInvoicesView(el, data) {
           <td>${c.status === 'paid' ? `<span class="badge paid">${tr('paid')}${c.confirmed_at ? ' ' + fdate(c.confirmed_at) : ''}</span>`
             : c.status === 'pending' ? `<span class="badge role">confirmation pending</span>`
             : `<span class="badge unpaid">to pay</span>`}</td>
-          <td class="right">${c.status === 'unpaid' ? `<span class="row" style="gap:6px;justify-content:flex-end;flex-wrap:nowrap;white-space:nowrap">${payLink ? `<a class="btn ghost small revolut" href="${esc(payLink)}" target="_blank" rel="noopener" title="Pay with Revolut">Pay ${REVOLUT_MARK}</a>` : ''}<button class="btn small" data-pay="${c.id}">Mark as paid</button></span>` : ''}</td>
+          <td class="right">${c.status === 'unpaid' ? `<span class="row" style="gap:8px;justify-content:flex-end;flex-wrap:nowrap;white-space:nowrap">${payLink ? `<a class="btn ghost small revolut" href="${esc(payLink)}" target="_blank" rel="noopener" title="Pay with Revolut">Pay ${REVOLUT_MARK}</a>` : ''}<button class="btn small" data-pay="${c.id}">Mark as paid</button></span>` : ''}</td>
         </tr>`;
       }).join('')}</tbody></table>`
     : `<div class="empty"><b>Nothing to pay yet</b>Rent and shared invoices from your landlord will appear here.</div>`}
@@ -1519,7 +1542,7 @@ function tenantMaintenanceView(el, data) {
         <td>${m.photo ? `<a href="/api/tenant/maintenance/${m.id}/photo" target="_blank">photo</a>` : '<span class="muted">—</span>'}</td>
         <td>${m.status === 'done'
           ? `<span class="badge paid">${tr('Fixed')}${m.resolved_at ? ' ' + fdate(m.resolved_at) : ''}</span>
-             <div style="margin-top:6px"><button class="btn ghost tiny" data-mreopen="${m.id}" data-title="${esc(m.title)}">${tr('Not fixed — reopen')}</button></div>`
+             <div style="margin-top:8px"><button class="btn ghost tiny" data-mreopen="${m.id}" data-title="${esc(m.title)}">${tr('Not fixed — reopen')}</button></div>`
           : `<span class="badge unpaid">${tr('Open')}</span>`}</td>
       </tr>`).join('')}</tbody></table>` : `<p class="muted" style="margin-bottom:0">No maintenance requests yet.</p>`}
     ${(data.maintenance || []).some((m) => m.status !== 'done') ? `<div class="row" style="align-items:center;margin-top:12px">
@@ -1566,7 +1589,7 @@ function tenantAccountView(el, data) {
     <div class="card" style="margin-top:16px"><h3 style="margin-top:0">Appearance</h3>
       <p class="muted" style="margin-top:0">Choose how Family Hub looks on this account.</p>
       <div class="row">${['light', 'dark', 'system'].map((tm) => `<button class="btn ${(ME.theme || 'light') === tm ? '' : 'ghost'} small" data-ttheme="${tm}">${THEME_LABELS[tm]}</button>`).join('')}</div>
-      <p class="muted" style="margin:14px 0 6px">Language</p>
+      <p class="muted" style="margin:16px 0 8px">Language</p>
       <div class="row">${[['en', '🇬🇧 English'], ['ro', '🇷🇴 Română']].map(([lg, lb]) => `<button class="btn ${(ME.lang || 'en') === lg ? '' : 'ghost'} small" data-tlang="${lg}">${lb}</button>`).join('')}</div></div>
     <div class="card" style="margin-top:16px"><h3 style="margin-top:0">Password</h3>
       <p class="muted" style="margin-top:0">Changing it signs you out on every other device.</p>
@@ -1603,12 +1626,21 @@ let DASH_VIEW = 'all'; // 'all' or a member id (person view)
 let DASH_MONTHS = 1;   // 1 / 3 / 6 / 12 month window
 const PERIOD_LABELS = { 1: 'This month', 3: 'Last 3 months', 6: 'Last 6 months', 12: 'Last 12 months' };
 // shimmering placeholder that mirrors the dashboard's real layout, shown while data loads
+/* The generic page skeleton: a header and three blocks in the shape most pages have. It is drawn
+   the moment a page is opened and replaced as soon as the view renders, but stays invisible for its
+   first 300ms, so a fast page never flashes it (VectorLab loaders). */
+function pageSkeleton() {
+  const block = (h) => `<div class="card"><div class="skel skel-line" style="width:40%"></div><div class="skel" style="height:${h}px;margin-top:12px"></div></div>`;
+  return `<div class="pageskel" aria-busy="true" aria-label="${LANG === 'ro' ? 'Se încarcă' : 'Loading'}">
+    <div class="skel skel-line" style="width:220px;height:28px"></div><div class="skel skel-line" style="width:320px;margin-top:8px"></div>
+    <div style="display:grid;gap:16px;margin-top:24px">${block(48) + block(160) + block(96)}</div></div>`;
+}
 function dashSkeleton() {
-  const tile = `<div class="card"><div class="skel skel-line" style="width:55%"></div><div class="skel skel-line" style="width:40%;height:22px;margin-top:10px"></div></div>`;
+  const tile = `<div class="card"><div class="skel skel-line" style="width:55%"></div><div class="skel skel-line" style="width:40%;height:22px;margin-top:12px"></div></div>`;
   return `<div class="skel skel-line" style="width:200px;height:20px;margin:2px 0 12px"></div>
     <div class="ribbon" style="overflow:hidden">${[0, 1, 2, 3].map(() => `<div class="skel" style="min-width:168px;height:70px;border-radius:10px"></div>`).join('')}</div>
-    <section class="kpi" style="margin-top:18px">${tile + tile + tile}</section>
-    <section class="grid2" style="margin-top:18px"><div class="card"><div class="skel" style="height:220px"></div></div><div class="card"><div class="skel" style="height:220px"></div></div></section>`;
+    <section class="kpi" style="margin-top:16px">${tile + tile + tile}</section>
+    <section class="grid2" style="margin-top:16px"><div class="card"><div class="skel" style="height:220px"></div></div><div class="card"><div class="skel" style="height:220px"></div></div></section>`;
 }
 /* One plain sentence under the tiles: where this month lands if nothing changes, and whichever
    category is most out of step with its usual self. Whole sentences per language — the RO
@@ -1641,7 +1673,7 @@ function safeToSpendHtml(stats, months, upcoming) {
           : `You're ${money(-available)} past what came in this month${committed > 0 ? `, including ${money(committed)} already committed` : ''}.`)
     : (ro ? `${money(available)} rămași pentru ${daysLeft} ${daysLeft === 1 ? 'zi' : 'zile'}${committed > 0 ? `, după ce am scăzut ${money(committed)} deja programați` : ''}.`
           : `${money(available)} left for ${daysLeft} ${daysLeft === 1 ? 'day' : 'days'}${committed > 0 ? `, after setting aside ${money(committed)} already committed` : ''}.`);
-  return `<section class="card safespend${over ? ' over' : ''}" style="margin-top:18px">
+  return `<section class="card safespend${over ? ' over' : ''}" style="margin-top:16px">
     <div class="muted" style="font-size:12px">${tr('Safe to spend today')}</div>
     <div class="safeamt">${money(Math.max(0, perDay))}</div>
     <div class="muted" style="font-size:14px">${note}</div>
@@ -1694,7 +1726,7 @@ function dashInsight(stats, suggest, months) {
       : `<b>${esc(tr(worst.category))}</b> is ${Math.round(worst.over)}% above its 3-month average.`);
   }
   if (!bits.length) return '';
-  return `<section class="card insight" style="margin-top:18px"><span class="insight-ic" aria-hidden="true">◆</span>
+  return `<section class="card insight" style="margin-top:16px"><span class="insight-ic" aria-hidden="true">◆</span>
     <p>${bits.join(' ')}</p></section>`;
 }
 async function viewDashboard(el) {
@@ -1757,7 +1789,7 @@ async function viewDashboard(el) {
   el.querySelector('#dash').innerHTML = `
     ${monthStripHtml(reminders, budgets, spentMap)}
     <div class="chapter" id="ch-next" data-chapter>
-    ${blank ? `<section class="card" style="margin-bottom:18px">
+    ${blank ? `<section class="card" style="margin-bottom:16px">
       <h3>Welcome — start here</h3>
       <p class="muted" style="margin-top:0">Nothing is set up yet. Add any one of these and this page fills in.</p>
       <div class="row" style="flex-wrap:wrap;gap:8px">
@@ -1778,7 +1810,7 @@ async function viewDashboard(el) {
     <h2 class="chapter__title">${tr(periodLabel)}</h2>
     ${(DASH_MONTHS === 1 && DASH_VIEW === 'all') ? forecastCard(forecast, proj) : ''}
     ${safeToSpendHtml(stats, DASH_MONTHS, upcoming)}
-    <section class="kpi" style="margin-top:18px">
+    <section class="kpi" style="margin-top:16px">
       <a class="card clickcard" href="#money" data-tab="income"><div class="label"><span class="kpi-ic">${icon('wallet')}</span>${tr('Income')}</div>${pctPill(stats.income, stats.prev?.income, 'up-good')}<div class="value" data-cu="${stats.income}">${money(stats.income)}</div>${deltaAmountHtml(stats.income, stats.prev?.income)}<span class="spark-pos">${sparkline(incomeSeries)}</span></a>
       <a class="card clickcard" href="#money" data-tab="expenses"><div class="label"><span class="kpi-ic">${icon('receipt')}</span>${tr('Spent')}</div>${pctPill(stats.spent, stats.prev?.spent, 'up-bad')}<div class="value" data-cu="${stats.spent}">${money(stats.spent)}</div>${deltaAmountHtml(stats.spent, stats.prev?.spent)}${stats.card?.total > 0 ? `<div class="muted" style="font-size:12px;margin-top:2px">+ ${money(stats.card.total)} ${tr('on card')}</div>` : ''}<span class="spark-neg">${sparkline(spendSeries)}</span></a>
       <div class="card"><div class="label"><span class="kpi-ic">${icon('coins')}</span>Left over</div>${pctPill(net, (stats.prev?.income ?? 0) - (stats.prev?.spent ?? 0), 'up-good')}<div class="value ${net < 0 ? 'neg' : ''}" data-cu="${net}">${money(net)}</div>${deltaAmountHtml(net, (stats.prev?.income ?? 0) - (stats.prev?.spent ?? 0))}${savingsRateHtml(stats.income, net)}<span class="spark-pos">${sparkline(netSeries)}</span></div>
@@ -1791,12 +1823,12 @@ async function viewDashboard(el) {
     ${exposureHtml(loans, credits)}
     ${gapsHtml(gaps)}
     ${goalsHtml(savings.goals)}` : ''}
-    ${budgets.budgets.length ? `<section class="card" style="margin-top:18px">
+    ${budgets.budgets.length ? `<section class="card" style="margin-top:16px">
       <h3>${tr('Budget vs actual')} · ${budgets.month}</h3>
       ${budgets.budgets.map((b) => {
         const s = spentMap[b.category] || 0; const pct = Math.min(100, (s / b.amount) * 100 || 0);
         const truePct = b.amount > 0 ? Math.round((s / b.amount) * 100) : 0;
-        return `<div style="margin-bottom:10px"><div class="row" style="justify-content:space-between">
+        return `<div style="margin-bottom:12px"><div class="row" style="justify-content:space-between">
           <span>${esc(b.category)}</span><span class="amount muted">${money(s)} / ${money(b.amount)} · ${truePct}%</span></div>
           <div class="bar"><i class="${budgetClass(s, b.amount)}" style="width:${pct}%"></i></div></div>`;
       }).join('')}</section>` : ''}
@@ -1806,7 +1838,7 @@ async function viewDashboard(el) {
     <!-- Charts are how a month is reviewed, not how a Tuesday is answered. They were 40% of the
          page height above the fold-and-a-half; folded away, the dashboard answers "what do I owe
          and what is left" in one screen, and the analysis is one tap behind. -->
-    <details class="card foldcard reports" id="reports" style="margin-top:18px"><summary>${tr('Charts and calendar')}</summary>
+    <details class="card foldcard reports" id="reports" style="margin-top:16px"><summary>${tr('Charts and calendar')}</summary>
       <div class="reportsbody">
         <section class="grid2">
           <div class="card"><h3>${tr('Spending by category')} · ${esc(tr(periodLabel))}</h3>
@@ -1814,18 +1846,18 @@ async function viewDashboard(el) {
             <ul class="catlegend" id="catLegend"></ul></div>
           <div class="card"><h3>Income vs spending</h3><div class="chartbox"><canvas id="trendChart"></canvas></div></div>
         </section>
-        <section class="card" style="margin-top:18px">
+        <section class="card" style="margin-top:16px">
           <h3 style="margin-top:0">${tr('What you kept')}</h3>
           <p class="muted" style="margin:-4px 0 8px;font-size:14px">${tr('Income minus spending, month by month. Below the line means you spent more than came in.')}</p>
           <div class="chartbox"><canvas id="netChart"></canvas></div>
         </section>
-        ${!budgets.budgets.length && canWrite() && suggest?.categories?.length ? `<section class="card" style="margin-top:18px">
+        ${!budgets.budgets.length && canWrite() && suggest?.categories?.length ? `<section class="card" style="margin-top:16px">
           <h3>${tr('Budget vs actual')} · ${budgets.month}</h3>
           <p class="muted" style="margin-top:0">No budgets set for this month yet.</p>
           <button class="btn small" id="budgetkick">${tr('Set from my 3-month average')}</button>
           <span class="muted" style="margin-left:8px">${tr('You can fine-tune them afterwards.')}</span>
         </section>` : ''}
-        <div id="dashcal" style="padding-top:18px"><div class="skel" style="height:220px"></div></div>
+        <div id="dashcal" style="padding-top:16px"><div class="skel" style="height:220px"></div></div>
       </div></details>
     </div>`;
   // the folio jumps to a chapter; the header it sits in is sticky, so the chapter's scroll-margin
@@ -1941,8 +1973,8 @@ function deltaHtml(now, before, sense) {
 /* the landlord's first question of the month, answered without opening the property */
 function rentHtml(rent) {
   if (!rent || !rent.length || DASH_VIEW !== 'all') return '';
-  return `<section class="card" style="margin-top:18px"><h3>Rent this month</h3>
-    ${rent.map((r) => `<div class="row" style="justify-content:space-between;gap:10px;flex-wrap:wrap;padding:5px 0">
+  return `<section class="card" style="margin-top:16px"><h3>Rent this month</h3>
+    ${rent.map((r) => `<div class="row" style="justify-content:space-between;gap:12px;flex-wrap:wrap;padding:4px 0">
       <span><b>${esc(r.property)}</b> <span class="muted">· ${tr('due')} ${fdate(r.due_date)}</span></span>
       <span class="row" style="gap:8px"><span class="amount">${moneyIn(r.amount, r.currency)}</span>
         ${r.status === 'paid' ? `<span class="badge paid">${tr('paid')}</span>`
@@ -1950,7 +1982,7 @@ function rentHtml(rent) {
           : r.days_late ? `<span class="badge late">${r.days_late} ${tr(r.days_late === 1 ? 'day late' : 'days late')}</span>`
           : `<span class="badge unpaid">${tr('to pay')}</span>`}</span>
     </div>`).join('')}
-    <p class="muted" style="margin:6px 0 0"><a href="#properties">${tr('Open Properties')} →</a></p></section>`;
+    <p class="muted" style="margin:8px 0 0"><a href="#properties">${tr('Open Properties')} →</a></p></section>`;
 }
 /* The share of what came in that you still have. A leftover of 5.000 means nothing on its own —
    it's excellent on an income of 6.000 and poor on 20.000 — and unlike the absolute figure it stays
@@ -1975,11 +2007,11 @@ function choresCard(chores) {
   const open = today.filter((c) => !c.done);
   if (!today.length) return '';
   if (!open.length) {
-    return `<section class="card" style="margin-top:18px"><div class="row" style="justify-content:space-between;gap:10px;align-items:center">
+    return `<section class="card" style="margin-top:16px"><div class="row" style="justify-content:space-between;gap:12px;align-items:center">
       <b>${tr('All chores done for today')}</b><a class="btn ghost small" href="#chores">${tr('Chores')}</a></div></section>`;
   }
-  return `<section class="card" style="margin-top:18px">
-    <div class="row" style="justify-content:space-between;gap:10px;align-items:baseline">
+  return `<section class="card" style="margin-top:16px">
+    <div class="row" style="justify-content:space-between;gap:12px;align-items:baseline">
       <h3 style="margin:0">${tr('Chores today')}</h3>
       <span class="muted">${open.length} ${LANG === 'ro' ? (open.length === 1 ? 'rămasă' : 'rămase') : 'left'}</span></div>
     <ul class="chorelist">${open.slice(0, 5).map((c) => `<li class="chorerow">
@@ -2111,10 +2143,10 @@ function goalsHtml(goals) {
   const open = (goals || []).filter((g) => !g.done
     && (DASH_VIEW === 'all' || g.user_id == null || String(g.user_id) === String(DASH_VIEW)));
   if (!open.length) return '';
-  return `<section class="card" style="margin-top:18px"><h3>${tr('Savings goals')}</h3>
+  return `<section class="card" style="margin-top:16px"><h3>${tr('Savings goals')}</h3>
     ${open.slice(0, 4).map((g) => {
       const pct = Math.min(100, Math.max(0, (g.saved / g.target) * 100));
-      return `<div style="margin-bottom:10px"><div class="row" style="justify-content:space-between;gap:8px">
+      return `<div style="margin-bottom:12px"><div class="row" style="justify-content:space-between;gap:8px">
         <span>${esc(g.title)}${g.user_name ? ` <span class="muted">· ${esc(g.user_name)}</span>` : ''}${g.saved >= g.target ? ` <span class="badge paid">${tr('reached!')}</span>` : ''}</span>
         <span class="amount muted">${money(g.saved)} / ${money(g.target)}</span></div>
         <div class="bar"><i style="width:${pct}%"></i></div></div>`;
@@ -2353,12 +2385,12 @@ async function renderCalendar(el, embedded) {
     : `<p class="muted">Ask an adult to generate the subscribe link.</p>`;
   const grid = `<div class="cal">${['Lu', 'Ma', 'Mi', 'Jo', 'Vi', 'Sâ', 'Du'].map((d) => `<div class="dow">${d}</div>`).join('')}${cells.join('')}</div>`;
   el.innerHTML = embedded
-    ? `<div class="row" style="justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:10px"><h3 style="margin:0">Calendar</h3>${controls}</div>
+    ? `<div class="row" style="justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:12px"><h3 style="margin:0">Calendar</h3>${controls}</div>
        ${grid}
        <details style="margin-top:12px"><summary style="cursor:pointer;color:var(--ink-soft);font-size:14px">Subscribe from your phone's calendar</summary><div style="padding-top:8px">${subscribeInner}</div></details>`
     : `<div class="pagehead"><div><h1>Calendar</h1><p>Every deadline, bill and birthday on one calendar.</p></div>${controls}</div>
        ${grid}
-       <div class="card" style="margin-top:18px"><h3>Subscribe from your phone's calendar</h3>${subscribeInner}</div>`;
+       <div class="card" style="margin-top:16px"><h3>Subscribe from your phone's calendar</h3>${subscribeInner}</div>`;
   const shift = (n) => { const d = new Date(Date.UTC(Y, M - 1 + n, 1)); CAL_MONTH = d.toISOString().slice(0, 7); renderCalendar(el, embedded); };
   $('#calprev').onclick = () => shift(-1);
   $('#calnext').onclick = () => shift(1);
@@ -2430,12 +2462,12 @@ async function moneyDebt(body) {
         <div class="muted" style="font-size:12px">${maxLeft} ${tr('mo left')}</div></div>
     </section>
 
-    ${saved > 0.5 ? `<section class="card insight" style="margin-top:18px"><span class="insight-ic" aria-hidden="true">◆</span>
+    ${saved > 0.5 ? `<section class="card insight" style="margin-top:16px"><span class="insight-ic" aria-hidden="true">◆</span>
       <p>${LANG === 'ro'
         ? `Plățile anticipate ți-au economisit <b class="amount" style="color:var(--ok)">${money(saved)}</b> din dobândă.`
         : `Your overpayments have saved <b class="amount" style="color:var(--ok)">${money(saved)}</b> of interest.`}</p></section>` : ''}
 
-    <section class="card" style="margin-top:18px">
+    <section class="card" style="margin-top:16px">
       <h3 style="margin-top:0">${tr('Interest')}</h3>
       <div class="row" style="justify-content:space-between"><span>${tr('Total cost of borrowing')}</span>
         <span class="amount">${money(totalInterest)}</span></div>
@@ -2445,7 +2477,7 @@ async function moneyDebt(body) {
         <span class="muted" style="font-size:12px">${tr('still to pay')} ${money(Math.max(0, totalInterest - paidInterest))}</span></div>
     </section>
 
-    <section class="card" style="margin-top:18px">
+    <section class="card" style="margin-top:16px">
       <h3 style="margin-top:0">${tr('Loans')}</h3>
       <table class="cards"><thead><tr><th>${tr('Credit')}</th><th class="right">${tr('Balance today')}</th><th class="right">${tr('Monthly total')}</th><th class="right">${tr('mo left')}</th></tr></thead><tbody>
       ${live.slice().sort((a, b) => Number(b.balance) - Number(a.balance)).map((c) => `<tr>
@@ -2493,19 +2525,19 @@ function loanSection(dir, rows, members) {
   }, {});
   const outstandingText = Object.entries(outstanding).map(([c, v]) => moneyIn(v, c)).join(' · ');
   const overdue = open.filter((l) => l.due_date && l.due_date < iso);
-  return `<section class="card" style="margin-top:18px">
-    <div class="row" style="justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap">
+  return `<section class="card" style="margin-top:16px">
+    <div class="row" style="justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap">
       <h3 style="margin:0">${tr(w.title)}</h3>
       ${open.length ? `<div style="text-align:right"><div class="muted" style="font-size:12px">${tr(w.total)}</div>
         <div class="amount"><b>${outstandingText}</b></div></div>` : ''}
     </div>
-    ${overdue.length ? `<p class="badge warn" style="margin:10px 0 0">${overdue.length} ${tr(overdue.length === 1 ? 'is past its date' : 'are past their date')}</p>` : ''}
+    ${overdue.length ? `<p class="badge warn" style="margin:12px 0 0">${overdue.length} ${tr(overdue.length === 1 ? 'is past its date' : 'are past their date')}</p>` : ''}
 
     ${rows.length ? `<ul class="chorelist" style="margin-top:12px">${rows.map((l) => {
     const pct = Number(l.amount) > 0 ? Math.min(100, (Number(l.repaid) / Number(l.amount)) * 100) : 0;
     const late = !l.settled && l.due_date && l.due_date < iso;
     return `<li class="chorerow${l.settled ? ' is-done' : ''}" style="display:block">
-      <div class="row" style="justify-content:space-between;gap:10px;align-items:baseline">
+      <div class="row" style="justify-content:space-between;gap:12px;align-items:baseline">
         <span class="choretitle">${esc(l.person)}</span>
         <span class="amount"${late ? ' style="color:var(--red)"' : ''}>${l.settled ? tr('Settled') : moneyIn(l.balance, l.currency)}</span>
       </div>
@@ -2518,11 +2550,11 @@ function loanSection(dir, rows, members) {
       l.user_name ? esc(l.user_name) : null,
       l.note ? esc(l.note) : null,
     ].filter(Boolean).join(' · ')}</span>
-        ${canWrite() ? `<span class="row" style="gap:6px">
+        ${canWrite() ? `<span class="row" style="gap:8px">
           ${l.settled ? '' : `<button class="btn ghost small" data-lenpay="${l.id}">${tr(w.pay)}</button>`}
           <button class="btn danger small iconbtn" data-lendel="${l.id}" aria-label="${tr('Delete')}" data-tip="${tr('Delete')}">✕</button></span>` : ''}
       </div>
-      <form class="formgrid" data-lenform="${l.id}" hidden style="margin-top:10px">
+      <form class="formgrid" data-lenform="${l.id}" hidden style="margin-top:12px">
         <div><label>${tr('Amount')} <span class="muted">${CURRENCIES[l.currency] || l.currency || cur()}</span></label><input name="amount" type="number" step="0.01" min="0.01" max="${l.balance}" required></div>
         <div><label>${tr('Date')}</label><input name="date" type="date" value="${iso}" required></div>
         <button class="btn small">${tr('Save')}</button>
@@ -2567,7 +2599,7 @@ function renderLent(el, loans, members, refresh) {
   }));
   el.querySelectorAll('[data-lendel]').forEach((b) => (b.onclick = () => {
     const { hide, restore } = rowHide(b);
-    undoableDelete({ hide, restore, commit: () => api('/loans/' + b.dataset.lendel, { method: 'DELETE' }).then(refresh) });
+    undoableDelete({ btn: b, what: 'loan', hide, restore, commit: () => api('/loans/' + b.dataset.lendel, { method: 'DELETE' }).then(refresh) });
   }));
   el.querySelectorAll('[data-loanadd]').forEach((f) => f.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -2651,8 +2683,8 @@ async function moneyYear(body) {
         <div class="muted" style="font-size:12px">${lastYear.length} ${tr('records')}</div></div>
     </section>
 
-    <section class="card" style="margin-top:18px"><h3 style="margin-top:0">${tr('Month by month')} · ${yr}</h3>
-      ${hasPrevMonths ? `<p class="muted" style="margin:-4px 0 10px;font-size:14px">
+    <section class="card" style="margin-top:16px"><h3 style="margin-top:0">${tr('Month by month')} · ${yr}</h3>
+      ${hasPrevMonths ? `<p class="muted" style="margin:-4px 0 12px;font-size:14px">
         <span class="ghostkey"></span> ${tr('the faint mark is the same month in')} ${yr - 1}</p>` : ''}
       <div class="yearbars">${months.map((m, i) => {
         // The value used to live only in a native `title`, which never fires on a phone — so on the
@@ -2674,9 +2706,9 @@ async function moneyYear(body) {
       <p class="muted yb-readout" id="ybReadout" aria-live="polite"></p>
     </section>
 
-    ${catSeries.length ? `<section class="card" style="margin-top:18px">
+    ${catSeries.length ? `<section class="card" style="margin-top:16px">
       <h3 style="margin-top:0">${tr('Category trends')} · ${yr}</h3>
-      <p class="muted" style="margin:-4px 0 10px;font-size:14px">${tr('Where the money is drifting, month by month.')}</p>
+      <p class="muted" style="margin:-4px 0 12px;font-size:14px">${tr('Where the money is drifting, month by month.')}</p>
       <div class="sparkgrid">${catSeries.map((x) => {
         const d = drift(x.series);
         const peakC = Math.max(...x.series, 1);
@@ -2692,7 +2724,7 @@ async function moneyYear(body) {
       }).join('')}</div>
     </section>` : ''}
 
-    ${moves.length ? `<section class="card" style="margin-top:18px"><h3 style="margin-top:0">${tr('What moved')} · ${yr} ${tr('vs')} ${yr - 1}</h3>
+    ${moves.length ? `<section class="card" style="margin-top:16px"><h3 style="margin-top:0">${tr('What moved')} · ${yr} ${tr('vs')} ${yr - 1}</h3>
       <table class="cards"><thead><tr><th>${tr('Category')}</th><th class="right">${yr - 1}</th><th class="right">${yr}</th><th class="right">${tr('Change')}</th></tr></thead><tbody>
       ${moves.map((x) => `<tr>
         <td data-label="${tr('Category')}"><span class="catcell"><span class="catdot" style="--cat:${catColor(x.c)}"></span>${esc(tr(x.c))}</span></td>
@@ -2701,7 +2733,7 @@ async function moneyYear(body) {
         <td class="right amount" data-label="${tr('Change')}" style="color:${x.diff > 0 ? 'var(--red)' : 'var(--ok)'}">${x.diff > 0 ? '+' : ''}${money(x.diff)}</td></tr>`).join('')}
       </tbody></table></section>` : ''}
 
-    ${biggest.length ? `<section class="card" style="margin-top:18px"><h3 style="margin-top:0">${tr('Biggest expenses')} · ${yr}</h3>
+    ${biggest.length ? `<section class="card" style="margin-top:16px"><h3 style="margin-top:0">${tr('Biggest expenses')} · ${yr}</h3>
       <table class="cards"><thead><tr><th>${tr('Date')}</th><th>${tr('Category')}</th><th>${tr('Note')}</th><th class="right">${tr('Amount')}</th></tr></thead><tbody>
       ${biggest.map((e) => `<tr>
         <td data-label="${tr('Date')}">${fdate(e.date)}</td>
@@ -2787,9 +2819,9 @@ async function moneyExpenses(body, f = {}) {
     .sort((a, b) => b[1] - a[1]);
   // who put what on the card, for the same month and person the filters are showing
   const cardPanel = cardTotal > 0 ? `<div class="card cardpanel" style="margin-top:16px">
-      <div class="row" style="justify-content:space-between;gap:10px;align-items:baseline">
+      <div class="row" style="justify-content:space-between;gap:12px;align-items:baseline">
         <h3 style="margin:0">${tr('On the credit card')}</h3><span class="amount"><b>${money(cardTotal)}</b></span></div>
-      <p class="muted" style="margin:4px 0 10px">${tr('Not counted as spent — the money leaves the account when you pay the card bill.')}</p>
+      <p class="muted" style="margin:4px 0 12px">${tr('Not counted as spent — the money leaves the account when you pay the card bill.')}</p>
       <table class="cards"><tbody>${cardByPerson.map(([uid, amt]) => `<tr>
         <td>${whoChip(mname[uid])}</td>
         <td class="right amount">${money(amt)}</td></tr>`).join('')}</tbody></table>
@@ -2836,7 +2868,7 @@ async function moneyExpenses(body, f = {}) {
         <td class="right amount">${money(r.amount)}<span class="muted">/${tr('mo')}</span></td>
         <td class="right">${canWrite() ? `<span class="rowacts"><button class="btn ghost small" data-rxtog="${r.id}">${r.active ? 'Pause' : 'Resume'}</button>
           <button class="btn danger small iconbtn" data-rxdel="${r.id}" data-name="${esc(r.note || tr(r.category))}" aria-label="${tr('Delete')}" data-tip="${tr('Delete')}">✕</button></span>` : ''}</td></tr>`).join('')}</tbody></table>` : ''}
-      ${canWrite() ? `<form id="recxform" class="formgrid" style="margin-top:10px">
+      ${canWrite() ? `<form id="recxform" class="formgrid" style="margin-top:12px">
         <div><label>Category</label><select name="category">${CATEGORIES.map((c) => `<option value="${c}">${c}</option>`).join('')}</select></div>
         <div><label>Note</label><input name="note" placeholder="Grădiniță, asigurare…"></div>
         <div><label>Amount (${cur()}/mo)</label><input name="amount" type="number" step="0.01" min="0.01" required></div>
@@ -2850,7 +2882,7 @@ async function moneyExpenses(body, f = {}) {
     </div></details>
     ${cardPanel}
     <div class="card" style="margin-top:16px">
-      <div class="row" style="justify-content:space-between;gap:10px"><h3 style="margin:0">Expenses</h3><span class="amount"><b>${money(total)}</b>${cardTotal > 0 ? ` <span class="muted" style="font-weight:400">+ ${money(cardTotal)} ${tr('on card')}</span>` : ''}</span></div>
+      <div class="row" style="justify-content:space-between;gap:12px"><h3 style="margin:0">Expenses</h3><span class="amount"><b>${money(total)}</b>${cardTotal > 0 ? ` <span class="muted" style="font-weight:400">+ ${money(cardTotal)} ${tr('on card')}</span>` : ''}</span></div>
       <div class="row filterrow">
         ${whoFilter('wfilter', members, flt.who)}
         <select id="cfilter"><option value="all" ${flt.cat === 'all' ? 'selected' : ''}>All categories</option>${CATEGORIES.map((c) => `<option value="${c}" ${flt.cat === c ? 'selected' : ''}>${c}</option>`).join('')}</select>
@@ -2877,9 +2909,10 @@ async function moneyExpenses(body, f = {}) {
             [tr('Delete'), `data-del="${e.id}"`, true],
           ]) : ''}</td></tr>
           <tr id="exprow-${e.id}" hidden><td colspan="6"></td></tr>`; }).join('')}
-      </tbody></table>` : `<div class="empty"><b>No matching expenses</b>Adjust the filters or add one above.</div>`}
+      </tbody></table>` : `<div class="empty"><b>No matching expenses</b>Adjust the filters or add one above.<div style="margin-top:12px"><button type="button" class="btn small" id="fltclear">${LANG === 'ro' ? 'Șterge filtrele' : 'Clear all filters'}</button></div></div>`}
     </div>`;
   $('#mfilter').onchange = (e) => reload({ month: e.target.value || thisMonth() });
+  $('#fltclear')?.addEventListener('click', () => reload({ month: thisMonth(), who: 'all', cat: 'all', q: '' }));
   $('#allmonths').onclick = () => reload({ month: flt.month === 'all' ? thisMonth() : 'all' });
   $('#wfilter').onchange = (e) => reload({ who: e.target.value });
   $('#cfilter').onchange = (e) => reload({ cat: e.target.value });
@@ -2923,7 +2956,7 @@ async function moneyExpenses(body, f = {}) {
   body.querySelectorAll('[data-edit]').forEach((b) => (b.onclick = () => {
     const row = $('#exprow-' + b.dataset.edit);
     if (!row.hidden) { row.hidden = true; return; }
-    row.firstElementChild.innerHTML = `<form class="formgrid" style="padding:6px 0">${expenseFormFields(members, properties, vehicles, byId[b.dataset.edit])}<button class="btn small">Save changes</button></form>`;
+    row.firstElementChild.innerHTML = `<form class="formgrid" style="padding:8px 0">${expenseFormFields(members, properties, vehicles, byId[b.dataset.edit])}<button class="btn small">Save changes</button></form>`;
     row.hidden = false;
     row.querySelector('form').onsubmit = async (ev) => {
       ev.preventDefault();
@@ -2933,7 +2966,7 @@ async function moneyExpenses(body, f = {}) {
   }));
   body.querySelectorAll('[data-del]').forEach((b) => (b.onclick = () => {
     const { hide, restore } = rowHide(b);
-    undoableDelete({ hide, restore, commit: () => api('/expenses/' + b.dataset.del, { method: 'DELETE' }).then(() => reload()) });
+    undoableDelete({ btn: b, what: 'expense', hide, restore, commit: () => api('/expenses/' + b.dataset.del, { method: 'DELETE' }).then(() => reload()) });
   }));
 }
 async function moneyIncome(body, who = 'all') {
@@ -2954,7 +2987,7 @@ async function moneyIncome(body, who = 'all') {
         <td class="right amount">${money(r.amount)}<span class="muted">/mo</span></td>
         <td class="right">${canWrite() ? `<button class="btn ghost small" data-rtog="${r.id}">${r.active ? 'Pause' : 'Resume'}</button>
           <button class="btn danger small iconbtn" data-rdel="${r.id}" data-name="${esc(r.source)}" aria-label="${tr('Delete')}" data-tip="${tr('Delete')}">✕</button>` : ''}</td></tr>`).join('')}</tbody></table>` : ''}
-      ${canWrite() ? `<form id="recform" class="formgrid" style="margin-top:10px">
+      ${canWrite() ? `<form id="recform" class="formgrid" style="margin-top:12px">
         <div><label>Source</label><input name="source" placeholder="Salariu Raul" required></div>
         <div><label>Amount (${cur()}/mo)</label><input name="amount" type="number" step="0.01" min="0.01" required></div>
         <div><label>Day of month</label><input name="day" type="number" min="1" max="31" value="1" required></div>
@@ -2989,7 +3022,7 @@ async function moneyIncome(body, who = 'all') {
   }));
   body.querySelectorAll('[data-del]').forEach((b) => (b.onclick = () => {
     const { hide, restore } = rowHide(b);
-    undoableDelete({ hide, restore, commit: () => api('/incomes/' + b.dataset.del, { method: 'DELETE' }).then(() => moneyIncome(body, who)) });
+    undoableDelete({ btn: b, what: 'income', hide, restore, commit: () => api('/incomes/' + b.dataset.del, { method: 'DELETE' }).then(() => moneyIncome(body, who)) });
   }));
 }
 async function moneyBudgets(body, month = thisMonth()) {
@@ -3059,7 +3092,7 @@ async function moneySavings(body) {
         const pct = Math.min(100, Math.max(0, (g.saved / g.target) * 100));
         const reached = g.saved >= g.target;
         const eta = goalEta(g, data.entries);
-        return `<div style="margin-bottom:14px;${g.done ? 'opacity:.55' : ''}">
+        return `<div style="margin-bottom:16px;${g.done ? 'opacity:.55' : ''}">
           <div class="row" style="justify-content:space-between;flex-wrap:wrap">
             <span><b style="${g.done ? 'text-decoration:line-through' : ''}">${esc(g.title)}</b> <span class="muted">${g.user_name ? '· ' + esc(g.user_name) : '· family'}</span>
               ${reached && !g.done ? ' <span class="badge paid">reached!</span>' : ''}</span>
@@ -3111,7 +3144,7 @@ async function moneySavings(body) {
   });
   body.querySelectorAll('[data-del]').forEach((b) => (b.onclick = () => {
     const { hide, restore } = rowHide(b);
-    undoableDelete({ hide, restore, commit: () => api('/savings/' + b.dataset.del, { method: 'DELETE' }).then(() => moneySavings(body)) });
+    undoableDelete({ btn: b, what: 'deposit', hide, restore, commit: () => api('/savings/' + b.dataset.del, { method: 'DELETE' }).then(() => moneySavings(body)) });
   }));
 }
 
@@ -3132,7 +3165,7 @@ async function moneyCredits(body) {
       <div><label>Linked property</label><select name="property_id"><option value="">None</option>
         ${ownProps(properties).map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select></div>
       <button class="btn">Add credit</button></form>
-      <p class="muted" id="credpreview" style="margin:10px 0 0"></p></div>` : ''}
+      <p class="muted" id="credpreview" style="margin:12px 0 0"></p></div>` : ''}
     <div id="credlist" style="margin-top:16px">${credits.length ? '' : `<div class="card empty"><b>No credits yet</b>Add a loan above — the monthly payment is calculated from the dobândă, and anticipated payments show how much interest you save.</div>`}</div>`;
   const f = $('#credform');
   if (f) {
@@ -3188,8 +3221,8 @@ function creditCard(c, members, properties, refresh) {
       ${saved ? `<span class="badge paid">${tr('saved')} ${money(c.interest_saved)}</span>` : ''}</span>
     ${canWrite() ? `<span class="row"><button class="btn ghost small" data-edit>Edit</button><button class="btn danger small" data-del>Delete</button></span>` : ''}</summary>
     <div class="body">
-      <div data-editbox hidden style="margin-bottom:14px"></div>
-      <div style="margin-bottom:14px">
+      <div data-editbox hidden style="margin-bottom:16px"></div>
+      <div style="margin-bottom:16px">
         <div class="row" style="justify-content:space-between;gap:8px">
           <span>${tr('Progress')}${done ? ` <span class="badge paid">${tr('cleared!')}</span>` : ''}</span>
           <span class="amount muted">${monthsDone} / ${term} ${tr('months')} (${Math.round(donePct)}%)</span></div>
@@ -3212,7 +3245,7 @@ function creditCard(c, members, properties, refresh) {
       <br>${tr('Paying 1 month in advance now costs ≈')} <b class="amount">${money(c.advance_month_cost)}</b> (${tr('next principal')} ${money(c.next_principal)} + 1%).</p>
       ${left > 0 ? `<div class="whatif">
         <label>${tr('What if you paid extra every month?')}</label>
-        <div class="row" style="flex-wrap:wrap;gap:6px;margin-top:4px">
+        <div class="row" style="flex-wrap:wrap;gap:8px;margin-top:4px">
           <input data-whatif type="number" min="0" step="10" placeholder="500" inputmode="decimal" style="max-width:130px">
           ${[100, 250, 500, 1000].map((v) => `<button type="button" class="btn ghost small" data-wq="${v}">+${v}</button>`).join('')}
         </div>
@@ -3223,7 +3256,7 @@ function creditCard(c, members, properties, refresh) {
         <div><label>${tr('Months paid off')}</label><input name="months" type="number" min="1" max="${Math.max(1, left)}" step="1" inputmode="numeric" placeholder="${tr('optional')}"></div>
         <div><label>Amount (${cur()})</label><input name="amount" type="number" step="0.01" min="0.01" required></div>
         <button class="btn small">Add payment</button></form>
-        <p data-advout class="muted" style="margin:6px 0 0;font-size:12px"></p>` : ''}
+        <p data-advout class="muted" style="margin:8px 0 0;font-size:12px"></p>` : ''}
       <div data-pays class="muted">Loading…</div>
     </div>`;
   const loadPays = async () => {
@@ -3237,7 +3270,7 @@ function creditCard(c, members, properties, refresh) {
       : `<p class="muted">No anticipated payments yet.</p>`;
     box.querySelectorAll('[data-paydel]').forEach((b) => (b.onclick = () => {
       const { hide, restore } = rowHide(b);
-      undoableDelete({ hide, restore, commit: () => api(`/credits/${c.id}/payments/${b.dataset.paydel}`, { method: 'DELETE' }).then(() => refresh()) });
+      undoableDelete({ btn: b, what: 'payment', hide, restore, commit: () => api(`/credits/${c.id}/payments/${b.dataset.paydel}`, { method: 'DELETE' }).then(() => refresh()) });
     }));
   };
   // what-if: same amortization the server uses, run from today's balance with the payment
@@ -3355,7 +3388,7 @@ function billFormFields(members, properties, vehicles, b = {}) {
     <div><label>Link to (optional)</label><select name="link"><option value="">Nothing</option>
       ${ownProps(properties).map((p) => `<option value="property:${p.id}" ${link === `property:${p.id}` ? 'selected' : ''}>⌂ ${esc(p.name)}</option>`).join('')}
       ${vehicles.map((v) => `<option value="vehicle:${v.id}" ${link === `vehicle:${v.id}` ? 'selected' : ''}>⛟ ${esc(v.name)}</option>`).join('')}</select></div>
-    <div style="align-self:center"><label style="display:inline-flex;align-items:center;gap:6px;font-size:14px"><input type="checkbox" name="auto_pay" value="1" ${b.auto_pay ? 'checked' : ''} style="width:auto"> Auto-paid subscription</label></div>`;
+    <div style="align-self:center"><label style="display:inline-flex;align-items:center;gap:8px;font-size:14px"><input type="checkbox" name="auto_pay" value="1" ${b.auto_pay ? 'checked' : ''} style="width:auto"> Auto-paid subscription</label></div>`;
 }
 // Recurring bills run on different clocks — one every 30 days, one quarterly, one yearly — so their
 // face amounts aren't comparable. Normalising each to a month puts them side by side and makes the
@@ -3394,7 +3427,7 @@ function subsCard(bills, recurLabel) {
       <div class="right"><div class="amount" style="font-size:22px">${money(perMonth)}</div>
         <div class="muted" style="font-size:12px">${ro ? `pe lună · ${money(perMonth * 12)} pe an` : `per month · ${money(perMonth * 12)} a year`}</div></div>
     </div>
-    <details style="margin-top:10px"><summary>${ro ? 'Vezi defalcarea' : 'See the breakdown'}</summary>
+    <details style="margin-top:12px"><summary>${ro ? 'Vezi defalcarea' : 'See the breakdown'}</summary>
       <table class="cards" style="margin-top:8px"><tbody>${rows}</tbody></table>
     </details>
   </div>`;
@@ -3406,12 +3439,12 @@ function subsCard(bills, recurLabel) {
 function draftsCard(drafts) {
   if (!drafts || !drafts.length) return '';
   return `<section class="card draftcard" style="margin-bottom:16px">
-    <div class="row" style="justify-content:space-between;align-items:baseline;gap:10px">
+    <div class="row" style="justify-content:space-between;align-items:baseline;gap:12px">
       <h3 style="margin:0">${tr('Invoices to confirm')}</h3>
       <span class="badge unpaid">${drafts.length}</span></div>
-    <p class="muted" style="margin:6px 0 12px">${tr('Arrived by email. Nothing is counted until you accept it — check the amount first.')}</p>
+    <p class="muted" style="margin:8px 0 12px">${tr('Arrived by email. Nothing is counted until you accept it — check the amount first.')}</p>
     ${drafts.map((d) => `<div class="draftrow" data-draft="${d.id}">
-      <div class="row" style="justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:baseline">
+      <div class="row" style="justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:baseline">
         <b>${esc(d.provider ? PROVIDER_NAMES[d.provider] || d.provider : (d.subject || tr('Invoice')))}</b>
         ${d.attachment ? `<a class="btn ghost small" href="/api/mail-drafts/${d.id}/attachment" target="_blank">${tr('Invoice PDF')}</a>` : ''}
       </div>
@@ -3502,7 +3535,7 @@ async function viewBills(el) {
     const row = $('#row-' + b.dataset.edit);
     if (!row.hidden) { row.hidden = true; return; }
     const bill = billsById[b.dataset.edit];
-    row.firstElementChild.innerHTML = `<form class="formgrid" style="padding:6px 0">${billFormFields(members, properties, vehicles, bill)}<button class="btn small">Save changes</button></form>`;
+    row.firstElementChild.innerHTML = `<form class="formgrid" style="padding:8px 0">${billFormFields(members, properties, vehicles, bill)}<button class="btn small">Save changes</button></form>`;
     row.hidden = false;
     row.querySelector('form').onsubmit = async (e) => {
       e.preventDefault();
@@ -3514,7 +3547,7 @@ async function viewBills(el) {
   }));
   el.querySelectorAll('[data-del]').forEach((b) => (b.onclick = () => {
     const { hide, restore } = rowHide(b);
-    undoableDelete({ hide, restore, commit: () => api('/bills/' + b.dataset.del, { method: 'DELETE' }).then(() => viewBills(el)) });
+    undoableDelete({ btn: b, what: 'bill', hide, restore, commit: () => api('/bills/' + b.dataset.del, { method: 'DELETE' }).then(() => viewBills(el)) });
   }));
   el.querySelectorAll('[data-hist]').forEach((b) => (b.onclick = async () => {
     const row = $('#row-' + b.dataset.hist);
@@ -3676,7 +3709,7 @@ async function viewProperty(el, id) {
     <section class="kpi">
       ${let_ ? `<div class="card"><div class="label">${tr('Rent this month')}</div>
         <div class="value">${rent ? money(rent.amount) : '—'}</div>
-        <div style="margin-top:6px"><span class="badge ${rentState.cls}">${rentState.txt}</span></div></div>
+        <div style="margin-top:8px"><span class="badge ${rentState.cls}">${rentState.txt}</span></div></div>
       <div class="card"><div class="label">${tr('Outstanding')}</div>
         <div class="value ${owesAnything ? 'neg' : ''}">${owed}</div>
         <div class="muted" style="font-size:12px">${unpaid.length} ${tr(unpaid.length === 1 ? 'unpaid charge' : 'unpaid charges')}</div></div>`
@@ -3692,7 +3725,7 @@ async function viewProperty(el, id) {
         <div class="muted" style="font-size:12px">${tr('Income')} ${money(income)} · ${tr('Spent')} ${money(costs)}</div></div>
     </section>
 
-    ${chips ? `<section class="card" style="margin-top:18px"><h3 style="margin-top:0">${tr('Deadlines')}</h3>
+    ${chips ? `<section class="card" style="margin-top:16px"><h3 style="margin-top:0">${tr('Deadlines')}</h3>
       <div class="dchips">${chips}</div></section>` : ''}
 
     ${(() => {
@@ -3700,20 +3733,20 @@ async function viewProperty(el, id) {
       if (unpaid.length) jobs.push(`${unpaid.length} ${tr(unpaid.length === 1 ? 'unpaid charge' : 'unpaid charges')}`);
       if (waitingMeters.length) jobs.push(`${waitingMeters.length} ${tr(waitingMeters.length === 1 ? 'meter reading' : 'meter readings')}`);
       if (!jobs.length) return '';
-      return `<section class="card" style="margin-top:18px"><div class="row" style="justify-content:space-between;flex-wrap:wrap;gap:10px">
+      return `<section class="card" style="margin-top:16px"><div class="row" style="justify-content:space-between;flex-wrap:wrap;gap:12px">
         <span><b>${tr('Waiting on the tenant:')}</b> ${jobs.join(' · ')}</span>
         ${canWrite() && tinfo.tenants?.length ? `<button class="btn small" data-remind>${tr('Send reminder')}</button>` : ''}</div></section>`;
     })()}
 
-    ${openMaint.length ? `<section class="card" style="margin-top:18px">
+    ${openMaint.length ? `<section class="card" style="margin-top:16px">
       <h3 style="margin-top:0">${tr('Open maintenance')} · ${openMaint.length}</h3>
-      ${openMaint.map((m) => `<div class="row" style="justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px solid var(--line)">
+      ${openMaint.map((m) => `<div class="row" style="justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid var(--line)">
         <span><b>${esc(m.title)}</b>${m.reopened_at ? ` <span class="badge late">↻ ${tr('Reopened')}</span>` : ''}
           <span class="muted">· ${esc(m.reported_by || '')} · ${fdate(m.created_at?.slice(0, 10))}</span></span>
         ${canWrite() ? `<button class="btn ghost small" data-fix="${m.id}">${tr('Mark fixed')}</button>` : ''}</div>`).join('')}
     </section>` : ''}
 
-    ${unpaid.length ? `<section class="card" style="margin-top:18px">
+    ${unpaid.length ? `<section class="card" style="margin-top:16px">
       <h3 style="margin-top:0">${tr('Unpaid')}</h3>
       <table class="cards"><thead><tr><th>${tr('Due')}</th><th>${tr('What')}</th><th class="right">${tr('Amount')}</th><th>${tr('Status')}</th><th></th></tr></thead><tbody>
       ${unpaid.map((c) => { const late = c.status === 'unpaid' && c.due_date < t; return `<tr>
@@ -3724,7 +3757,7 @@ async function viewProperty(el, id) {
         <td class="right">${canWrite() ? `<button class="btn small" data-confirm="${c.id}">${tr('Confirm paid')}</button>` : ''}</td></tr>`; }).join('')}
       </tbody></table></section>` : ''}
 
-    <section class="card" style="margin-top:18px">
+    <section class="card" style="margin-top:16px">
       <h3 style="margin-top:0">${tr('Money in this property')}</h3>
       ${records.length ? `<table class="cards"><thead><tr><th>${tr('Date')}</th><th>${tr('Type')}</th><th>${tr('Note')}</th><th class="right">${tr('Amount')}</th></tr></thead><tbody>
       ${records.slice(0, 12).map((r) => `<tr>
@@ -3849,7 +3882,7 @@ async function renderTenantBox(box, p) {
       const d = daysUntil(iso), c = daysClass(d);
       return `<span class="dchip ${c}"><span>${label}</span> <b>${fdate(iso)}</b> <span class="muted">${daysLabel(d)}</span></span>`;
     };
-    return `<h3 style="margin-top:18px">${tr('Contract & deposit')}</h3>
+    return `<h3 style="margin-top:16px">${tr('Contract & deposit')}</h3>
       ${end || dep ? `<div class="row" style="gap:8px;flex-wrap:wrap;margin-bottom:8px">
         ${end ? chip(end, tr('Tenancy ends')) : ''}
         ${noticeOn ? chip(noticeOn, tr('Notice by')) : ''}
@@ -3925,7 +3958,7 @@ async function renderTenantBox(box, p) {
     <p class="muted">${Object.keys(parseSchedule(p)).length
       ? `${tr('Scheduled:')} ${Object.entries(parseSchedule(p)).map(([u, d]) => `${esc(tr(u[0].toUpperCase() + u.slice(1)))} ${tr('on day')} ${d}`).join(', ')} ${tr('of every month (tenant gets an email).')}`
       : tr('No monthly schedule yet — set the day and meters below, or request a reading now.')}</p>
-    ${canWrite() ? (() => { const sched = parseSchedule(p); return `<form data-schedform style="margin-bottom:6px">
+    ${canWrite() ? (() => { const sched = parseSchedule(p); return `<form data-schedform style="margin-bottom:8px">
       <label>${tr('Meters to read monthly')} <span class="muted" style="font-weight:400">(${tr('day of month for each')})</span></label>
       <div class="meterlist">${[['electricity', 'Electricity'], ['gas', 'Gas'], ['water', 'Water']].map(([v, l]) => {
         const day = sched[v];
@@ -4137,7 +4170,7 @@ function entityCard(item, cfg) {
       const spent = recs.filter((r) => !isIncome(r)).reduce((s, r) => s + (Number(r.amount) || 0), 0);
       const income = recs.filter(isIncome).reduce((s, r) => s + (Number(r.amount) || 0), 0);
       const net = income - spent;
-      summary = `<div class="row" style="gap:18px;flex-wrap:wrap;margin-bottom:10px">
+      summary = `<div class="row" style="gap:16px;flex-wrap:wrap;margin-bottom:12px">
         <span class="muted">Money in this property:</span>
         <span>Spent <b class="amount">${money(spent)}</b></span>
         <span>Income <b class="amount" style="color:#2f6b5a">${money(income)}</b></span>
@@ -4150,7 +4183,7 @@ function entityCard(item, cfg) {
       : `<p class="muted">No records yet.</p>`;
     box.querySelectorAll('[data-recdel]').forEach((b) => (b.onclick = () => {
       const { hide, restore } = rowHide(b);
-      undoableDelete({ hide, restore, commit: () => api(`/${cfg.route}/${item.id}/records/${b.dataset.recdel}`, { method: 'DELETE' }).then(() => loadRecords()) });
+      undoableDelete({ btn: b, what: 'record', hide, restore, commit: () => api(`/${cfg.route}/${item.id}/records/${b.dataset.recdel}`, { method: 'DELETE' }).then(() => loadRecords()) });
     }));
   };
   wrap.addEventListener('toggle', () => {
@@ -4314,7 +4347,7 @@ async function viewReview(el) {
     ${r.decide.length
       ? `<table class="cards"><tbody>${r.decide.map(decideRow).join('')}</tbody></table>`
       : `<p class="muted" style="margin:0">${tr('Nothing is waiting on a decision.')}</p>`}
-    ${r.open_maintenance || r.meters_pending ? `<p class="muted" style="margin:10px 0 0">
+    ${r.open_maintenance || r.meters_pending ? `<p class="muted" style="margin:12px 0 0">
       ${r.open_maintenance ? `<a href="#properties">${tr('Repairs still open')}: ${r.open_maintenance}</a>` : ''}
       ${r.open_maintenance && r.meters_pending ? ' · ' : ''}
       ${r.meters_pending ? `<a href="#properties">${tr('Readings still missing')}: ${r.meters_pending}</a>` : ''}</p>` : ''}</section>
@@ -4326,10 +4359,10 @@ async function viewReview(el) {
           ${cash.low < cash.now
             ? `${tr('Lowest point:')} <b>${money(cash.low)}</b> ${tr('on')} ${fdate(cash.low_date)}`
             : tr('Nothing due drops the balance below where it is now.')}</p>
-        <p class="muted" style="margin:6px 0 0">${tr('now')} ${money(cash.now)}${cash.stale_days > 7
+        <p class="muted" style="margin:8px 0 0">${tr('now')} ${money(cash.now)}${cash.stale_days > 7
           ? ` · <a href="#dashboard">${tr('the balance is old — update it')}</a>` : ''}</p>`}</section>
 
-    ${canWrite() ? `<div class="row" style="justify-content:center;margin-top:20px">
+    ${canWrite() ? `<div class="row" style="justify-content:center;margin-top:24px">
       <button class="btn" id="revdone" style="min-width:220px">${tr('Done for this week')}</button></div>` : ''}`;
 
   const reload = () => viewReview(el);
@@ -4382,10 +4415,10 @@ function forecastCard(f, proj) {
   // worth removing. The balance is offered as what makes the answer complete, not as a gate.
   if (!f || f.needs_balance) {
     const pace = paceLine(proj);
-    return `<section class="card" style="margin-top:18px"><div class="row" style="justify-content:space-between;gap:10px;align-items:baseline">
+    return `<section class="card" style="margin-top:16px"><div class="row" style="justify-content:space-between;gap:12px;align-items:baseline">
       <h3 style="margin:0">${tr('How the month ends')}</h3></div>
     ${pace ? `<p class="fcpace">${pace}</p>` : ''}
-    <p class="muted" style="margin:6px 0 10px">${pace
+    <p class="muted" style="margin:8px 0 12px">${pace
       ? tr('That is what goes out. Add what is in the account and the app also tells you what is left, day by day.')
       : tr('Type in what is in the account and the app works out the rest — bills, rates, salary, rent.')}</p>
     ${balanceForm(null)}</section>`;
@@ -4402,8 +4435,8 @@ function forecastCard(f, proj) {
   const y = (v) => H - ((v - lo) / span) * H;
   const path = f.series.map((p, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)} ${y(p.amount).toFixed(1)}`).join(' ');
   const zeroY = y(0).toFixed(1);
-  return `<section class="card fccard" style="margin-top:18px">
-    <div class="row" style="justify-content:space-between;gap:10px;align-items:baseline">
+  return `<section class="card fccard" style="margin-top:16px">
+    <div class="row" style="justify-content:space-between;gap:12px;align-items:baseline">
       <h3 style="margin:0">${tr('How the month ends')}</h3>
       <span class="muted">${tr('now')} <b class="amount">${money(f.today)}</b></span>
     </div>
@@ -4501,7 +4534,7 @@ async function viewWarranties(el) {
       ${live.length ? table(live) : `<div class="empty"><b>${tr('Nothing under warranty yet')}</b>${tr('Add the fridge, the phone, the drill — anything with a receipt worth keeping.')}</div>`}
     </div>
     ${expired.length ? `<details class="card" style="margin-top:16px"><summary>${tr('Cover already ended')} (${expired.length})</summary>
-      <div style="margin-top:10px">${table(expired)}</div></details>` : ''}`;
+      <div style="margin-top:12px">${table(expired)}</div></details>` : ''}`;
 
   $('#warform')?.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -4544,7 +4577,7 @@ const LIST_DEFS = [
    counted there. Everything else on the Lists page stays a plain checklist. */
 function guestList(rows) {
   if (!rows.length) {
-    return `<div class="empty" style="margin-top:10px"><b>${tr('No invitations yet')}</b>${tr('Add the first family above — adults and children are counted for you.')}</div>`;
+    return `<div class="empty" style="margin-top:12px"><b>${tr('No invitations yet')}</b>${tr('Add the first family above — adults and children are counted for you.')}</div>`;
   }
   const n = (v) => Number(v) || 0;
   const yes = rows.filter((r) => r.rsvp === 'yes'), no = rows.filter((r) => r.rsvp === 'no');
@@ -4556,7 +4589,7 @@ function guestList(rows) {
       <button class="btn ${r.rsvp === 'yes' ? '' : 'ghost'} tiny" data-rsvp="${r.id}" data-val="yes">${tr('Coming')}</button>
       <button class="btn ${r.rsvp === 'no' ? 'danger' : 'ghost'} tiny" data-rsvp="${r.id}" data-val="no">${tr('Declined')}</button>
     </span>`;
-  return `<section class="kpi" style="margin:14px 0 4px">
+  return `<section class="kpi" style="margin:16px 0 4px">
       <div class="card"><div class="label">${tr('Coming')}</div>
         <div class="value">${goingA + goingK + goingS}</div>
         <div class="muted" style="font-size:12px">${goingA} ${tr(goingA === 1 ? 'adult' : 'adults')} · ${goingK} ${tr(goingK === 1 ? 'child' : 'children')}${
@@ -4629,7 +4662,7 @@ function renderWatch(el, state) {
       ${sites.length ? `<p class="muted" style="font-size:12px;margin-top:4px">${lastLook(sites)}</p>` : ''}</div>
       ${canWrite() ? `<button class="btn ghost small" id="wcheck">${tr('Check now')}</button>` : ''}</div>
 
-    ${broken.length ? `<div class="card warn" style="margin-bottom:14px">
+    ${broken.length ? `<div class="card warn" style="margin-bottom:16px">
       <b>${tr('Not able to check')}</b>
       ${broken.map((s) => `<div class="muted" style="font-size:14px">${esc(s.label)} — ${esc(s.last_error || '')}</div>`).join('')}
     </div>` : ''}
@@ -4641,7 +4674,7 @@ function renderWatch(el, state) {
 
     ${WATCH_TAB === 'news' ? `<div class="card">
       ${items.length ? `<ul class="newslist">${items.map((i) => `<li class="newsrow${i.hit ? ' is-hit' : ''}">
-        <div class="row" style="justify-content:space-between;gap:10px;align-items:baseline;flex-wrap:wrap">
+        <div class="row" style="justify-content:space-between;gap:12px;align-items:baseline;flex-wrap:wrap">
           <b class="newstitle">${esc(i.title)}</b>
           <span class="muted" style="font-size:12px;white-space:nowrap">${when(i)}</span>
         </div>
@@ -4689,7 +4722,7 @@ function renderWatch(el, state) {
             <input name="keywords" placeholder="${tr('licitatie, teren, concesiune')}"></div>
           <button class="btn small">${tr('Watch it')}</button>
         </form>
-        <p class="muted" style="margin:10px 0 0;font-size:12px">${tr('Most councils run WordPress: add /feed/ to the address and every notice arrives with its own title and link. Keywords only highlight — everything new is reported either way.')}</p>
+        <p class="muted" style="margin:12px 0 0;font-size:12px">${tr('Most councils run WordPress: add /feed/ to the address and every notice arrives with its own title and link. Keywords only highlight — everything new is reported either way.')}</p>
       </div>` : ''}
     </div>`}`;
 
@@ -4713,7 +4746,7 @@ function renderWatch(el, state) {
   }));
   el.querySelectorAll('[data-wdel]').forEach((b) => (b.onclick = () => {
     const { hide, restore } = rowHide(b);
-    undoableDelete({ hide, restore, commit: () => api('/watch/' + b.dataset.wdel, { method: 'DELETE' }).then(() => viewWatch(el)) });
+    undoableDelete({ btn: b, what: 'watch', hide, restore, commit: () => api('/watch/' + b.dataset.wdel, { method: 'DELETE' }).then(() => viewWatch(el)) });
   }));
   el.querySelector('#wquick') && (el.querySelector('#wquick').onclick = async (e) => {
     e.target.disabled = true;
@@ -4763,13 +4796,13 @@ async function viewChores(el, tab = 'daily') {
     ? 'One-off jobs. Ticking one is the end of it — nothing comes back tomorrow.'
     : 'Recurring jobs around the house. Ticking one marks it done for today — it comes back tomorrow.')}</p></div></div>
     <section class="card chorehead">
-      <div class="row" style="justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap">
+      <div class="row" style="justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap">
         <div><div class="muted" style="font-size:12px">${tr(isTodo ? 'Still to do' : 'Left for today')}</div>
           <div class="chorecount">${isTodo ? rows.length - done : todayOpen}</div></div>
         <div style="text-align:right"><div class="muted" style="font-size:12px">${tr(isTodo ? 'Ticked off' : tab === 'weekly' ? 'Done this week' : 'Done today')}</div>
           <div class="amount"><b>${done}/${rows.length}</b></div></div>
       </div>
-      <div class="scorebar" style="margin-top:10px"><i style="width:${pct}%"></i></div>
+      <div class="scorebar" style="margin-top:12px"><i style="width:${pct}%"></i></div>
     </section>
 
     <div class="tabs" style="max-width:520px">
@@ -4851,11 +4884,11 @@ async function viewChores(el, tab = 'daily') {
   }));
   el.querySelectorAll('[data-chdel]').forEach((b) => (b.onclick = () => {
     const { hide, restore } = rowHide(b);
-    undoableDelete({ hide, restore, commit: () => api('/chores/' + b.dataset.chdel, { method: 'DELETE' }).then(() => viewChores(el, tab)) });
+    undoableDelete({ btn: b, what: 'chore', hide, restore, commit: () => api('/chores/' + b.dataset.chdel, { method: 'DELETE' }).then(() => viewChores(el, tab)) });
   }));
   el.querySelectorAll('[data-tddel]').forEach((b) => (b.onclick = () => {
     const { hide, restore } = rowHide(b);
-    undoableDelete({ hide, restore, commit: () => api('/todos/' + b.dataset.tddel, { method: 'DELETE' }).then(() => viewChores(el, tab)) });
+    undoableDelete({ btn: b, what: 'todo', hide, restore, commit: () => api('/todos/' + b.dataset.tddel, { method: 'DELETE' }).then(() => viewChores(el, tab)) });
   }));
   el.querySelector('#choreform')?.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -4914,7 +4947,7 @@ function seatingPlan(host, state) {
       <span class="seatname">${esc(g.title)}</span><span class="seatnum">${g.size}</span></button>`;
 
   host.innerHTML = `
-    <section class="kpi" style="margin:14px 0 4px">
+    <section class="kpi" style="margin:16px 0 4px">
       <div class="card"><div class="label">${tr('Confirmed')}</div><div class="value">${t.confirmed}</div>
         <div class="muted" style="font-size:12px">${headLine(t.heads) || `${t.parties} ${tr(t.parties === 1 ? 'invitation' : 'invitations')}`}</div></div>
       <div class="card"><div class="label">${tr('Seats in the room')}</div><div class="value">${t.capacity}</div>
@@ -4949,11 +4982,11 @@ function seatingPlan(host, state) {
           <button class="btn ghost small" type="button" data-tcancel="${tb.id}">${tr('Cancel')}</button>
         </form>` : ''}
         <div class="seatchips">${tb.guests.map(chip).join('') || `<span class="muted seatempty">${tr('empty')}</span>`}</div>
-        ${tb.over ? `<div class="badge warn" style="margin:8px 10px 10px">${tb.taken - tb.capacity} ${tr('over capacity')}</div>` : ''}
+        ${tb.over ? `<div class="badge warn" style="margin:8px 12px 12px">${tb.taken - tb.capacity} ${tr('over capacity')}</div>` : ''}
       </div>`).join('')}
     </div>
 
-    ${canWrite() ? `<div class="card" style="margin-top:14px">
+    ${canWrite() ? `<div class="card" style="margin-top:16px">
       <div class="subform" style="margin-top:0;padding-top:0;border-top:0">
         <h4>${tr('Add tables')}</h4>
         <form id="seatform" class="formgrid">
@@ -4961,7 +4994,7 @@ function seatingPlan(host, state) {
           <div><label>${tr('Seats each')}</label><input name="capacity" type="number" min="1" step="1" required></div>
           <button class="btn small">${tr('Add tables')}</button>
         </form>
-        <p class="muted" style="margin:10px 0 0;font-size:12px">${tr('Drag a guest onto a table, or tap the guest and then the table.')}</p>
+        <p class="muted" style="margin:12px 0 0;font-size:12px">${tr('Drag a guest onto a table, or tap the guest and then the table.')}</p>
       </div>
     </div>` : ''}`;
 
@@ -5139,7 +5172,7 @@ async function viewLists(el, tab = 'buy') {
           <td class="muted">${esc(i.user_name || '')}</td>
           <td class="right amount">${i.amount ? money(i.amount) : ''}</td>
           <td class="right">${canWrite() ? `<button class="btn danger small" data-del="${i.id}">✕</button>` : ''}</td></tr>`).join('')}
-      </tbody></table>` : `<div class="empty" style="margin-top:10px"><b>Nothing here yet</b>Add the first item above.</div>`}
+      </tbody></table>` : `<div class="empty" style="margin-top:12px"><b>Nothing here yet</b>Add the first item above.</div>`}
     </div>`}`;
   el.querySelectorAll('.tabs button[data-t]').forEach((b) => (b.onclick = () => viewLists(el, b.dataset.t)));
   el.querySelectorAll('.tabs button[data-sub]').forEach((b) => (b.onclick = () => {
@@ -5176,7 +5209,7 @@ async function viewLists(el, tab = 'buy') {
   }));
   el.querySelectorAll('[data-del]').forEach((b) => (b.onclick = () => {
     const { hide, restore } = rowHide(b);
-    undoableDelete({ hide, restore, commit: () => api('/lists/' + b.dataset.del, { method: 'DELETE' }).then(() => viewLists(el, tab)) });
+    undoableDelete({ btn: b, what: 'item', hide, restore, commit: () => api('/lists/' + b.dataset.del, { method: 'DELETE' }).then(() => viewLists(el, tab)) });
   }));
 }
 
@@ -5423,7 +5456,7 @@ async function viewFamily(el) {
       <p class="row"><span class="amount" id="invcode" style="font-size:22px;letter-spacing:.12em">${esc(FAMILY.invite_code)}</span>
       <button class="btn ghost small" data-copy="${esc(FAMILY.invite_code)}">Copy code</button>
       <button class="btn ghost small" id="rotate">Generate new code</button></p>
-      <p style="margin:6px 0"><label>Or send this link — it opens Register with the code filled in:</label>
+      <p style="margin:8px 0"><label>Or send this link — it opens Register with the code filled in:</label>
       <span class="row"><input readonly value="${esc(inviteLink())}" class="selectall" style="flex:1;min-width:200px;font-size:14px">
       <button class="btn ghost small" data-copy="${esc(inviteLink())}">Copy link</button></span></p>
       <p class="muted">New members join as adults. Change their role below after they join.</p>
@@ -5446,7 +5479,7 @@ async function viewFamily(el) {
         <div><label>Currency</label><select name="currency">${Object.entries(CURRENCIES).map(([code, sym]) =>
           `<option value="${code}" ${code === FAMILY.currency ? 'selected' : ''}>${code}${code === sym ? '' : ` (${sym})`}</option>`).join('')}</select></div>
         <button class="btn">Save</button></form>
-        <p class="muted" style="margin:10px 0 0;font-size:12px">${tr('Changing this relabels existing amounts — it does not convert them.')}</p></div>` : ''}`;
+        <p class="muted" style="margin:12px 0 0;font-size:12px">${tr('Changing this relabels existing amounts — it does not convert them.')}</p></div>` : ''}`;
   $('#rotate')?.addEventListener('click', async () => {
     const r = await api('/family/invite/rotate', { method: 'POST' });
     FAMILY.invite_code = r.invite_code; viewFamily(el);
@@ -5489,18 +5522,18 @@ async function viewSettings(el) {
     <div class="card"><h3>Appearance</h3>
       <p class="muted" style="margin-top:0">Choose how Family Hub looks on this account.</p>
       <div class="row">${['light', 'dark', 'system'].map((tm) => `<button class="btn ${(ME.theme || 'light') === tm ? '' : 'ghost'} small" data-theme="${tm}">${THEME_LABELS[tm]}</button>`).join('')}</div>
-      <p class="muted" style="margin:14px 0 6px">Language</p>
+      <p class="muted" style="margin:16px 0 8px">Language</p>
       <div class="row">${[['en', '🇬🇧 English'], ['ro', '🇷🇴 Română']].map(([lg, lb]) => `<button class="btn ${(ME.lang || 'en') === lg ? '' : 'ghost'} small" data-lang="${lg}">${lb}</button>`).join('')}</div>
     </div>
     <details class="card foldcard" style="margin-top:16px"><summary>Notifications on this device</summary><div style="padding-top:12px">
       <p class="muted" style="margin-top:0">Get alerts (RCA, ITP, acte, birthdays…) as push notifications on this phone/computer even when the site is closed. Tip: on a phone, first use "Add to Home Screen" to install the app.</p>
       <div class="row"><button class="btn small" id="pushbtn">…</button><button class="btn ghost small" id="pushtest" hidden>Send a test</button></div>
-      <p class="muted" style="margin:16px 0 6px">Which alerts do you want?</p>
-      <div class="row" style="flex-wrap:wrap;gap:6px 16px">
+      <p class="muted" style="margin:16px 0 8px">Which alerts do you want?</p>
+      <div class="row" style="flex-wrap:wrap;gap:8px 16px">
         ${[['vehicles', 'Vehicles (RCA, ITP, rovinietă…)'], ['property', 'Property insurance'], ['tenant', 'Tenant & rent'], ['documents', 'Documents (acte)'], ['birthdays', 'Birthdays']]
-          .map(([g, lb]) => `<label style="display:inline-flex;align-items:center;gap:7px;margin:0;font-size:14px;font-weight:500;color:var(--ink)"><input type="checkbox" data-ngroup="${g}" ${String(ME.notif_muted || '').split(',').includes(g) ? '' : 'checked'} style="width:auto"> ${lb}</label>`).join('')}
+          .map(([g, lb]) => `<label style="display:inline-flex;align-items:center;gap:8px;margin:0;font-size:14px;font-weight:500;color:var(--ink)"><input type="checkbox" data-ngroup="${g}" ${String(ME.notif_muted || '').split(',').includes(g) ? '' : 'checked'} style="width:auto"> ${lb}</label>`).join('')}
       </div>
-      <p class="muted" style="margin:14px 0 6px">Quiet hours (push notifications wait until morning)</p>
+      <p class="muted" style="margin:16px 0 8px">Quiet hours (push notifications wait until morning)</p>
       <div class="row">
         <select id="qstart" style="width:110px"><option value="">Off</option>${Array.from({ length: 24 }, (_, h) => `<option value="${h}" ${ME.quiet_start === h ? 'selected' : ''}>${String(h).padStart(2, '0')}:00</option>`).join('')}</select>
         <span class="muted">–</span>
@@ -5526,8 +5559,8 @@ async function viewSettings(el) {
       <button class="btn small" id="pwbtn">Change password</button>
     </div>` : ''}
     ${canEditKids && kids.length ? `<div class="card" style="margin-top:16px"><h3>Children's pictures</h3>
-      <div class="row" style="gap:22px;flex-wrap:wrap">${kids.map((k) => `<div style="text-align:center">${avatarHtml(k, 'avatar-lg')}
-        <div style="margin-top:6px"><b>${esc(k.name)}</b></div>
+      <div class="row" style="gap:24px;flex-wrap:wrap">${kids.map((k) => `<div style="text-align:center">${avatarHtml(k, 'avatar-lg')}
+        <div style="margin-top:8px"><b>${esc(k.name)}</b></div>
         <div class="row" style="justify-content:center;margin-top:4px">
           <label class="btn ghost small" style="display:inline-block">Upload<input type="file" data-avatar="${k.id}" accept="image/*" hidden></label>
           ${k.avatar ? `<button class="btn danger small" data-avadel="${k.id}">✕</button>` : ''}</div></div>`).join('')}</div></div>` : ''}
@@ -5999,6 +6032,102 @@ document.addEventListener('submit', (e) => {
   app.addEventListener('focusin', (e) => { if (e.target.matches?.(FIELD)) clear(e.target); });
 })();
 
+/* ---------- empty states with a way in ----------
+   An empty block that says "add one above" now carries the button that does it (VectorLab empty
+   states): it opens the page's add form, brings it into view and puts the cursor in it. Blocks that
+   already have an action, and view-only accounts, are left alone. */
+(() => {
+  const label = (form) => {
+    const sum = form.closest('details')?.querySelector('summary')?.textContent.replace(/^[+\s]+/, '').trim();
+    return sum || (LANG === 'ro' ? 'Adaugă' : 'Add');
+  };
+  const enhance = () => {
+    if (!canWrite()) return;
+    const page = document.getElementById('page');
+    if (!page) return;
+    // only a form that creates things: an add box, or one of the pages' own add forms
+    const form = page.querySelector('details.addbox form, #choreform, #todoform, #listform, #wform, #warform, #docform, #billform, #credform, #goalform, #savform, #incform');
+    if (!form) return;
+    page.querySelectorAll('.empty:not([data-cta])').forEach((box) => {
+      box.dataset.cta = '1';
+      if (box.querySelector('a, button')) return;
+      const wrap = document.createElement('div');
+      wrap.style.marginTop = '12px';
+      const b = document.createElement('button');
+      b.type = 'button'; b.className = 'btn small'; b.textContent = label(form);
+      b.onclick = () => {
+        form.closest('details')?.setAttribute('open', '');
+        form.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'center' });
+        form.querySelector('input:not([type=hidden]), select, textarea')?.focus({ preventScroll: true });
+      };
+      wrap.appendChild(b);
+      box.appendChild(wrap);
+    });
+  };
+  let queued = false;
+  new MutationObserver(() => { if (queued) return; queued = true; queueMicrotask(() => { queued = false; enhance(); }); })
+    .observe(app, { childList: true, subtree: true });
+})();
+
+/* ---------- drafts ----------
+   A half-filled form survives a refresh, a closed tab or a wrong tap on the tab bar (VectorLab
+   defaults). Every form with an id saves what differs from its defaults to localStorage, per page;
+   when that form is drawn again its draft is put back, its folded section opened, and a line says
+   so with a way to throw it away. Sending the form clears it. Passwords and files are never kept,
+   and sign-in / reset forms are skipped entirely. */
+(() => {
+  const SKIP = new Set(['authform', 'resetform', 'modalpwform']);
+  const MAX_AGE = 14 * 86400000;
+  const key = (f) => `fh_draft:${(location.hash || '#dashboard').split('/')[0]}:${f.id}`;
+  const fields = (f) => [...f.elements].filter((e) => e.name && !['password', 'file', 'hidden', 'submit', 'button', 'reset'].includes(e.type));
+  const changed = (e) => (e.type === 'checkbox' || e.type === 'radio') ? e.checked !== e.defaultChecked
+    : e.tagName === 'SELECT' ? [...e.options].some((o) => o.selected !== o.defaultSelected) : e.value !== e.defaultValue;
+  const usable = (f) => f.id && !SKIP.has(f.id) && f.closest('#app');
+  const read = (f) => { try { const d = JSON.parse(localStorage.getItem(key(f)) || 'null'); return d && Date.now() - d.t < MAX_AGE ? d.data : null; } catch { return null; } };
+  const drop = (f) => { try { localStorage.removeItem(key(f)); } catch {} };
+  function save(f) {
+    const list = fields(f);
+    if (!list.some(changed)) return drop(f);
+    const data = {};
+    for (const e of list) {
+      if (e.type === 'radio') { if (e.checked) data[e.name] = e.value; }
+      else data[e.name] = e.type === 'checkbox' ? e.checked : e.value;
+    }
+    try { localStorage.setItem(key(f), JSON.stringify({ t: Date.now(), data })); } catch {}
+  }
+  function restore(f) {
+    if (f.dataset.draftSeen) return;
+    f.dataset.draftSeen = '1';
+    const data = read(f);
+    if (!data) return;
+    let any = false;
+    for (const e of fields(f)) {
+      if (!(e.name in data)) continue;
+      const v = data[e.name];
+      if (e.type === 'radio') e.checked = e.value === v;
+      else if (e.type === 'checkbox') e.checked = !!v;
+      else e.value = v;
+      any = true;
+    }
+    if (!any) return;
+    f.closest('details')?.setAttribute('open', '');
+    const note = document.createElement('p');
+    note.className = 'draftnote';
+    note.innerHTML = `${LANG === 'ro' ? 'Am păstrat ce scriseseși aici.' : 'Your unsent entry is back.'} <button type="button" class="btn ghost small">${LANG === 'ro' ? 'Șterge ciorna' : 'Discard draft'}</button>`;
+    note.querySelector('button').onclick = () => { drop(f); f.reset(); note.remove(); };
+    f.prepend(note);
+  }
+  app.addEventListener('input', (e) => { const f = e.target.form; if (f && usable(f)) save(f); });
+  app.addEventListener('change', (e) => { const f = e.target.form; if (f && usable(f)) save(f); });
+  app.addEventListener('submit', (e) => { const f = e.target; if (f && usable(f)) { drop(f); f.querySelector('.draftnote')?.remove(); } }, true);
+  let queued = false;
+  new MutationObserver(() => {
+    if (queued) return;
+    queued = true;
+    queueMicrotask(() => { queued = false; app.querySelectorAll('form[id]').forEach((f) => { if (usable(f)) restore(f); }); });
+  }).observe(app, { childList: true, subtree: true });
+})();
+
 /* ---------- scroll-craft layer ----------
    The scroll-craft skill's devices, written for a working app. Paired with the two
    "scroll-craft" blocks at the end of styles.css; removing those and this section is the undo.
@@ -6054,7 +6183,7 @@ const SC = (() => {
     h.innerHTML = words.map((w, i) => `<span class="w" aria-hidden="true"><span style="--i:${i}">${esc(w)}</span></span>`).join(' ');
     if (!titleIO) titleIO = new IntersectionObserver((es) => es.forEach((e) => {
       if (e.isIntersecting) { e.target.classList.add('is-in'); titleIO.unobserve(e.target); }
-    }), { rootMargin: '0px 0px -12% 0px' });
+    }), { rootMargin: '0px 0px -2% 0px' });
     titleIO.observe(h);
     setTimeout(() => h.classList.add('is-in'), 4000); // never leave a heading hidden
   }

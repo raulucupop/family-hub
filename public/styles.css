@@ -50,28 +50,28 @@ h3 { font-size: 1rem; font-weight: 600; }
 a { color: var(--accent); }
 button { font-family: var(--body); cursor: pointer; }
 input, select, textarea {
-  font-family: var(--body); font-size: 14px; padding: 8px 10px;
+  font-family: var(--body); font-size: 14px; padding: 8px 12px;
   border: 1px solid var(--line); border-radius: 8px; background: var(--card); color: var(--ink); width: 100%;
 }
 input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-visible, .navlink:focus-visible {
   outline: 2px solid var(--accent); outline-offset: 1px;
 }
-label { display: block; font-size: 12px; font-weight: 600; color: var(--ink-soft); margin-bottom: 3px; }
-.field { margin-bottom: 10px; }
+label { display: block; font-size: 12px; font-weight: 600; color: var(--ink-soft); margin-bottom: 4px; }
+.field { margin-bottom: 12px; }
 
 /* layout */
 .shell { display: grid; grid-template-columns: 232px 1fr; min-height: 100vh; }
 .sidebar {
-  background: var(--sidebar); color: #dfe8e5; padding: 20px 14px; display: flex; flex-direction: column; gap: 4px;
+  background: var(--sidebar); color: #dfe8e5; padding: 24px 16px; display: flex; flex-direction: column; gap: 4px;
   position: sticky; top: 0; height: 100vh;
 }
-.brand { font-family: var(--display); font-weight: 600; font-size: 1.25rem; color: #fff; margin: 2px 8px 18px; letter-spacing: -.01em; line-height: 1.2; }
+.brand { font-family: var(--display); font-weight: 600; font-size: 1.25rem; color: #fff; margin: 2px 8px 16px; letter-spacing: -.01em; line-height: 1.2; }
 .brand small {
   display: block; font-family: var(--body); font-weight: 600; font-size: 12px; color: #8ea39c;
-  letter-spacing: .1em; text-transform: uppercase; margin-top: 3px;
+  letter-spacing: .1em; text-transform: uppercase; margin-top: 4px;
 }
 .navlink {
-  display: flex; gap: 10px; align-items: center; padding: 9px 10px; border-radius: 8px;
+  display: flex; gap: 12px; align-items: center; padding: 8px 12px; border-radius: 8px;
   color: #cfdad6; text-decoration: none; font-weight: 500; font-size: 14px; border: 0; background: none; text-align: left;
 }
 .navlink:hover { background: rgba(255,255,255,.08); color: #fff; }
@@ -83,13 +83,13 @@ label { display: block; font-size: 12px; font-weight: 600; color: var(--ink-soft
 /* section heading: turns thirteen flat links into three answerable clusters */
 .navgroup {
   font-size: 12px; text-transform: uppercase; letter-spacing: .1em; font-weight: 600;
-  color: #8ea39c; padding: 0 10px; margin: 14px 0 4px;
+  color: #8ea39c; padding: 0 12px; margin: 16px 0 4px;
 }
 .sidebar .spacer { flex: 1; }
-.whoami { font-size: 12px; color: #9fb3ac; padding: 8px 10px; border-top: 1px solid rgba(255,255,255,.12); }
+.whoami { font-size: 12px; color: #9fb3ac; padding: 8px 12px; border-top: 1px solid rgba(255,255,255,.12); }
 .whoami b { color: #fff; display: block; }
-.main { padding: 26px 36px 60px; width: 100%; min-width: 0; }
-.pagehead { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
+.main { padding: 24px 40px 64px; width: 100%; min-width: 0; }
+.pagehead { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
 .pagehead p { margin: 0; color: var(--ink-soft); font-size: 14px; }
 
 /* cards & grids */
@@ -99,7 +99,7 @@ label { display: block; font-size: 12px; font-weight: 600; color: var(--ink-soft
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
 .stack > * + * { margin-top: 16px; }
-.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
 
 /* signature: due ribbon — ticket stubs */
 /* Deadlines reflow into as many columns as fit — as a non-shrinking flex row they scrolled
@@ -107,7 +107,7 @@ label { display: block; font-size: 12px; font-weight: 600; color: var(--ink-soft
    the swipe strip (see the narrow breakpoint), where sideways is the natural gesture. */
 .ribbon {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(178px, 1fr));
-  gap: 12px; padding: 4px 2px 10px;
+  gap: 12px; padding: 4px 2px 12px;
 }
 /* The deadlines strip shows everything on a desktop, where the grid simply wraps — "show all" is
    a phone answer to a phone problem, so it is not a control here. Declared before the narrow
@@ -115,7 +115,7 @@ label { display: block; font-size: 12px; font-weight: 600; color: var(--ink-soft
 .ribbon-more { display: none; }
 .stub {
   min-width: 0; background: var(--card); border: 1px solid var(--line); border-radius: 10px;
-  padding: 10px 12px 10px 16px; position: relative;
+  padding: 12px 12px 12px 16px; position: relative;
 }
 .stub::before {
   content: ""; position: absolute; left: 6px; top: 8px; bottom: 8px;
@@ -137,14 +137,14 @@ a.stub.late:hover { border-color: var(--red); }
 .stub.warn .days { color: var(--amber); }
 
 /* KPI comparison line */
-.delta { font-size: 12px; margin-top: 3px; color: var(--ink-soft); }
+.delta { font-size: 12px; margin-top: 4px; color: var(--ink-soft); }
 .delta.good { color: var(--ok); }
 .delta.bad { color: var(--amber); }
 
 /* numbers */
 .amount, .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
 .kpi { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
-.kpi .card { padding: 14px 18px; }
+.kpi .card { padding: 16px 16px; }
 /* Contrast here already passes AA (about 7:1), but 12px all-caps with wide tracking is hard work
    to read whatever the ratio — so: a little larger, a little tighter, a little darker. */
 .kpi .label { font-size: 12px; text-transform: uppercase; letter-spacing: .03em; color: var(--ink); opacity: .72; font-weight: 600; }
@@ -156,7 +156,7 @@ a.stub.late:hover { border-color: var(--red); }
 .kpi .card { position: relative; }
 /* the period is named once in the header selector, so the tiles just say what they are; padding-right
    keeps a long label from sliding under the pill even so */
-.kpi .label { display: flex; align-items: center; gap: 8px; padding-right: 62px; min-width: 0; }
+.kpi .label { display: flex; align-items: center; gap: 8px; padding-right: 64px; min-width: 0; }
 .kpi .kpi-ic {
   display: inline-flex; align-items: center; justify-content: center;
   width: 26px; height: 26px; flex: none; border-radius: 8px;
@@ -166,8 +166,8 @@ a.stub.late:hover { border-color: var(--red); }
 /* the move as a pill in the corner — the shape you read without reading */
 .kpi-pill {
   position: absolute; top: 14px; right: 16px;
-  display: inline-flex; align-items: center; gap: 3px;
-  padding: 3px 9px; border-radius: 999px;
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 4px 8px; border-radius: 999px;
   font-size: 12px; font-weight: 600; font-family: var(--mono);
 }
 .kpi-pill.good { background: var(--accent-soft); color: var(--accent); }
@@ -177,38 +177,38 @@ a.stub.late:hover { border-color: var(--red); }
 .scorebar { height: 12px; border-radius: 999px; background: var(--paper); overflow: hidden; margin: 8px 0 4px; }
 .scorebar > i { display: block; height: 100%; border-radius: 999px; background: var(--accent); }
 /* mini trend line under a KPI number; colour comes from the wrapper (currentColor in the SVG) */
-.spark { display: block; width: 100%; height: 24px; margin-top: 10px; }
+.spark { display: block; width: 100%; height: 24px; margin-top: 12px; }
 .spark-pos { color: var(--accent); }
 .spark-neg { color: var(--red); }
 .spark polyline { opacity: .8; }
 
 /* tables */
 table { width: 100%; border-collapse: collapse; font-size: 14px; }
-th { text-align: left; font-size: 12px; text-transform: uppercase; letter-spacing: .02em; font-weight: 600; color: var(--ink); opacity: .7; padding: 8px 10px; border-bottom: 1px solid var(--line); }
-td { padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { text-align: left; font-size: 12px; text-transform: uppercase; letter-spacing: .02em; font-weight: 600; color: var(--ink); opacity: .7; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+td { padding: 8px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
 tr:last-child td { border-bottom: 0; }
 td.right, th.right { text-align: right; }
 
 /* buttons & badges */
 .btn {
-  background: var(--accent); color: #fff; border: 0; border-radius: 8px; padding: 9px 14px;
+  background: var(--accent); color: #fff; border: 0; border-radius: 8px; padding: 8px 16px;
   font-weight: 600; font-size: 14px;
 }
 .btn:hover { filter: brightness(1.08); }
 .btn.ghost { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
 /* a button that leads with an icon keeps the two optically centred together */
-.btn-ic { display: inline-flex; align-items: center; justify-content: center; gap: 7px; }
+.btn-ic { display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
 .btn-ic svg { width: 17px; height: 17px; flex: none; }
-.btn.small { padding: 5px 10px; font-size: 12px; }
+.btn.small { padding: 4px 12px; font-size: 12px; }
 /* secondary, low-stakes actions that live *inside* a cell under the text it acts on */
-.btn.tiny { padding: 3px 9px; font-size: 12px; border-radius: 999px; min-height: 0; }
-.snoozerow { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.btn.tiny { padding: 4px 8px; font-size: 12px; border-radius: 999px; min-height: 0; }
+.snoozerow { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 /* guest list: the two answer buttons act as one control, and a declined row steps back */
-.rsvpset { display: inline-flex; gap: 6px; }
+.rsvpset { display: inline-flex; gap: 8px; }
 tr.guest-no > td { opacity: .5; }
 /* head counts are editable in place — sized to the number, not to the column */
 .headin {
-  width: 4.6ch; min-width: 0; padding: 3px 6px; text-align: right;
+  width: 4.6ch; min-width: 0; padding: 4px 8px; text-align: right;
   font-family: var(--mono); font-size: 14px; background: transparent;
   /* a faint resting outline: enough to say "you can change this", not so much that a dozen of
      them turn a calm table into a form */
@@ -220,14 +220,14 @@ tr.guest-no > td { opacity: .5; }
 .headin::-webkit-outer-spin-button, .headin::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 .headin { -moz-appearance: textfield; appearance: textfield; }
 /* quick-add: the amount is what you came to type, so it leads and is always visible */
-.card.quickadd { padding: 12px 14px; }
+.card.quickadd { padding: 12px 16px; }
 .quickadd .qrow { display: flex; gap: 8px; align-items: stretch; }
 /* An empty right-aligned box with a grey "0,00" in it reads as a disabled field. The currency
    adornment and a firmer border say "type here" without needing a label above. */
 .quickadd .qamt-wrap { position: relative; flex: 1 1 40%; min-width: 0; display: flex; }
 .quickadd .qamt {
   width: 100%; min-width: 0; font-family: var(--mono); font-size: 19px; font-weight: 600;
-  text-align: right; padding-right: 52px; border-color: var(--ink-soft);
+  text-align: right; padding-right: 56px; border-color: var(--ink-soft);
 }
 .quickadd .qamt::placeholder { color: var(--ink-soft); opacity: .55; }
 .quickadd .qamt:focus { border-color: var(--accent); }
@@ -238,7 +238,7 @@ tr.guest-no > td { opacity: .5; }
 .quickadd .qcat { flex: 1 1 40%; min-width: 0; }
 .quickadd .qgo { flex: 0 0 auto; white-space: nowrap; }
 .quickadd .qmore-btn { margin-top: 8px; padding-left: 0; border: 0; background: none; color: var(--accent); }
-.quickadd .qmore { margin-top: 10px; }
+.quickadd .qmore { margin-top: 12px; }
 /* Kept for clarity; the global [hidden] rule at the end of this file now covers it. */
 .quickadd .qmore[hidden] { display: none; }
 @media (max-width: 860px) {
@@ -258,8 +258,8 @@ tr.guest-no > td { opacity: .5; }
 }
 
 /* twelve month bars, drawn from the numbers rather than pulling in a chart library */
-.yearbars { display: grid; grid-template-columns: repeat(12, 1fr); gap: 6px; align-items: end; }
-.yearbar { display: flex; flex-direction: column; align-items: center; gap: 5px; min-width: 0; }
+.yearbars { display: grid; grid-template-columns: repeat(12, 1fr); gap: 8px; align-items: end; }
+.yearbar { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 0; }
 .yearbar .yb-track {
   width: 100%; height: 110px; background: var(--paper); border-radius: 6px;
   display: flex; align-items: flex-end; overflow: hidden;
@@ -281,17 +281,17 @@ tr.guest-no > td { opacity: .5; }
 /* last year's same month, as a hairline to read this bar against */
 .yearbar .yb-prev { position: absolute; left: 0; right: 0; height: 2px; background: var(--ink-soft); opacity: .38; border-radius: 2px; }
 .ghostkey { display: inline-block; width: 14px; height: 2px; background: var(--ink-soft); opacity: .38; vertical-align: middle; border-radius: 2px; }
-.yb-readout { margin: 10px 0 0; min-height: 18px; font-size: 14px; }
+.yb-readout { margin: 12px 0 0; min-height: 18px; font-size: 14px; }
 
 /* category drift: one mini-chart per category, scaled within its own cell */
-.sparkgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 14px; }
-.sparkcell { display: flex; flex-direction: column; gap: 6px; }
+.sparkgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 16px; }
+.sparkcell { display: flex; flex-direction: column; gap: 8px; }
 .minibars { display: flex; align-items: flex-end; gap: 2px; height: 42px; }
 .minibars .mb { flex: 1; background: var(--cat, var(--accent)); opacity: .5; border-radius: 2px 2px 0 0; min-height: 2px; }
 .minibars .mb.now { opacity: 1; }
 
 @media (max-width: 560px) {
-  .yearbars { gap: 3px; }
+  .yearbars { gap: 4px; }
   .yearbar .yb-track { height: 84px; }
   .yearbar .yb-label { font-size: 12px; }
   .yearbar .yb-val { font-size: 12px; }
@@ -300,9 +300,9 @@ tr.guest-no > td { opacity: .5; }
 
 /* Day header inside the expense list. The flex lives on an inner div, not the <td>: making the
    cell itself a flex container drops it out of table layout and its colspan stops spanning. */
-tr.daysep > td { background: var(--paper); padding: 6px 10px; border-bottom: 1px solid var(--line); }
+tr.daysep > td { background: var(--paper); padding: 8px 12px; border-bottom: 1px solid var(--line); }
 .daysep-in {
-  display: flex; justify-content: space-between; gap: 10px; align-items: baseline;
+  display: flex; justify-content: space-between; gap: 12px; align-items: baseline;
   font-size: 12px; font-weight: 600; color: var(--ink-soft); text-transform: uppercase; letter-spacing: .04em;
 }
 .daysep-in .amount { font-weight: 600; letter-spacing: 0; text-transform: none; }
@@ -313,7 +313,7 @@ tr.daysep > td { background: var(--paper); padding: 6px 10px; border-bottom: 1px
 .alerts .alertrow.warn .dot { background: var(--amber); }
 .alerts .alertrow.late .dot { background: var(--red); }
 /* per-meter reading schedule: tick a meter, give it its own day of month */
-.meterlist { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 2px; }
+.meterlist { display: flex; flex-direction: column; gap: 8px; margin: 4px 0 2px; }
 .meterrow { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 500; }
 .meterrow input[type=checkbox] { width: auto; margin: 0; }
 .meterrow .mname { min-width: 96px; }
@@ -321,10 +321,10 @@ tr.daysep > td { background: var(--paper); padding: 6px 10px; border-bottom: 1px
 .meterrow input:disabled { opacity: .4; }
 
 /* category colour dot (expense list) — colour comes from --cat, set per row */
-.catcell { display: inline-flex; align-items: center; gap: 7px; }
+.catcell { display: inline-flex; align-items: center; gap: 8px; }
 .catdot { width: 9px; height: 9px; border-radius: 50%; background: var(--cat, var(--ink-soft)); flex: none; }
 /* who-paid chip: small hue-tinted initial + name */
-.who { display: inline-flex; align-items: center; gap: 6px; }
+.who { display: inline-flex; align-items: center; gap: 8px; }
 .who-av { width: 20px; height: 20px; border-radius: 50%; font-size: 12px; font-weight: 600; flex: none; }
 /* top-categories strip above the expenses table */
 /* An "add" form sharing a card with the list it adds to. Without a break, the goal's progress bar
@@ -335,22 +335,22 @@ tr.daysep > td { background: var(--paper); padding: 6px 10px; border-bottom: 1px
    card. So: a single rule in the deliberately-visible --rule, pulled out to the card's own edges so
    it reads as "the section ends here" rather than as the lid of a container. */
 .subform {
-  margin: 16px calc(-1 * var(--card-pad-x, 18px)) 0;
-  padding: 14px var(--card-pad-x, 18px) 0;
+  margin: 16px calc(-1 * var(--card-pad-x, 16px)) 0;
+  padding: 16px var(--card-pad-x, 16px) 0;
   border-top: 1px solid var(--rule);
 }
 .subform > h4 {
-  margin: 0 0 10px; font-size: 12px; font-weight: 600;
+  margin: 0 0 12px; font-size: 12px; font-weight: 600;
   text-transform: uppercase; letter-spacing: .04em; color: var(--ink-soft);
 }
 
 /* The doughnut's legend, carrying the numbers the ring can't. It replaces Chart.js's own legend
    (names only) and doubles as the chart's table view — every value readable without hovering,
    which on a touch screen was previously impossible. */
-.catlegend { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 1px; }
+.catlegend { list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-direction: column; gap: 1px; }
 .catlegend .catleg {
   display: flex; align-items: baseline; gap: 8px; width: 100%;
-  background: none; border: 0; padding: 5px 6px; border-radius: 7px;
+  background: none; border: 0; padding: 4px 8px; border-radius: 7px;
   font: inherit; color: var(--ink); text-align: left; cursor: pointer;
 }
 .catlegend .catleg:hover:not(:disabled) { background: var(--paper); }
@@ -368,8 +368,8 @@ tr.daysep > td { background: var(--paper); padding: 6px 10px; border-bottom: 1px
 /* chores: a tick list you read every morning, so the row is one big target and the text carries
    who it belongs to rather than a separate column */
 .chorehead .chorecount { font-family: var(--display); font-size: 2rem; font-weight: 600; line-height: 1.1; }
-.chorelist { list-style: none; margin: 6px 0 0; padding: 0; }
-.chorerow { display: flex; align-items: center; gap: 10px; padding: 4px 0; border-bottom: 1px solid var(--line); }
+.chorelist { list-style: none; margin: 8px 0 0; padding: 0; }
+.chorerow { display: flex; align-items: center; gap: 12px; padding: 4px 0; border-bottom: 1px solid var(--line); }
 .chorerow:last-child { border-bottom: 0; }
 .chorecheck { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; padding: 8px 4px; cursor: pointer; border-radius: 8px; }
 .chorecheck:hover { background: var(--paper); }
@@ -383,13 +383,13 @@ tr.daysep > td { background: var(--paper); padding: 6px 10px; border-bottom: 1px
 
 /* the expense filter bar: widths live here rather than inline, so the phone layout can override
    them instead of losing to an inline style */
-.filterrow { gap: 8px; margin: 10px 0; flex-wrap: wrap; }
+.filterrow { gap: 8px; margin: 12px 0; flex-wrap: wrap; }
 .filterrow #cfilter, .filterrow #mfilter { width: 150px; }
 .filterrow #qfilter { width: 180px; }
 
-.catstrip { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 14px; }
+.catstrip { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 16px; }
 .catpill {
-  display: inline-flex; align-items: center; gap: 7px; padding: 5px 12px; border-radius: 999px;
+  display: inline-flex; align-items: center; gap: 8px; padding: 4px 12px; border-radius: 999px;
   border: 1px solid var(--line); background: var(--card); color: var(--ink); font-size: 14px; cursor: pointer;
   transition: border-color var(--ease, 200ms), box-shadow var(--ease, 200ms), transform var(--ease, 200ms);
 }
@@ -404,16 +404,16 @@ tr.daysep > td { background: var(--paper); padding: 6px 10px; border-bottom: 1px
 .btn.danger:hover { background: var(--red-soft); }
 /* row action buttons (Mark paid / Edit / History / Delete): a flex row so the gaps are
    even instead of relying on collapsing whitespace between inline-blocks */
-.rowacts { display: inline-flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+.rowacts { display: inline-flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
 /* "Pay" + the Revolut mark, kept on one line */
-.btn.revolut { display: inline-flex; align-items: center; gap: 5px; }
+.btn.revolut { display: inline-flex; align-items: center; gap: 4px; }
 .btn.revolut .rmark { flex-shrink: 0; border-radius: 4px; }
 
 /* date fields: 📅 opens the device's calendar (the invisible native date input on top of
    the icon is what actually receives the tap). Phone only — on desktop typing is fine. */
 .datefield { position: relative; display: block; }
 .datefield .dpbtn, .datefield .dpnative { display: none; }
-.badge { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; }
 .badge.unpaid { background: var(--amber-soft); color: var(--amber); }
 .badge.paid { background: var(--accent-soft); color: var(--accent); }
 .badge.late { background: var(--red-soft); color: var(--red); }
@@ -423,7 +423,7 @@ tr.daysep > td { background: var(--paper); padding: 6px 10px; border-bottom: 1px
 .badge.role { background: var(--accent-soft); color: var(--accent); text-transform: capitalize; }
 
 /* budget bars */
-.bar { height: 8px; background: var(--paper); border-radius: 999px; overflow: hidden; margin-top: 5px; }
+.bar { height: 8px; background: var(--paper); border-radius: 999px; overflow: hidden; margin-top: 4px; }
 .bar i { display: block; height: 100%; background: var(--accent); border-radius: 999px; }
 .bar i.over { background: var(--red); }
 /* nearly at the limit — warn before it's blown, not after */
@@ -433,8 +433,8 @@ tr.daysep > td { background: var(--paper); padding: 6px 10px; border-bottom: 1px
 .bar.split { display: flex; }
 .bar.split i { border-radius: 0; }
 .bar i.advance { background: var(--amber); }
-.barkey { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 6px; font-size: 12px; color: var(--ink-soft); }
-.barkey i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; vertical-align: baseline; }
+.barkey { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 8px; font-size: 12px; color: var(--ink-soft); }
+.barkey i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; vertical-align: baseline; }
 .barkey .k-sched { background: var(--accent); }
 .barkey .k-adv { background: var(--amber); }
 
@@ -452,7 +452,7 @@ tr.daysep > td { background: var(--paper); padding: 6px 10px; border-bottom: 1px
 .authcard {
   width: 100%; max-width: 400px;
   box-shadow: 0 18px 48px rgba(28, 43, 51, .07), 0 2px 8px rgba(28, 43, 51, .05);
-  border-radius: 16px; padding: 26px 26px 22px;
+  border-radius: 16px; padding: 24px 24px 24px;
 }
 :root[data-theme="dark"] .authcard { box-shadow: 0 18px 48px rgba(0, 0, 0, .5), 0 2px 8px rgba(0, 0, 0, .35); }
 .authcard .brandmark { font-family: var(--display); font-weight: 600; font-size: 1.9rem; letter-spacing: -.02em; }
@@ -463,7 +463,7 @@ tr.daysep > td { background: var(--paper); padding: 6px 10px; border-bottom: 1px
   content: ""; position: absolute; inset: 0 0 auto 0; height: 3px;
   background: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 45%, var(--amber)));
 }
-.tabs { display: flex; gap: 6px; margin: 14px 0; }
+.tabs { display: flex; gap: 8px; margin: 16px 0; }
 .tabs button { flex: 1; padding: 8px; border: 1px solid var(--line); background: var(--card); border-radius: 8px; font-weight: 600; color: var(--ink-soft); }
 .tabs button.active { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
 
@@ -471,8 +471,8 @@ tr.daysep > td { background: var(--paper); padding: 6px 10px; border-bottom: 1px
 .muted { color: var(--ink-soft); font-size: 14px; }
 .toast {
   position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
-  background: var(--sidebar); color: #fff; padding: 10px 18px; border-radius: 10px; font-size: 14px; z-index: 50;
-  display: flex; align-items: center; gap: 14px;
+  background: var(--sidebar); color: #fff; padding: 12px 16px; border-radius: 10px; font-size: 14px; z-index: 50;
+  display: flex; align-items: center; gap: 16px;
 }
 /* display:flex above beats the UA [hidden] rule, so re-hide explicitly or an empty toast lingers */
 .toast[hidden] { display: none; }
@@ -487,16 +487,16 @@ tr.daysep > td { background: var(--paper); padding: 6px 10px; border-bottom: 1px
 .modalwrap[hidden] { display: none; }
 .modalwrap .modalbg { position: absolute; inset: 0; background: rgba(0,0,0,.4); }
 .modalwrap .modalcard {
-  position: relative; background: var(--card); border-radius: 14px; padding: 20px; width: 100%; max-width: 400px;
+  position: relative; background: var(--card); border-radius: 14px; padding: 24px; width: 100%; max-width: 400px;
   box-shadow: 0 12px 40px rgba(0,0,0,.25); max-height: calc(100vh - 32px); overflow-y: auto;
 }
 .modalwrap .modalclose {
   position: absolute; top: 10px; right: 10px; border: 0; background: transparent; font-size: 20px;
-  line-height: 1; color: var(--ink-soft); cursor: pointer; padding: 6px;
+  line-height: 1; color: var(--ink-soft); cursor: pointer; padding: 8px;
 }
 .modalwrap .modalcard h3 { margin-top: 0; }
 
-.empty { text-align: center; color: var(--ink-soft); padding: 26px 10px; }
+.empty { text-align: center; color: var(--ink-soft); padding: 24px 12px; }
 .empty b { display: block; font-family: var(--display); font-size: 1.05rem; color: var(--ink); }
 details.entity { border: 1px solid var(--line); border-radius: 12px; background: var(--card); margin-bottom: 12px; }
 /* vehicles & properties sit 2-up on a wide screen; an opened card spans the row so its detail
@@ -517,34 +517,34 @@ details.entity { border: 1px solid var(--line); border-radius: 12px; background:
 /* KPI cards are <a> links; kill the default underline/link colour so the numbers don't read as links */
 .clickcard { cursor: pointer; transition: border-color 150ms; text-decoration: none; color: inherit; }
 .clickcard:hover { border-color: var(--accent); }
-details.entity > summary { list-style: none; cursor: pointer; padding: 14px 18px; display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; align-items: center; }
+details.entity > summary { list-style: none; cursor: pointer; padding: 16px 16px; display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; align-items: center; }
 details.entity > summary::-webkit-details-marker { display: none; }
 details.entity[open] > summary { border-bottom: 1px solid var(--line); }
-details.entity .body { padding: 14px 18px; }
+details.entity .body { padding: 16px 16px; }
 .deadgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
-.dead { border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; font-size: 12px; }
+.dead { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; font-size: 12px; }
 .dead .d { font-family: var(--mono); font-size: 14px; }
 .dead.warn { border-color: var(--amber); background: var(--amber-soft); }
 .dead.late { border-color: var(--red); background: var(--red-soft); }
-.formgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; align-items: end; }
+.formgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; align-items: end; }
 canvas { max-width: 100%; }
 .chartbox { position: relative; height: 240px; }
 
 /* calendar */
-.cal { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
+.cal { display: grid; grid-template-columns: repeat(7, 1fr); gap: 8px; }
 .cal .dow { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--ink-soft); text-align: center; padding-bottom: 2px; }
-.cal .day { border: 1px solid var(--line); border-radius: 8px; min-height: 88px; padding: 4px 6px; background: var(--card); font-size: 12px; overflow: hidden; }
+.cal .day { border: 1px solid var(--line); border-radius: 8px; min-height: 88px; padding: 4px 8px; background: var(--card); font-size: 12px; overflow: hidden; }
 .cal .day .n { font-weight: 600; }
 .cal .day.today { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
-.cal .ev { border-radius: 5px; padding: 1px 5px; margin-top: 3px; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; background: var(--accent-soft); color: var(--accent); }
+.cal .ev { border-radius: 5px; padding: 1px 4px; margin-top: 4px; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; background: var(--accent-soft); color: var(--accent); }
 .cal .ev.warn { background: var(--amber-soft); color: var(--amber); }
 .cal .ev.late { background: var(--red-soft); color: var(--red); }
-@media (max-width: 860px) { .cal { gap: 3px; } .cal .day { min-height: 62px; padding: 2px 4px; } .cal .ev { font-size: 12px; padding: 1px 3px; } }
+@media (max-width: 860px) { .cal { gap: 4px; } .cal .day { min-height: 62px; padding: 2px 4px; } .cal .ev { font-size: 12px; padding: 1px 4px; } }
 
 /* notifications */
 .notifbadge {
   background: var(--amber); color: #fff; font-size: 12px; font-weight: 600;
-  border-radius: 999px; padding: 1px 7px; margin-left: auto; font-family: var(--mono);
+  border-radius: 999px; padding: 1px 8px; margin-left: auto; font-family: var(--mono);
 }
 .dot { display: inline-block; width: 8px; height: 8px; border-radius: 999px; background: var(--amber); }
 
@@ -563,7 +563,7 @@ details.addbox[open] > summary { margin-bottom: 12px; }
 details.addbox[open] > summary .plus { transform: rotate(45deg); } /* a + becomes an × when open */
 
 /* an amount echoed back formatted, so 247500 and 24750 stop looking alike */
-.amounthint { display: block; font-family: var(--mono); font-size: 12px; color: var(--ink-soft); margin-top: 3px; }
+.amounthint { display: block; font-family: var(--mono); font-size: 12px; color: var(--ink-soft); margin-top: 4px; }
 
 /* foldcard: a card whose heading is a disclosure — used for rarely-touched Settings sections */
 details.foldcard > summary {
@@ -608,30 +608,30 @@ details.foldcard[open] > summary::after { transform: rotate(180deg); }
   }
   .tabbar .tab {
     flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
-    padding: 10px 2px 9px; min-height: 66px; border: 0; background: transparent;
+    padding: 12px 2px 8px; min-height: 66px; border: 0; background: transparent;
     color: var(--ink-soft); text-decoration: none; font-size: 12px; font-weight: 600;
   }
   .tabbar .tab .ic { display: flex; line-height: 1; position: relative; }
   .tabbar .tab .ic svg { width: 23px; height: 23px; }
   .tabbar .tab.active { color: var(--accent); }
-  .tabbar .tab .notifbadge { position: absolute; top: -6px; left: 12px; margin: 0; padding: 0 5px; font-size: 12px; }
+  .tabbar .tab .notifbadge { position: absolute; top: -6px; left: 12px; margin: 0; padding: 0 4px; font-size: 12px; }
 
   .sheet { display: block; position: fixed; inset: 0; z-index: 50; }
   .sheet[hidden] { display: none; } /* a plain display:block here would beat the UA's [hidden] rule */
   .sheet .sheetbg { position: absolute; inset: 0; background: rgba(0,0,0,.35); }
   .sheet .sheetbody {
     position: absolute; left: 0; right: 0; bottom: 0;
-    background: var(--card); border-radius: 14px 14px 0 0; padding: 14px 14px calc(14px + env(safe-area-inset-bottom, 0));
+    background: var(--card); border-radius: 14px 14px 0 0; padding: 16px 16px calc(16px + env(safe-area-inset-bottom, 0));
     box-shadow: 0 -8px 30px rgba(0,0,0,.18);
   }
   .sheet .sheetgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
   .sheet .sheetgroup {
     font-size: 12px; text-transform: uppercase; letter-spacing: .1em; font-weight: 600;
-    color: var(--ink-soft); margin: 14px 2px 6px;
+    color: var(--ink-soft); margin: 16px 2px 8px;
   }
   .sheet .sheetgroup:first-child { margin-top: 2px; }
   .sheet .sheetlink {
-    display: flex; align-items: center; gap: 9px; padding: 12px 10px; min-height: 46px;
+    display: flex; align-items: center; gap: 8px; padding: 12px 12px; min-height: 46px;
     border: 1px solid var(--line); border-radius: 10px; text-decoration: none; color: var(--ink); font-size: 14px; font-weight: 600;
   }
   .sheet .sheetlink.active { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
@@ -640,14 +640,14 @@ details.foldcard[open] > summary::after { transform: rotate(180deg); }
 
   /* clear the fixed tab bar at the bottom, and the rounded corners on the sides in landscape */
   .main {
-    padding: 16px calc(12px + env(safe-area-inset-right, 0)) calc(90px + env(safe-area-inset-bottom, 0)) calc(12px + env(safe-area-inset-left, 0));
+    padding: 16px calc(12px + env(safe-area-inset-right, 0)) calc(88px + env(safe-area-inset-bottom, 0)) calc(12px + env(safe-area-inset-left, 0));
   }
 
   .fab {
     display: flex; align-items: center; justify-content: center;
     position: fixed; right: calc(16px + env(safe-area-inset-right, 0)); bottom: calc(74px + env(safe-area-inset-bottom, 0)); z-index: 44;
     width: 54px; height: 54px; border-radius: 999px; border: 0;
-    background: var(--accent); color: #fff; font-size: 30px; line-height: 1; padding-bottom: 3px;
+    background: var(--accent); color: #fff; font-size: 30px; line-height: 1; padding-bottom: 4px;
     box-shadow: 0 4px 14px rgba(0,0,0,.28);
   }
 
@@ -658,11 +658,11 @@ details.foldcard[open] > summary::after { transform: rotate(180deg); }
   /* KPI cards go horizontal rather than stacking into three tall boxes: three numbers were taking
      285px — a third of the phone screen — before anything actionable appeared. Label left, number
      right, and any extra line (a breakdown, a hint) spans underneath. Same numbers, ~120px less. */
-  .kpi { grid-template-columns: 1fr; gap: 10px; }
+  .kpi { grid-template-columns: 1fr; gap: 12px; }
   .kpi .card {
     display: grid; grid-template-columns: 1fr auto;
     align-items: baseline; column-gap: 12px; row-gap: 2px;
-    padding: 11px 14px;
+    padding: 12px 16px;
   }
   /* 12px/.02em rather than 12.5px/.03em: "Venituri · Luna aceasta" beside the longest amount was
      ~3px over the line and wrapped to two rows, undoing the saving on that one card */
@@ -674,20 +674,20 @@ details.foldcard[open] > summary::after { transform: rotate(180deg); }
   .kpi-pill { display: none; }
   /* the trend line earns its place, but 24px plus a 10px gap is a third of a compact tile — half
      that still reads as a shape, which is all a sparkline is for */
-  .kpi .spark { height: 16px; margin-top: 6px; }
+  .kpi .spark { height: 16px; margin-top: 8px; }
   .kpi .kpi-ic { width: 22px; height: 22px; border-radius: 7px; }
   .kpi .kpi-ic svg { width: 13px; height: 13px; }
-  .pagehead { flex-direction: column; align-items: flex-start; gap: 8px; margin-bottom: 14px; }
+  .pagehead { flex-direction: column; align-items: flex-start; gap: 8px; margin-bottom: 16px; }
   h1 { font-size: 1.45rem; }
 
   /* inputs: 16px stops iOS zooming in on focus; taller = easier to tap */
-  input, select, textarea { font-size: 16px; padding: 10px 12px; }
+  input, select, textarea { font-size: 16px; padding: 12px 12px; }
   /* A 13px checkbox is a miss waiting to happen on a thumb. min-* rather than width/height so the
      inline `width:auto` these carry (to escape the full-width input rule) doesn't cancel it. */
   input[type="checkbox"], input[type="radio"] { min-width: 20px; min-height: 20px; accent-color: var(--accent); }
 
   /* date fields get a tappable calendar icon on the right */
-  .dateinput { padding-right: 46px; }
+  .dateinput { padding-right: 48px; }
   .datefield .dpbtn {
     display: flex; align-items: center; justify-content: center;
     position: absolute; right: 3px; top: 50%; transform: translateY(-50%);
@@ -701,8 +701,8 @@ details.foldcard[open] > summary::after { transform: rotate(180deg); }
   }
   .datefield .dpnative:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; opacity: 1; }
   .btn { min-height: 42px; }
-  .btn.small { min-height: 36px; padding: 7px 12px; }
-  .btn.tiny { min-height: 34px; padding: 6px 12px; } /* still a thumb-sized target on a phone */
+  .btn.small { min-height: 36px; padding: 8px 12px; }
+  .btn.tiny { min-height: 34px; padding: 8px 12px; } /* still a thumb-sized target on a phone */
 
   /* forms stack into one clean column */
   .formgrid { grid-template-columns: 1fr; gap: 8px; }
@@ -718,7 +718,7 @@ details.foldcard[open] > summary::after { transform: rotate(180deg); }
   table.cards { display: block; overflow-x: visible; }
   table.cards thead { display: none; }
   table.cards tbody, table.cards tr, table.cards td { display: block; width: 100%; }
-  table.cards tr { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; }
+  table.cards tr { border: 1px solid var(--line); border-radius: 10px; padding: 12px 12px; margin-bottom: 12px; }
   /* the day header is a divider between cards, not a card itself */
   table.cards tr.daysep { border: 0; padding: 0; margin: 16px 0 8px; }
   table.cards tr.daysep > td { background: transparent; border-bottom: 0; padding: 0 2px; }
@@ -726,7 +726,7 @@ details.foldcard[open] > summary::after { transform: rotate(180deg); }
   table.cards td { border: 0; padding: 2px 0; text-align: left; }
   /* label:value on one line, value pushed to the right so a card reads as a tidy key/value list
      instead of a stack of stray words */
-  table.cards td[data-label] { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 3px 0; }
+  table.cards td[data-label] { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 4px 0; }
   table.cards td[data-label]::before {
     content: attr(data-label); flex: none;
     color: var(--ink-soft); font-size: 12px; font-weight: 600;
@@ -738,13 +738,13 @@ details.foldcard[open] > summary::after { transform: rotate(180deg); }
   table.cards td[data-label].lowpri { font-size: 12px; color: var(--ink-soft); }
   table.cards td[data-label].lowpri::before { font-weight: 500; }
   table.cards td:empty { display: none; }
-  table.cards td .rowacts { display: flex; flex-direction: column; align-items: stretch; gap: 6px; margin-top: 8px; }
+  table.cards td .rowacts { display: flex; flex-direction: column; align-items: stretch; gap: 8px; margin-top: 8px; }
   /* an edit form opened inside a card row must not inherit the card padding twice */
   table.cards tr[hidden] { display: none; }
-  table.cards td .formgrid { margin-top: 6px; }
+  table.cards td .formgrid { margin-top: 8px; }
   /* narrow screens: stack row actions into an evenly spaced, equal-width column
      instead of four buttons touching each other with ragged edges */
-  td .rowacts { display: flex; flex-direction: column; align-items: stretch; gap: 6px; min-width: 92px; }
+  td .rowacts { display: flex; flex-direction: column; align-items: stretch; gap: 8px; min-width: 92px; }
 
   /* Tab rows stay on ONE line and scroll sideways: wrapping five money tabs cost three rows
      (132px) of screen before any content appeared. */
@@ -788,7 +788,7 @@ details.foldcard[open] > summary::after { transform: rotate(180deg); }
   .catstrip { gap: 8px; }
   /* exactly two per row whatever the category is called: sizing by content left "Divertisment"
      177px wide and it took a row to itself */
-  .catpill { flex: 1 1 calc(50% - 4px); min-width: 0; padding: 5px 9px; gap: 5px; font-size: 12px; }
+  .catpill { flex: 1 1 calc(50% - 4px); min-width: 0; padding: 4px 8px; gap: 4px; font-size: 12px; }
   .catpill .catname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
   .catpill .muted { display: none; }
   .catpill .amt-full { display: none; }
@@ -804,9 +804,9 @@ details.foldcard[open] > summary::after { transform: rotate(180deg); }
   .pagehead p.clampable::after { content: ' ▾'; color: var(--accent); font-weight: 600; }
   .pagehead p.clampable.open::after { content: ' ▴'; }
 
-  .card { --card-pad-x: 14px; padding: 14px; border-radius: 10px; }
-  details.entity > summary { padding: 12px 14px; }
-  details.entity .body { padding: 12px 14px; }
+  .card { --card-pad-x: 14px; padding: 16px; border-radius: 10px; }
+  details.entity > summary { padding: 12px 16px; }
+  details.entity .body { padding: 12px 16px; }
   .chartbox { height: 200px; }
   .deadgrid { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); }
   .toast { width: calc(100% - 32px); text-align: center; bottom: calc(86px + env(safe-area-inset-bottom, 0)); justify-content: center; } /* above the tab bar */
@@ -920,10 +920,10 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { box-shadow: 
 .skel-line { height: 12px; margin: 8px 0; }
 
 /* ---------- friendlier empty states ---------- */
-.empty { padding: 34px 16px; }
+.empty { padding: 32px 16px; }
 .empty::before {
   content: "✦"; display: block; font-size: 24px; line-height: 1;
-  color: var(--accent); opacity: .45; margin-bottom: 10px;
+  color: var(--accent); opacity: .45; margin-bottom: 12px;
 }
 
 /* ---------- toast variants: a coloured accent + icon for success / error / info ---------- */
@@ -948,7 +948,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { box-shadow: 
 .btn.sent { background: var(--ok) !important; color: #fff !important; border-color: var(--ok) !important; }
 
 /* ---------- dashboard insight line ---------- */
-.insight { display: flex; gap: 11px; align-items: flex-start; border-left: 3px solid var(--accent); }
+.insight { display: flex; gap: 12px; align-items: flex-start; border-left: 3px solid var(--accent); }
 .insight .insight-ic { color: var(--accent); font-size: 14px; line-height: 1.7; flex-shrink: 0; }
 .insight p { margin: 0; font-size: 14px; line-height: 1.65; }
 .insight b { font-weight: 600; }
@@ -956,8 +956,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { box-shadow: 
 /* ---------- quick search palette (Ctrl+K) ---------- */
 .modalwrap .modalcard.wide { max-width: 560px; }
 .qsitem {
-  display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; cursor: pointer;
-  padding: 8px 10px; border: 0; border-radius: 8px; background: transparent;
+  display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; cursor: pointer;
+  padding: 8px 12px; border: 0; border-radius: 8px; background: transparent;
   font-family: var(--body); font-size: 14px; color: var(--ink);
 }
 .qsitem:hover, .qsitem.on { background: var(--accent-soft); }
@@ -967,7 +967,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { box-shadow: 
 
 /* ---------- row overflow menu (⋯) ---------- */
 .rowmenu { position: relative; display: inline-block; }
-.rowmenu-btn { padding: 4px 10px; line-height: 1.2; font-size: 16px; }
+.rowmenu-btn { padding: 4px 12px; line-height: 1.2; font-size: 16px; }
 .rowmenu-pop {
   position: absolute; right: 0; top: calc(100% + 4px); z-index: 30;
   display: flex; flex-direction: column; min-width: 152px; padding: 4px;
@@ -990,7 +990,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { box-shadow: 
 }
 
 /* ---------- deadline chips on a closed vehicle/property row ---------- */
-.dchips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+.dchips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
 .dchip {
   font-size: 12px; line-height: 1.5; padding: 1px 8px; border-radius: 999px;
   border: 1px solid var(--line); color: var(--ink-soft); background: var(--card); white-space: nowrap;
@@ -1015,7 +1015,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { box-shadow: 
 
 /* ---------- password reveal "eye" (wrapper + button added by JS) ---------- */
 .pweye-wrap { position: relative; display: block; }
-.pweye-wrap input { padding-right: 42px; }
+.pweye-wrap input { padding-right: 40px; }
 .pweye {
   position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
   width: 34px; height: 34px; display: flex; align-items: center; justify-content: center;
@@ -1073,10 +1073,10 @@ th[data-sort="desc"]::after { content: " ▼"; }
 .newsrow { padding: 12px 0; border-bottom: 1px solid var(--line); }
 .newsrow:last-child { border-bottom: 0; }
 /* a keyword match is the one thing you asked to be told about, so it is marked rather than sorted */
-.newsrow.is-hit { border-left: 3px solid var(--amber); margin-left: -12px; padding-left: 9px; }
+.newsrow.is-hit { border-left: 3px solid var(--amber); margin-left: -12px; padding-left: 8px; }
 .newstitle { font-size: 16px; line-height: 1.35; }
-.newsmeta { font-size: 12px; margin-top: 3px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-.newssum { margin: 6px 0 8px; font-size: 14px; line-height: 1.5; }
+.newsmeta { font-size: 12px; margin-top: 4px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.newssum { margin: 8px 0 8px; font-size: 14px; line-height: 1.5; }
 .card.warn { border-color: var(--amber); background: var(--amber-soft); }
 
 /* ---------- seating plan ----------
@@ -1086,28 +1086,28 @@ th[data-sort="desc"]::after { content: " ▼"; }
 .seatgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; margin-top: 12px; }
 .seatzone { background: var(--card); border: 1px solid var(--line); border-radius: 12px; min-height: 92px; transition: border-color 150ms, background 150ms; }
 .seatzone.pool { margin-top: 12px; background: var(--paper); }
-.seathead { display: flex; align-items: center; gap: 8px; padding: 10px 12px 0; }
+.seathead { display: flex; align-items: center; gap: 8px; padding: 12px 12px 0; }
 .seathead b { flex: 1 1 auto; min-width: 0; }
 /* the name is the rename control; it should read as a heading until you go near it */
 .seatrename { flex: 1 1 auto; min-width: 0; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: text; }
 .seatrename b { border-bottom: 1px dashed transparent; }
 .seatrename:hover b, .seatrename:focus-visible b { border-bottom-color: var(--rule); }
-.seatedit { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 12px 0; }
+.seatedit { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 12px 0; }
 .seatedit input[name="name"] { flex: 1 1 120px; min-width: 0; }
 .seatedit input[name="capacity"] { flex: 0 0 72px; }
 .seatcount { font-family: ui-monospace, monospace; font-size: 14px; color: var(--ink-soft); }
 .seatcount.over { color: var(--red); font-weight: 600; }
-.seatheads { padding: 3px 12px 0; color: var(--ink-soft); font-size: 12px; }
-.seatchips { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 12px 12px; }
+.seatheads { padding: 4px 12px 0; color: var(--ink-soft); font-size: 12px; }
+.seatchips { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 12px 12px; }
 .seatempty { font-size: 12px; font-style: italic; }
 .seatchip {
-  display: inline-flex; align-items: center; gap: 7px; max-width: 100%;
-  padding: 7px 10px; border: 1px solid var(--line); border-radius: 999px;
+  display: inline-flex; align-items: center; gap: 8px; max-width: 100%;
+  padding: 8px 12px; border: 1px solid var(--line); border-radius: 999px;
   background: var(--card); color: inherit; font: inherit; font-size: 14px; text-align: left;
   cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none;
 }
 .seatname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.seatnum { flex: 0 0 auto; min-width: 20px; padding: 1px 6px; border-radius: 999px; background: var(--rule); color: var(--card); font-size: 12px; font-weight: 600; text-align: center; }
+.seatnum { flex: 0 0 auto; min-width: 20px; padding: 1px 8px; border-radius: 999px; background: var(--rule); color: var(--card); font-size: 12px; font-weight: 600; text-align: center; }
 .seatchip.is-picked { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent); }
 .seatchip.is-dragging { opacity: .35; }
 .seatghost { position: fixed; top: 0; left: 0; z-index: 90; pointer-events: none; box-shadow: 0 8px 20px rgb(0 0 0 / .28); cursor: grabbing; }
@@ -1128,25 +1128,25 @@ body.seat-dragging { cursor: grabbing; user-select: none; -webkit-user-select: n
 
 /* Paid-by-card: a quiet marker, not a warning. The row is a real expense you entered — it just
    is not money out of the account yet, so it must read as "noted", never as "wrong". */
-.cardtick { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; }
+.cardtick { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; }
 .cardbadge { background: #ece7f6; color: #4b3b7a; border-color: #d8cfee; white-space: nowrap; }
 .cardpanel h3 { font-size: 16px; }
 
 /* Balance forecast. The low point is the sentence people read, so it is the biggest thing on the
    card after the heading; the line underneath is there to show the shape, not to be measured. */
-.fclow { margin: 6px 0 10px; font-size: 16px; }
+.fclow { margin: 8px 0 12px; font-size: 16px; }
 .fclow.neg { color: var(--red); font-weight: 600; }
 .fcline { width: 100%; height: 54px; display: block; }
 .fcline path { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
 .fczero { stroke: var(--red); stroke-width: 1; stroke-dasharray: 3 3; opacity: .7; vector-effect: non-scaling-stroke; }
 .fcend { margin: 8px 0 0; }
-.fcitems, .fcbal { margin-top: 10px; }
+.fcitems, .fcbal { margin-top: 12px; }
 .fcitems summary, .fcbal summary { cursor: pointer; font-size: 14px; color: var(--ink-soft); }
 .fcbal summary.stale { color: var(--red); }
 
 /* a long by-token URL has to be readable and selectable without pushing the page sideways */
 /* the weekly review: three questions, nothing competing with them for attention */
-.revlist { margin: 0; padding-left: 18px; }
+.revlist { margin: 0; padding-left: 16px; }
 .revlist li { margin: 4px 0; font-size: 14px; }
 .revmoney { font-size: 16px; }
 .revmoney.neg { color: var(--red); font-weight: 600; }
@@ -1154,17 +1154,17 @@ body.seat-dragging { cursor: grabbing; user-select: none; -webkit-user-select: n
 /* Invoices waiting for a yes. The card has to read as "check this", not as "done" — the whole
    point of the step is that somebody looks at the number before it becomes money owed. */
 .draftcard { border-left: 3px solid var(--accent); }
-.draftrow { padding: 10px 0; border-top: 1px solid var(--rule); }
+.draftrow { padding: 12px 0; border-top: 1px solid var(--rule); }
 .draftrow:first-of-type { border-top: 0; }
 .draftrow input.needs { border-color: var(--red); }
 .draftsrc summary { cursor: pointer; font-size: 12px; color: var(--ink-soft); }
 
-.tokenline { font-size: 12px; word-break: break-all; background: var(--surface-2, #eff2f1); padding: 6px 8px; border-radius: 6px; max-width: 100%; }
+.tokenline { font-size: 12px; word-break: break-all; background: var(--surface-2, #eff2f1); padding: 8px 8px; border-radius: 6px; max-width: 100%; }
 :root[data-theme="dark"] .cardbadge { background: #2f2a40; color: #cdc2ee; border-color: #443a5e; }
 
 /* The stored excerpt is long enough to answer a question by reading it, which on a phone is a wall
    of text. Cap the height and let it scroll inside its own box instead of pushing the buttons off. */
-.draftsrc p { max-height: 40vh; overflow-y: auto; overflow-wrap: anywhere; margin-top: 6px; }
+.draftsrc p { max-height: 40vh; overflow-y: auto; overflow-wrap: anywhere; margin-top: 8px; }
 
 
 /* Money outside the household currency. Never added together: one chip per currency, which is the
@@ -1173,7 +1173,7 @@ body.seat-dragging { cursor: grabbing; user-select: none; -webkit-user-select: n
 .exposure { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .expchip {
   display: inline-flex; align-items: baseline; gap: 8px; text-decoration: none; color: inherit;
-  border: 1px solid var(--line); border-radius: 999px; padding: 6px 14px; background: var(--card);
+  border: 1px solid var(--line); border-radius: 999px; padding: 8px 16px; background: var(--card);
   font-size: 14px;
 }
 .expchip span { color: var(--ink-soft); }
@@ -1183,7 +1183,7 @@ body.seat-dragging { cursor: grabbing; user-select: none; -webkit-user-select: n
 
 /* What is missing, as one thin row rather than one empty card per gap. Deliberately quiet: these
    are invitations, not problems, and they sit below the answers rather than above them. */
-.setuprow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 18px; padding: 12px 14px; }
+.setuprow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 16px; padding: 12px 16px; }
 .setuplabel { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--ink-soft); margin-right: 2px; }
 
 /* the run-rate sentence, inside the card about how the month ends */
@@ -1262,7 +1262,7 @@ p { text-wrap: pretty; }
 .btn:active { transform: scale(.97); }
 
 /* figures that carry the page get display weight */
-.kpi .value { font-family: var(--display); font-size: 1.55rem; font-weight: 600; letter-spacing: -.02em; line-height: 1.1; margin-top: 6px; }
+.kpi .value { font-family: var(--display); font-size: 1.55rem; font-weight: 600; letter-spacing: -.02em; line-height: 1.1; margin-top: 8px; }
 .stub .days { font-family: var(--display); font-weight: 600; letter-spacing: -.02em; }
 
 /* the page's own entrance is now per block, on entry (below), so the whole column no longer fades */
@@ -1290,7 +1290,7 @@ p { text-wrap: pretty; }
 @media (min-width: 861px) {
   .pagehead {
     position: sticky; top: 0; z-index: 30;
-    margin: -26px -36px 22px; padding: 22px 36px 14px;
+    margin: -24px -40px 24px; padding: 24px 40px 16px;
     background: var(--sc-ground, var(--paper));
     border-bottom: 1px solid transparent;
     transition: border-color 200ms var(--ease-out), box-shadow 200ms var(--ease-out);
@@ -1309,11 +1309,11 @@ p { text-wrap: pretty; }
   font-size: clamp(1.35rem, 1.1rem + .8vw, 1.75rem); font-weight: 600; letter-spacing: -.022em;
   margin: 0 0 var(--s-4); line-height: 1.1;
 }
-.folio { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 10px; }
+.folio { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 12px; }
 .folio [data-goto] {
   background: transparent; font-family: var(--body); cursor: pointer;
   font-size: 12px; font-weight: 600; text-decoration: none; color: var(--ink-soft);
-  padding: 4px 10px; border-radius: 999px; border: 1px solid var(--hair);
+  padding: 4px 12px; border-radius: 999px; border: 1px solid var(--hair);
   transition: background-color 150ms var(--ease-out), color 150ms var(--ease-out), border-color 150ms var(--ease-out);
 }
 .folio [data-goto]:hover { color: var(--ink); border-color: var(--rule); }
@@ -1325,7 +1325,7 @@ p { text-wrap: pretty; }
    that has something due carries its mark; a marked day is a link to that thing. Under it, the
    spending pace races the calendar: how much of the month has gone against how much of the budget. */
 .mstrip { margin-bottom: var(--s-6); }
-.mstrip__days { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(var(--n, 31), 1fr); gap: 3px; }
+.mstrip__days { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(var(--n, 31), 1fr); gap: 4px; }
 .mstrip__day {
   position: relative; display: grid; place-items: center; height: 30px; border-radius: 7px;
   font-size: 12px; font-weight: 600; color: var(--ink-soft); background: color-mix(in oklab, var(--ink) 6%, var(--paper));
@@ -1334,12 +1334,12 @@ p { text-wrap: pretty; }
 .mstrip__day.is-past { background: color-mix(in oklab, var(--accent) 16%, var(--paper)); color: color-mix(in oklab, var(--accent) 70%, var(--ink)); }
 .mstrip__day.is-today { background: var(--ink); color: var(--paper); }
 .mstrip__day.is-weekend:not(.is-past):not(.is-today) { background: color-mix(in oklab, var(--ink) 3%, var(--paper)); }
-.mstrip__day i { position: absolute; bottom: 3px; left: 50%; width: 5px; height: 5px; margin-left: -2.5px; border-radius: 50%; background: var(--ink-soft); }
+.mstrip__day i { position: absolute; bottom: 3px; left: 50%; width: 5px; height: 5px; margin-left: -4px; border-radius: 50%; background: var(--ink-soft); }
 .mstrip__day.warn i { background: var(--amber); }
 .mstrip__day.late i { background: var(--red); }
 .mstrip__day.ok i { background: var(--accent); }
 a.mstrip__day:hover { outline: 2px solid var(--accent); outline-offset: 1px; }
-.mstrip__pace { display: grid; gap: 5px; margin-top: 10px; }
+.mstrip__pace { display: grid; gap: 4px; margin-top: 12px; }
 .mstrip__track { position: relative; height: 6px; border-radius: 999px; background: color-mix(in oklab, var(--ink) 7%, var(--paper)); overflow: hidden; }
 .mstrip__track span { position: absolute; inset: 0 auto 0 0; border-radius: inherit; transform-origin: left; }
 .mstrip__track .t { width: 100%; background: color-mix(in oklab, var(--ink) 22%, transparent); transform: scaleX(var(--t, 0)); }
@@ -1381,7 +1381,7 @@ body { background: var(--sc-ground); }
 
 /* pan: the deadlines become one row that travels sideways as the page scrolls */
 .sc-panstage { position: relative; }
-.sc-panstage > .sc-pan-inner { overflow: hidden; padding-bottom: 6px; }
+.sc-panstage > .sc-pan-inner { overflow: hidden; padding-bottom: 8px; }
 .sc-panstage .ribbon.is-rail { display: flex; flex-wrap: nowrap; gap: 12px; will-change: transform; }
 .sc-panstage .ribbon.is-rail > .stub { flex: 0 0 210px; }
 
@@ -1396,7 +1396,7 @@ body { background: var(--sc-ground); }
 /* the month follows you: a hairline copy of the strip in the stuck header */
 .mstrip-mini { display: none; }
 @media (min-width: 861px) {
-  .mstrip-mini { display: grid; grid-template-columns: repeat(var(--n, 31), 1fr); gap: 2px; height: 4px; margin-top: 10px;
+  .mstrip-mini { display: grid; grid-template-columns: repeat(var(--n, 31), 1fr); gap: 2px; height: 4px; margin-top: 12px;
     opacity: 0; transform: translateY(-4px); transition: opacity 200ms var(--ease-out), transform 200ms var(--ease-out); }
   .pagehead.is-stuck .mstrip-mini { opacity: 1; transform: none; }
   .mstrip-mini span { border-radius: 2px; background: color-mix(in oklab, var(--ink) 9%, transparent); }
@@ -1478,3 +1478,9 @@ b, strong, th, optgroup, h1, h2, h3, h4, h5, h6 { font-weight: 600; }
   a.mstrip__day { pointer-events: none; }
   a.mstrip__day::after { content: none; }
 }
+
+/* the page skeleton waits 300ms before it shows, so a fast page never flashes it */
+.pageskel { opacity: 0; animation: fh-fade 200ms ease-out 300ms forwards; }
+@media (prefers-reduced-motion: reduce) { .pageskel { animation-duration: 100ms; } }
+/* a restored draft says so, quietly, at the top of its form */
+.draftnote { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 8px; font-size: 14px; color: var(--ink-soft); }
