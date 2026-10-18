@@ -265,7 +265,7 @@ app.post('/api/auth/login', async (req, res) => {
   const ok = !!user && !!user.password_hash && await bcrypt.compare(String(req.body?.password || ''), user.password_hash);
   if (!ok) {
     loginFailed(keys);
-    return res.status(401).json({ error: 'Wrong email or password' });
+    return res.status(401).json({ error: "That email and password don't match an account. Check them, or reset the password." });
   }
   loginSucceeded(keys);
   setAuthCookie(res, signToken(user));

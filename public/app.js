@@ -144,6 +144,7 @@ const RO = {
   'Auto-paid subscription': 'Abonament plătit automat', 'Owner': 'Proprietar', 'Due': 'Scadent', 'Status': 'Stare', 'Invoice': 'Factură',
   'Mark paid': 'Marchează plătit', 'Edit': 'Editează', 'Save changes': 'Salvează modificările',
   'More actions': 'Mai multe acțiuni',
+  "That email and password don't match an account. Check them, or reset the password.": 'Emailul și parola nu se potrivesc cu niciun cont. Verifică-le sau resetează parola.',
   // vehicles/properties
   'Add vehicle': 'Adaugă vehicul', 'Add property': 'Adaugă proprietate', 'Add': 'Adaugă', 'Add record': 'Adaugă înregistrare',
   'History & costs': 'Istoric și costuri', 'History — costs & income': 'Istoric — costuri și venituri', 'Documents & scans': 'Documente și scanări',
@@ -792,7 +793,7 @@ function openModal(innerHtml, cls = '') {
   wrap.className = 'modalwrap'; wrap.id = 'genmodal';
   wrap.setAttribute('role', 'dialog'); wrap.setAttribute('aria-modal', 'true');
   wrap.innerHTML = `<div class="modalbg"></div><div class="modalcard ${cls}">
-    <button class="modalclose" aria-label="${tr('Close')}">✕</button>${innerHtml}</div>`;
+    <button class="modalclose iconbtn" aria-label="${tr('Close')}" data-tip="${tr('Close')}">✕</button>${innerHtml}</div>`;
   wrap.querySelector('.modalbg').onclick = closeModal;
   wrap.querySelector('.modalclose').onclick = closeModal;
   app.appendChild(wrap);
@@ -812,6 +813,27 @@ function closeModal() {
   m.remove();
   _modalPrevFocus?.focus?.(); // hand focus back to whatever opened the modal
   _modalPrevFocus = null;
+}
+/* Destructive confirmation (VectorLab surfaces): the question names the exact thing, the confirm
+   button says what it does in the destructive colour, Cancel has focus so Enter cannot destroy by
+   accident, and Escape or the backdrop cancels. Resolves true only on the destructive button. */
+function confirmDestroy({ question, detail = '', verb }) {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (v) => { if (done) return; done = true; resolve(v); closeModal(); };
+    const wrap = openModal(`<h3 id="cdq">${esc(question)}</h3>
+      ${detail ? `<p class="muted" style="margin-top:0">${esc(detail)}</p>` : ''}
+      <div class="row" style="justify-content:flex-end;gap:8px;margin-top:16px">
+        <button type="button" class="btn ghost" data-cd-cancel>${tr('Cancel')}</button>
+        <button type="button" class="btn danger" data-cd-ok>${esc(verb)}</button></div>`);
+    wrap.setAttribute('aria-labelledby', 'cdq');
+    wrap.querySelector('[data-cd-cancel]').onclick = () => finish(false);
+    wrap.querySelector('[data-cd-ok]').onclick = () => finish(true);
+    // closing by Escape, the backdrop or the corner button is a cancel
+    new MutationObserver((_, o) => { if (!wrap.isConnected) { o.disconnect(); if (!done) { done = true; resolve(false); } } })
+      .observe(app, { childList: true });
+    wrap.querySelector('[data-cd-cancel]').focus();
+  });
 }
 // Shared Current/New/Confirm password form, used by both the admin Settings page and the tenant portal.
 function passwordChangeModal() {
@@ -839,8 +861,8 @@ function passwordChangeModal() {
    expense result opens Expenses already filtered to what you typed. */
 function quickSearch() {
   const wrap = openModal(`
-    <h3>${tr('Search')}</h3>
-    <input id="qsinput" type="search" placeholder="Digi, pasaport, Kaufland…" autocomplete="off" style="font-size:16px">
+    <h3 id="qslabel">${tr('Search')}</h3>
+    <input id="qsinput" type="search" aria-labelledby="qslabel" placeholder="Digi, pasaport, Kaufland…" autocomplete="off" style="font-size:16px">
     <div id="qsres" style="margin-top:10px;max-height:46vh;overflow:auto"></div>`, 'wide');
   const input = wrap.querySelector('#qsinput'), box = wrap.querySelector('#qsres');
   const hint = (msg) => { box.innerHTML = `<p class="muted" style="margin:10px 0 0">${tr(msg)}</p>`; };
@@ -968,7 +990,7 @@ function rowMenu(items) {
   const list = items.filter(Boolean);
   if (!list.length) return '';
   return `<span class="rowmenu">
-    <button type="button" class="btn ghost small rowmenu-btn" aria-label="${tr('More actions')}" aria-haspopup="true" aria-expanded="false">⋯</button>
+    <button type="button" class="btn ghost small rowmenu-btn iconbtn" aria-label="${tr('More actions')}" data-tip="${tr('More actions')}" aria-haspopup="true" aria-expanded="false">⋯</button>
     <span class="rowmenu-pop" hidden>${list.map(([label, attrs, danger]) =>
       `<button type="button" class="rowmenu-item${danger ? ' danger' : ''}" ${attrs}>${label}</button>`).join('')}</span>
   </span>`;
@@ -1185,8 +1207,10 @@ function pageError(fn, el, err) {
   el.innerHTML = `<div class="card" style="text-align:center;padding:34px 16px">
     <b style="display:block;font-family:var(--display);font-size:1.05rem">${tr("Couldn't load this")}</b>
     <p class="muted" style="margin:8px 0 14px">${esc(err.message || '')}</p>
-    <button class="btn small" id="pageretry">${tr('Retry')}</button></div>`;
+    <div class="row" style="justify-content:center;gap:8px"><button class="btn small" id="pageretry">${tr('Retry')}</button>
+    <button class="btn ghost small" id="pagecopy">${LANG === 'ro' ? 'Copiază detaliile erorii' : 'Copy error details'}</button></div></div>`;
   el.querySelector('#pageretry').onclick = () => runView(fn, el);
+  el.querySelector('#pagecopy').onclick = () => copyText(`${location.hash || '#'} · ${new Date().toISOString()}\n${err.stack || err.message || err}`);
   toast(err.message || 'Request failed', 'error');
 }
 function runView(fn, el, seq = RENDER_SEQ) {
@@ -1226,7 +1250,7 @@ function shell(active) {
       <button class="navlink" data-logout>${icon('logout')}<span>Sign out</span></button>
     </nav>
     <main class="main" id="page"></main>
-    ${canWrite() && active !== 'money' ? `<button class="fab" id="fab" aria-label="Add expense" title="Add expense">+</button>` : ''}
+    ${canWrite() && active !== 'money' ? `<button class="fab" id="fab" aria-label="${tr('Add expense')}" data-tip="${tr('Add expense')}">+</button>` : ''}
     <nav class="tabbar">
       ${TABS.map(([k, ic, l]) => `<a class="tab ${k === active ? 'active' : ''}" href="#${k}">
         <span class="ic">${icon(ic)}${k === 'alerts' ? badgeHtml() : ''}</span><span class="tl">${l}</span></a>`).join('')}
@@ -1618,9 +1642,9 @@ function safeToSpendHtml(stats, months, upcoming) {
     : (ro ? `${money(available)} rămași pentru ${daysLeft} ${daysLeft === 1 ? 'zi' : 'zile'}${committed > 0 ? `, după ce am scăzut ${money(committed)} deja programați` : ''}.`
           : `${money(available)} left for ${daysLeft} ${daysLeft === 1 ? 'day' : 'days'}${committed > 0 ? `, after setting aside ${money(committed)} already committed` : ''}.`);
   return `<section class="card safespend${over ? ' over' : ''}" style="margin-top:18px">
-    <div class="muted" style="font-size:12.5px">${tr('Safe to spend today')}</div>
+    <div class="muted" style="font-size:12px">${tr('Safe to spend today')}</div>
     <div class="safeamt">${money(Math.max(0, perDay))}</div>
-    <div class="muted" style="font-size:13px">${note}</div>
+    <div class="muted" style="font-size:14px">${note}</div>
   </section>`;
 }
 /* Where this month's spending lands if the rest of it looks like the part already lived.
@@ -1746,7 +1770,7 @@ async function viewDashboard(el) {
     <section>
       <h2>Coming up — next 60 days${scopeNote}</h2>
       ${reminders.length ? ribbonHtml(reminders)
-      : `<div class="card empty"><b>Nothing due soon</b>${DASH_VIEW === 'all' ? 'Add bills, vehicle or property deadlines and they will line up here.' : 'Nothing assigned to this person is coming up.'}</div>`}
+      : `<div class="card empty"><b>Nothing due soon</b>${DASH_VIEW === 'all' ? 'Add bills, vehicle or property deadlines and they will line up here.' : 'Nothing assigned to this person is coming up.'}${DASH_VIEW === 'all' && canWrite() ? `<div style="margin-top:12px"><a class="btn small" href="#bills">${tr('Add bill')}</a></div>` : ''}</div>`}
     </section>
     ${choresCard(chores)}
     </div>
@@ -1792,7 +1816,7 @@ async function viewDashboard(el) {
         </section>
         <section class="card" style="margin-top:18px">
           <h3 style="margin-top:0">${tr('What you kept')}</h3>
-          <p class="muted" style="margin:-4px 0 8px;font-size:13px">${tr('Income minus spending, month by month. Below the line means you spent more than came in.')}</p>
+          <p class="muted" style="margin:-4px 0 8px;font-size:14px">${tr('Income minus spending, month by month. Below the line means you spent more than came in.')}</p>
           <div class="chartbox"><canvas id="netChart"></canvas></div>
         </section>
         ${!budgets.budgets.length && canWrite() && suggest?.categories?.length ? `<section class="card" style="margin-top:18px">
@@ -1938,7 +1962,7 @@ function savingsRateHtml(income, net) {
   const txt = LANG === 'ro'
     ? (pct < 0 ? `ai cheltuit cu ${-pct}% mai mult decât ai încasat` : `ai păstrat ${pct}% din venituri`)
     : (pct < 0 ? `spent ${-pct}% more than came in` : `kept ${pct}% of income`);
-  return `<div class="muted" style="font-size:12.5px">${txt}</div>`;
+  return `<div class="muted" style="font-size:12px">${txt}</div>`;
 }
 /* Today's chores, on the page you open first. A chore list that lives one nav click away is a chore
    list nobody reads, so the open ones surface here and can be ticked without leaving. Weekly jobs
@@ -2314,7 +2338,7 @@ async function renderCalendar(el, embedded) {
     const evs = byDate[date] || [];
     cells.push(`<div class="day${date === t ? ' today' : ''}"><div class="n">${d}</div>
       ${evs.slice(0, 3).map((r) => `<div class="ev ${remClass(r)}" title="${esc(remLabel(r) + (r.entity ? ' — ' + r.entity : ''))}">${esc(remLabel(r))}</div>`).join('')}
-      ${evs.length > 3 ? `<div class="muted" style="font-size:11px">+${evs.length - 3} ${tr('more')}</div>` : ''}</div>`);
+      ${evs.length > 3 ? `<div class="muted" style="font-size:12px">+${evs.length - 3} ${tr('more')}</div>` : ''}</div>`);
   }
   const controls = `<div class="row"><button class="btn ghost small" id="calprev">←</button>
     <b style="min-width:130px;text-align:center;text-transform:capitalize">${esc(monthLabel)}</b>
@@ -2322,7 +2346,7 @@ async function renderCalendar(el, embedded) {
     <button class="btn ghost small" id="caltoday">Today</button></div>`;
   const subscribeInner = info.url
     ? `<p class="muted">Add this address in Google Calendar (Other calendars → From URL) or Apple Calendar (Add Subscription Calendar) — deadlines then show up in your normal calendar and update automatically.</p>
-       <div class="row"><input readonly value="${esc(info.url)}" class="selectall" style="flex:1;min-width:220px;font-size:13px">
+       <div class="row"><input readonly value="${esc(info.url)}" class="selectall" style="flex:1;min-width:220px;font-size:14px">
        <button class="btn ghost small" data-copy="${esc(info.url)}">Copy link</button>
        ${canWrite() ? `<button class="btn ghost small" id="calrotate">New link</button>` : ''}</div>`
     : canWrite() ? `<p class="muted">Generate a private link and subscribe from Google/Apple Calendar.</p><button class="btn small" id="calgen">Generate subscribe link</button>`
@@ -2331,7 +2355,7 @@ async function renderCalendar(el, embedded) {
   el.innerHTML = embedded
     ? `<div class="row" style="justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:10px"><h3 style="margin:0">Calendar</h3>${controls}</div>
        ${grid}
-       <details style="margin-top:12px"><summary style="cursor:pointer;color:var(--ink-soft);font-size:13px">Subscribe from your phone's calendar</summary><div style="padding-top:8px">${subscribeInner}</div></details>`
+       <details style="margin-top:12px"><summary style="cursor:pointer;color:var(--ink-soft);font-size:14px">Subscribe from your phone's calendar</summary><div style="padding-top:8px">${subscribeInner}</div></details>`
     : `<div class="pagehead"><div><h1>Calendar</h1><p>Every deadline, bill and birthday on one calendar.</p></div>${controls}</div>
        ${grid}
        <div class="card" style="margin-top:18px"><h3>Subscribe from your phone's calendar</h3>${subscribeInner}</div>`;
@@ -2342,7 +2366,7 @@ async function renderCalendar(el, embedded) {
   el.querySelectorAll('[data-copy]').forEach((b) => (b.onclick = () => copyText(b.dataset.copy)));
   const gen = async () => { await api('/calendar/token', { method: 'POST' }); toast('Subscribe link ready'); renderCalendar(el, embedded); };
   $('#calgen')?.addEventListener('click', gen);
-  $('#calrotate')?.addEventListener('click', async () => { if (confirm('Generate a new link? The old one stops working.')) await gen(); });
+  $('#calrotate')?.addEventListener('click', async () => { if (await confirmDestroy({ question: (LANG === 'ro' ? "Generezi un link nou pentru calendar?" : "Generate a new calendar link?"), detail: (LANG === 'ro' ? "Linkul actual nu mai merge în niciun calendar abonat la el." : "The current link stops working in every calendar that subscribed to it."), verb: (LANG === 'ro' ? "Generează link nou" : "Generate new link") })) await gen(); });
 }
 
 /* ---------- money: expenses / income / budgets ---------- */
@@ -2399,11 +2423,11 @@ async function moneyDebt(body) {
   body.innerHTML = `
     <section class="kpi">
       <div class="card"><div class="label">${tr('Owed today')}</div><div class="value neg">${money(owed)}</div>
-        <div class="muted" style="font-size:12.5px">${live.length} ${tr(live.length === 1 ? 'loan' : 'loans')}</div></div>
+        <div class="muted" style="font-size:12px">${live.length} ${tr(live.length === 1 ? 'loan' : 'loans')}</div></div>
       <div class="card"><div class="label">${tr('Every month')}</div><div class="value">${money(perMonth)}</div>
-        <div class="muted" style="font-size:12.5px">${tr('instalments + commission')}</div></div>
+        <div class="muted" style="font-size:12px">${tr('instalments + commission')}</div></div>
       <div class="card"><div class="label">${tr('Debt-free')}</div><div class="value" style="font-size:20px">${esc(freeLabel)}</div>
-        <div class="muted" style="font-size:12.5px">${maxLeft} ${tr('mo left')}</div></div>
+        <div class="muted" style="font-size:12px">${maxLeft} ${tr('mo left')}</div></div>
     </section>
 
     ${saved > 0.5 ? `<section class="card insight" style="margin-top:18px"><span class="insight-ic" aria-hidden="true">◆</span>
@@ -2417,8 +2441,8 @@ async function moneyDebt(body) {
         <span class="amount">${money(totalInterest)}</span></div>
       <div class="bar" style="margin-top:8px"><i style="width:${totalInterest > 0 ? Math.min(100, (paidInterest / totalInterest) * 100) : 0}%"></i></div>
       <div class="row" style="justify-content:space-between;margin-top:4px">
-        <span class="muted" style="font-size:12.5px">${tr('paid so far')} ${money(paidInterest)}</span>
-        <span class="muted" style="font-size:12.5px">${tr('still to pay')} ${money(Math.max(0, totalInterest - paidInterest))}</span></div>
+        <span class="muted" style="font-size:12px">${tr('paid so far')} ${money(paidInterest)}</span>
+        <span class="muted" style="font-size:12px">${tr('still to pay')} ${money(Math.max(0, totalInterest - paidInterest))}</span></div>
     </section>
 
     <section class="card" style="margin-top:18px">
@@ -2472,7 +2496,7 @@ function loanSection(dir, rows, members) {
   return `<section class="card" style="margin-top:18px">
     <div class="row" style="justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap">
       <h3 style="margin:0">${tr(w.title)}</h3>
-      ${open.length ? `<div style="text-align:right"><div class="muted" style="font-size:12.5px">${tr(w.total)}</div>
+      ${open.length ? `<div style="text-align:right"><div class="muted" style="font-size:12px">${tr(w.total)}</div>
         <div class="amount"><b>${outstandingText}</b></div></div>` : ''}
     </div>
     ${overdue.length ? `<p class="badge warn" style="margin:10px 0 0">${overdue.length} ${tr(overdue.length === 1 ? 'is past its date' : 'are past their date')}</p>` : ''}
@@ -2487,7 +2511,7 @@ function loanSection(dir, rows, members) {
       </div>
       <div class="bar" style="margin-top:8px"><i style="width:${pct}%"></i></div>
       <div class="row" style="justify-content:space-between;margin-top:4px;gap:8px;flex-wrap:wrap">
-        <span class="muted" style="font-size:12.5px">${[
+        <span class="muted" style="font-size:12px">${[
       `${tr(w.principal)} ${moneyIn(l.amount, l.currency)}`,
       Number(l.repaid) > 0 ? `${tr(w.paid)} ${moneyIn(l.repaid, l.currency)}` : null,
       l.due_date ? `${tr(w.due)} ${fdate(l.due_date)}` : tr('no date agreed'),
@@ -2496,7 +2520,7 @@ function loanSection(dir, rows, members) {
     ].filter(Boolean).join(' · ')}</span>
         ${canWrite() ? `<span class="row" style="gap:6px">
           ${l.settled ? '' : `<button class="btn ghost small" data-lenpay="${l.id}">${tr(w.pay)}</button>`}
-          <button class="btn danger small" data-lendel="${l.id}" aria-label="${tr('Delete')}">✕</button></span>` : ''}
+          <button class="btn danger small iconbtn" data-lendel="${l.id}" aria-label="${tr('Delete')}" data-tip="${tr('Delete')}">✕</button></span>` : ''}
       </div>
       <form class="formgrid" data-lenform="${l.id}" hidden style="margin-top:10px">
         <div><label>${tr('Amount')} <span class="muted">${CURRENCIES[l.currency] || l.currency || cur()}</span></label><input name="amount" type="number" step="0.01" min="0.01" max="${l.balance}" required></div>
@@ -2618,17 +2642,17 @@ async function moneyYear(body) {
   body.innerHTML = `
     <section class="kpi">
       <div class="card"><div class="label">${tr('Spent')} · ${yr}</div><div class="value">${money(spentY)}</div>
-        ${spentPrev > 0 ? `<div class="muted" style="font-size:12.5px">${spentPrev > 0 ? `${spentY >= spentPrev ? '▲' : '▼'} ${Math.abs(Math.round(((spentY - spentPrev) / spentPrev) * 100))}% ${tr('vs')} ${yr - 1}` : ''}</div>` : ''}</div>
+        ${spentPrev > 0 ? `<div class="muted" style="font-size:12px">${spentPrev > 0 ? `${spentY >= spentPrev ? '▲' : '▼'} ${Math.abs(Math.round(((spentY - spentPrev) / spentPrev) * 100))}% ${tr('vs')} ${yr - 1}` : ''}</div>` : ''}</div>
       <div class="card"><div class="label">${tr('Monthly average')}</div>
         <div class="value">${money(spentY / Math.max(1, perMonth.filter((v) => v > 0).length))}</div>
-        <div class="muted" style="font-size:12.5px">${(() => { const n = perMonth.filter((v) => v > 0).length;
+        <div class="muted" style="font-size:12px">${(() => { const n = perMonth.filter((v) => v > 0).length;
           return `${n} ${tr(n === 1 ? 'month with spending' : 'months with spending')}`; })()}</div></div>
       <div class="card"><div class="label">${yr - 1}</div><div class="value">${money(spentPrev)}</div>
-        <div class="muted" style="font-size:12.5px">${lastYear.length} ${tr('records')}</div></div>
+        <div class="muted" style="font-size:12px">${lastYear.length} ${tr('records')}</div></div>
     </section>
 
     <section class="card" style="margin-top:18px"><h3 style="margin-top:0">${tr('Month by month')} · ${yr}</h3>
-      ${hasPrevMonths ? `<p class="muted" style="margin:-4px 0 10px;font-size:13px">
+      ${hasPrevMonths ? `<p class="muted" style="margin:-4px 0 10px;font-size:14px">
         <span class="ghostkey"></span> ${tr('the faint mark is the same month in')} ${yr - 1}</p>` : ''}
       <div class="yearbars">${months.map((m, i) => {
         // The value used to live only in a native `title`, which never fires on a phone — so on the
@@ -2652,14 +2676,14 @@ async function moneyYear(body) {
 
     ${catSeries.length ? `<section class="card" style="margin-top:18px">
       <h3 style="margin-top:0">${tr('Category trends')} · ${yr}</h3>
-      <p class="muted" style="margin:-4px 0 10px;font-size:13px">${tr('Where the money is drifting, month by month.')}</p>
+      <p class="muted" style="margin:-4px 0 10px;font-size:14px">${tr('Where the money is drifting, month by month.')}</p>
       <div class="sparkgrid">${catSeries.map((x) => {
         const d = drift(x.series);
         const peakC = Math.max(...x.series, 1);
         return `<div class="sparkcell">
           <div class="row" style="justify-content:space-between;gap:8px;align-items:baseline">
             <span class="catcell"><span class="catdot" style="--cat:${catColor(x.c)}"></span>${esc(tr(x.c))}</span>
-            <b class="amount" style="font-size:13px">${money(x.total)}</b></div>
+            <b class="amount" style="font-size:14px">${money(x.total)}</b></div>
           <div class="minibars">${x.series.map((v, i) => `<span class="mb${i === thisMonthIdx ? ' now' : ''}" style="height:${Math.max(v > 0 ? 6 : 2, (v / peakC) * 100)}%;--cat:${catColor(x.c)}" title="${esc(monthLabel(months[i], { short: false }))}: ${esc(money(v))}"></span>`).join('')}</div>
           <div class="muted" style="font-size:12px">${d == null ? tr('not enough history')
             : d === 0 ? tr('flat')
@@ -2811,7 +2835,7 @@ async function moneyExpenses(body, f = {}) {
         <td><b>${esc(r.note || tr(r.category))}</b> <span class="muted">· ${tr(r.category)} · ${esc(r.user_name || tr('whole family'))} · ${tr('day')} ${r.day}${r.on_card ? ' · ' + tr('on card') : ''}${r.property_name ? ` · ⌂ ${esc(r.property_name)}` : ''}${r.vehicle_name ? ` · ⛟ ${esc(r.vehicle_name)}` : ''}</span>${r.active ? '' : ' <span class="badge role">paused</span>'}</td>
         <td class="right amount">${money(r.amount)}<span class="muted">/${tr('mo')}</span></td>
         <td class="right">${canWrite() ? `<span class="rowacts"><button class="btn ghost small" data-rxtog="${r.id}">${r.active ? 'Pause' : 'Resume'}</button>
-          <button class="btn danger small" data-rxdel="${r.id}">✕</button></span>` : ''}</td></tr>`).join('')}</tbody></table>` : ''}
+          <button class="btn danger small iconbtn" data-rxdel="${r.id}" data-name="${esc(r.note || tr(r.category))}" aria-label="${tr('Delete')}" data-tip="${tr('Delete')}">✕</button></span>` : ''}</td></tr>`).join('')}</tbody></table>` : ''}
       ${canWrite() ? `<form id="recxform" class="formgrid" style="margin-top:10px">
         <div><label>Category</label><select name="category">${CATEGORIES.map((c) => `<option value="${c}">${c}</option>`).join('')}</select></div>
         <div><label>Note</label><input name="note" placeholder="Grădiniță, asigurare…"></div>
@@ -2832,7 +2856,7 @@ async function moneyExpenses(body, f = {}) {
         <select id="cfilter"><option value="all" ${flt.cat === 'all' ? 'selected' : ''}>All categories</option>${CATEGORIES.map((c) => `<option value="${c}" ${flt.cat === c ? 'selected' : ''}>${c}</option>`).join('')}</select>
         <input id="mfilter" type="month" value="${flt.month === 'all' ? '' : flt.month}">
         <button class="btn ghost small" id="allmonths">${flt.month === 'all' ? '● All time' : 'All time'}</button>
-        <input id="qfilter" type="search" placeholder="Search note…" value="${esc(flt.q)}">
+        <label class="srch"><span class="srch-l">${tr('Search')}</span><input id="qfilter" type="search" placeholder="Lidl, E.ON…" value="${esc(flt.q)}"></label>
       </div>
       ${subtotals}
       ${rows.length ? `<table class="cards"><thead><tr><th>${tr('Date')}</th><th>${tr('Category')}</th><th>${tr('By')}</th><th>${tr('Note')}</th><th class="right">${tr('Amount')}</th><th></th></tr></thead><tbody>
@@ -2892,7 +2916,7 @@ async function moneyExpenses(body, f = {}) {
     await api(`/recurring-expenses/${b.dataset.rxtog}/toggle`, { method: 'POST' }); reload();
   }));
   body.querySelectorAll('[data-rxdel]').forEach((b) => (b.onclick = async () => {
-    if (!confirm('Delete this recurring expense? Already-logged months stay.')) return;
+    if (!(await confirmDestroy({ question: (LANG === 'ro' ? `Ștergi cheltuiala recurentă „${b.dataset.name}”?` : `Delete recurring expense "${b.dataset.name}"?`), detail: (LANG === 'ro' ? "Lunile deja înregistrate rămân." : "Months already logged stay."), verb: (LANG === 'ro' ? "Șterge cheltuiala recurentă" : "Delete recurring expense") }))) return;
     await api('/recurring-expenses/' + b.dataset.rxdel, { method: 'DELETE' }); reload();
   }));
   const byId = Object.fromEntries(rows.map((e) => [e.id, e]));
@@ -2929,7 +2953,7 @@ async function moneyIncome(body, who = 'all') {
         <td><b>${esc(r.source)}</b> <span class="muted">· ${esc(r.user_name || '')} · ${tr('day')} ${r.day}</span>${r.active ? '' : ' <span class="badge role">paused</span>'}</td>
         <td class="right amount">${money(r.amount)}<span class="muted">/mo</span></td>
         <td class="right">${canWrite() ? `<button class="btn ghost small" data-rtog="${r.id}">${r.active ? 'Pause' : 'Resume'}</button>
-          <button class="btn danger small" data-rdel="${r.id}">✕</button>` : ''}</td></tr>`).join('')}</tbody></table>` : ''}
+          <button class="btn danger small iconbtn" data-rdel="${r.id}" data-name="${esc(r.source)}" aria-label="${tr('Delete')}" data-tip="${tr('Delete')}">✕</button>` : ''}</td></tr>`).join('')}</tbody></table>` : ''}
       ${canWrite() ? `<form id="recform" class="formgrid" style="margin-top:10px">
         <div><label>Source</label><input name="source" placeholder="Salariu Raul" required></div>
         <div><label>Amount (${cur()}/mo)</label><input name="amount" type="number" step="0.01" min="0.01" required></div>
@@ -2960,7 +2984,7 @@ async function moneyIncome(body, who = 'all') {
     await api(`/recurring-incomes/${b.dataset.rtog}/toggle`, { method: 'POST' }); moneyIncome(body, who);
   }));
   body.querySelectorAll('[data-rdel]').forEach((b) => (b.onclick = async () => {
-    if (!confirm('Delete this recurring income? Already-logged months stay.')) return;
+    if (!(await confirmDestroy({ question: (LANG === 'ro' ? `Ștergi venitul recurent „${b.dataset.name}”?` : `Delete recurring income "${b.dataset.name}"?`), detail: (LANG === 'ro' ? "Lunile deja înregistrate rămân." : "Months already logged stay."), verb: (LANG === 'ro' ? "Șterge venitul recurent" : "Delete recurring income") }))) return;
     await api('/recurring-incomes/' + b.dataset.rdel, { method: 'DELETE' }); moneyIncome(body, who);
   }));
   body.querySelectorAll('[data-del]').forEach((b) => (b.onclick = () => {
@@ -3041,9 +3065,9 @@ async function moneySavings(body) {
               ${reached && !g.done ? ' <span class="badge paid">reached!</span>' : ''}</span>
             <span class="row"><span class="amount muted">${money(g.saved)} / ${money(g.target)} (${Math.round(pct)}%)</span>
               ${canWrite() ? `<button class="btn ghost small" data-gtog="${g.id}">${g.done ? 'Reopen' : 'Mark done'}</button>
-              <button class="btn danger small" data-gdel="${g.id}">✕</button>` : ''}</span></div>
+              <button class="btn danger small iconbtn" data-gdel="${g.id}" data-name="${esc(g.title)}" aria-label="${tr('Delete')}" data-tip="${tr('Delete')}">✕</button>` : ''}</span></div>
           <div class="bar"><i style="width:${pct}%;${reached ? '' : ''}"></i></div>
-          ${eta ? `<div class="muted" style="font-size:12.5px;margin-top:4px">${eta}</div>` : ''}
+          ${eta ? `<div class="muted" style="font-size:12px;margin-top:4px">${eta}</div>` : ''}
         </div>`;
       }).join('') : `<p class="muted">No goals yet — set one below and tag deposits to it.</p>`}
       ${canWrite() ? `<div class="subform">
@@ -3077,7 +3101,7 @@ async function moneySavings(body) {
     await api(`/savings-goals/${b.dataset.gtog}/toggle`, { method: 'POST' }); moneySavings(body);
   }));
   body.querySelectorAll('[data-gdel]').forEach((b) => (b.onclick = async () => {
-    if (!confirm('Delete this goal? Its deposits stay in the account.')) return;
+    if (!(await confirmDestroy({ question: (LANG === 'ro' ? `Ștergi obiectivul „${b.dataset.name}”?` : `Delete goal "${b.dataset.name}"?`), detail: (LANG === 'ro' ? "Depunerile rămân în cont." : "Its deposits stay in the account."), verb: (LANG === 'ro' ? "Șterge obiectivul" : "Delete goal") }))) return;
     await api('/savings-goals/' + b.dataset.gdel, { method: 'DELETE' }); moneySavings(body);
   }));
   $('#savform')?.addEventListener('submit', async (e) => {
@@ -3199,7 +3223,7 @@ function creditCard(c, members, properties, refresh) {
         <div><label>${tr('Months paid off')}</label><input name="months" type="number" min="1" max="${Math.max(1, left)}" step="1" inputmode="numeric" placeholder="${tr('optional')}"></div>
         <div><label>Amount (${cur()})</label><input name="amount" type="number" step="0.01" min="0.01" required></div>
         <button class="btn small">Add payment</button></form>
-        <p data-advout class="muted" style="margin:6px 0 0;font-size:12.5px"></p>` : ''}
+        <p data-advout class="muted" style="margin:6px 0 0;font-size:12px"></p>` : ''}
       <div data-pays class="muted">Loading…</div>
     </div>`;
   const loadPays = async () => {
@@ -3280,7 +3304,7 @@ function creditCard(c, members, properties, refresh) {
   });
   wrap.querySelector('[data-del]')?.addEventListener('click', async (e) => {
     e.preventDefault();
-    if (!confirm('Delete this credit and its payment history?')) return;
+    if (!(await confirmDestroy({ question: (LANG === 'ro' ? `Ștergi creditul „${c.name}”?` : `Delete credit "${c.name}"?`), detail: (LANG === 'ro' ? "Se șterge și istoricul plăților." : "Its payment history goes with it."), verb: (LANG === 'ro' ? "Șterge creditul" : "Delete credit") }))) return;
     await api('/credits/' + c.id, { method: 'DELETE' }); refresh();
   });
   wrap.querySelector('[data-edit]')?.addEventListener('click', (e) => {
@@ -3331,7 +3355,7 @@ function billFormFields(members, properties, vehicles, b = {}) {
     <div><label>Link to (optional)</label><select name="link"><option value="">Nothing</option>
       ${ownProps(properties).map((p) => `<option value="property:${p.id}" ${link === `property:${p.id}` ? 'selected' : ''}>⌂ ${esc(p.name)}</option>`).join('')}
       ${vehicles.map((v) => `<option value="vehicle:${v.id}" ${link === `vehicle:${v.id}` ? 'selected' : ''}>⛟ ${esc(v.name)}</option>`).join('')}</select></div>
-    <div style="align-self:center"><label style="display:inline-flex;align-items:center;gap:6px;font-size:13px"><input type="checkbox" name="auto_pay" value="1" ${b.auto_pay ? 'checked' : ''} style="width:auto"> Auto-paid subscription</label></div>`;
+    <div style="align-self:center"><label style="display:inline-flex;align-items:center;gap:6px;font-size:14px"><input type="checkbox" name="auto_pay" value="1" ${b.auto_pay ? 'checked' : ''} style="width:auto"> Auto-paid subscription</label></div>`;
 }
 // Recurring bills run on different clocks — one every 30 days, one quarterly, one yearly — so their
 // face amounts aren't comparable. Normalising each to a month puts them side by side and makes the
@@ -3368,7 +3392,7 @@ function subsCard(bills, recurLabel) {
           ? `${subs.length} facturi recurente, aduse toate la echivalentul lunar.`
           : `${subs.length} recurring bills, each brought to its monthly equivalent.`}</p></div>
       <div class="right"><div class="amount" style="font-size:22px">${money(perMonth)}</div>
-        <div class="muted" style="font-size:12.5px">${ro ? `pe lună · ${money(perMonth * 12)} pe an` : `per month · ${money(perMonth * 12)} a year`}</div></div>
+        <div class="muted" style="font-size:12px">${ro ? `pe lună · ${money(perMonth * 12)} pe an` : `per month · ${money(perMonth * 12)} a year`}</div></div>
     </div>
     <details style="margin-top:10px"><summary>${ro ? 'Vezi defalcarea' : 'See the breakdown'}</summary>
       <table class="cards" style="margin-top:8px"><tbody>${rows}</tbody></table>
@@ -3655,17 +3679,17 @@ async function viewProperty(el, id) {
         <div style="margin-top:6px"><span class="badge ${rentState.cls}">${rentState.txt}</span></div></div>
       <div class="card"><div class="label">${tr('Outstanding')}</div>
         <div class="value ${owesAnything ? 'neg' : ''}">${owed}</div>
-        <div class="muted" style="font-size:12.5px">${unpaid.length} ${tr(unpaid.length === 1 ? 'unpaid charge' : 'unpaid charges')}</div></div>`
+        <div class="muted" style="font-size:12px">${unpaid.length} ${tr(unpaid.length === 1 ? 'unpaid charge' : 'unpaid charges')}</div></div>`
       // not let: the mortgage is the number that matters month to month
       : `<div class="card"><div class="label">${tr('Spent')}</div>
         <div class="value">${money(costs)}</div>
-        <div class="muted" style="font-size:12.5px">${records.filter((r) => !isIncome(r)).length} ${tr('records')}</div></div>
+        <div class="muted" style="font-size:12px">${records.filter((r) => !isIncome(r)).length} ${tr('records')}</div></div>
       <div class="card"><div class="label">${tr('Mortgage')}</div>
         <div class="value">${p.mortgage_payment ? money(p.mortgage_payment) : '—'}</div>
-        <div class="muted" style="font-size:12.5px">${p.mortgage_lender ? `${esc(p.mortgage_lender)} · ${tr('on day')} ${p.mortgage_due_day ?? '—'}` : tr('No mortgage recorded')}</div></div>`}
+        <div class="muted" style="font-size:12px">${p.mortgage_lender ? `${esc(p.mortgage_lender)} · ${tr('on day')} ${p.mortgage_due_day ?? '—'}` : tr('No mortgage recorded')}</div></div>`}
       <div class="card"><div class="label">${p.managed ? tr('This property (not our money)') : tr('This property')}</div>
         <div class="value ${income - costs < 0 ? 'neg' : ''}">${money(income - costs)}</div>
-        <div class="muted" style="font-size:12.5px">${tr('Income')} ${money(income)} · ${tr('Spent')} ${money(costs)}</div></div>
+        <div class="muted" style="font-size:12px">${tr('Income')} ${money(income)} · ${tr('Spent')} ${money(costs)}</div></div>
     </section>
 
     ${chips ? `<section class="card" style="margin-top:18px"><h3 style="margin-top:0">${tr('Deadlines')}</h3>
@@ -4087,7 +4111,7 @@ function entityCard(item, cfg) {
       // relative countdown up front (matches the dashboard), exact date kept alongside
       return `<span class="dchip ${daysClass(days)}">${esc(tr(l))} <b>${daysLabel(days)}</b> <span class="dchip-d">${fdate(item[k])}</span></span>`;
     }).join('');
-  wrap.innerHTML = `<summary><span>${cfg.icon ? `<span class="entity-ic" aria-hidden="true">${cfg.icon}</span>` : ''}<b>${esc(item.name)}</b>${cfg.badge ? ` <span class="badge role">${esc(cfg.badge)}</span>` : ''} <span class="muted">${esc(cfg.subtitle || '')}</span>
+  wrap.innerHTML = `<summary><span>${cfg.icon ? `<span class="entity-ic" aria-hidden="true">${icon(cfg.icon)}</span>` : ''}<b>${esc(item.name)}</b>${cfg.badge ? ` <span class="badge role">${esc(cfg.badge)}</span>` : ''} <span class="muted">${esc(cfg.subtitle || '')}</span>
       ${chips ? `<span class="dchips">${chips}</span>` : ''}</span>
     <span class="row">${cfg.headLink ? `<a class="btn small" data-nav href="${cfg.headLink}">${esc(cfg.headLinkLabel || '')} →</a>` : ''}
     ${canWrite() ? `<button class="btn ghost small" data-edit>Edit</button><button class="btn danger small" data-del>Delete</button>` : ''}</span></summary>
@@ -4397,7 +4421,7 @@ function forecastCard(f, proj) {
         <td>${fdate(i.date)}</td><td>${esc(i.label)}</td>
         <td class="right amount" style="color:${i.amount < 0 ? 'var(--red)' : '#2f6b5a'}">${i.amount > 0 ? '+' : ''}${money(i.amount)}</td>
       </tr>`).join('')}</tbody></table></details>` : ''}
-    ${f.skipped.length ? `<p class="muted" style="font-size:12.5px">${tr('Not counted, another currency:')} ${f.skipped.map((x2) => `${esc(x2.label)} ${Number(x2.amount).toFixed(2)} ${esc(x2.currency)}`).join(' · ')}</p>` : ''}
+    ${f.skipped.length ? `<p class="muted" style="font-size:12px">${tr('Not counted, another currency:')} ${f.skipped.map((x2) => `${esc(x2.label)} ${Number(x2.amount).toFixed(2)} ${esc(x2.currency)}`).join(' · ')}</p>` : ''}
     ${balanceForm(f)}</section>`;
 }
 // One number, one date, one button. Kept inside a <details> once a balance exists so the card
@@ -4535,14 +4559,14 @@ function guestList(rows) {
   return `<section class="kpi" style="margin:14px 0 4px">
       <div class="card"><div class="label">${tr('Coming')}</div>
         <div class="value">${goingA + goingK + goingS}</div>
-        <div class="muted" style="font-size:12.5px">${goingA} ${tr(goingA === 1 ? 'adult' : 'adults')} · ${goingK} ${tr(goingK === 1 ? 'child' : 'children')}${
+        <div class="muted" style="font-size:12px">${goingA} ${tr(goingA === 1 ? 'adult' : 'adults')} · ${goingK} ${tr(goingK === 1 ? 'child' : 'children')}${
           goingS ? ` · ${goingS} ${tr('seats only')}` : ''}</div></div>
       <div class="card"><div class="label">${tr('Answers')}</div>
         <div class="value">${yes.length}/${rows.length}</div>
-        <div class="muted" style="font-size:12.5px">${no.length} ${tr('declined')} · ${waiting.length} ${tr('waiting')}</div></div>
+        <div class="muted" style="font-size:12px">${no.length} ${tr('declined')} · ${waiting.length} ${tr('waiting')}</div></div>
       <div class="card"><div class="label">${tr('Gifts')}</div>
         <div class="value">${money(gifts)}</div>
-        <div class="muted" style="font-size:12.5px">${rows.filter((r) => n(r.amount) > 0).length} ${tr('recorded')}</div></div>
+        <div class="muted" style="font-size:12px">${rows.filter((r) => n(r.amount) > 0).length} ${tr('recorded')}</div></div>
     </section>
     <table class="cards"><thead><tr>
       <th>${tr('Invitation')}</th><th class="right">${tr('Adults')}</th><th class="right">${tr('Children')}</th>
@@ -4602,12 +4626,12 @@ function renderWatch(el, state) {
 
   el.innerHTML = `<div class="pagehead"><div><h1>${tr('Watched pages')}</h1>
       <p>${tr('Public pages checked for you, so an announcement does not go by unnoticed.')}</p>
-      ${sites.length ? `<p class="muted" style="font-size:12.5px;margin-top:4px">${lastLook(sites)}</p>` : ''}</div>
+      ${sites.length ? `<p class="muted" style="font-size:12px;margin-top:4px">${lastLook(sites)}</p>` : ''}</div>
       ${canWrite() ? `<button class="btn ghost small" id="wcheck">${tr('Check now')}</button>` : ''}</div>
 
     ${broken.length ? `<div class="card warn" style="margin-bottom:14px">
       <b>${tr('Not able to check')}</b>
-      ${broken.map((s) => `<div class="muted" style="font-size:13px">${esc(s.label)} — ${esc(s.last_error || '')}</div>`).join('')}
+      ${broken.map((s) => `<div class="muted" style="font-size:14px">${esc(s.label)} — ${esc(s.last_error || '')}</div>`).join('')}
     </div>` : ''}
 
     <div class="tabs" style="max-width:420px">
@@ -4619,7 +4643,7 @@ function renderWatch(el, state) {
       ${items.length ? `<ul class="newslist">${items.map((i) => `<li class="newsrow${i.hit ? ' is-hit' : ''}">
         <div class="row" style="justify-content:space-between;gap:10px;align-items:baseline;flex-wrap:wrap">
           <b class="newstitle">${esc(i.title)}</b>
-          <span class="muted" style="font-size:12.5px;white-space:nowrap">${when(i)}</span>
+          <span class="muted" style="font-size:12px;white-space:nowrap">${when(i)}</span>
         </div>
         <div class="muted newsmeta">${[
     esc(i.source),
@@ -4634,19 +4658,19 @@ function renderWatch(el, state) {
       : tr('Add the page of your commune below and anything new posted there lands here.')}
       ${!sites.length && canWrite() ? `<div style="margin-top:12px">
         <button class="btn" id="wquick">${tr('Watch Comuna Bucovăț')}</button>
-        <p class="muted" style="font-size:12.5px;margin:8px 0 0">${tr('Adds comunabucovat.ro with licitatie, teren, concesiune and vanzare as keywords.')}</p>
+        <p class="muted" style="font-size:12px;margin:8px 0 0">${tr('Adds comunabucovat.ro with licitatie, teren, concesiune and vanzare as keywords.')}</p>
       </div>` : ''}</div>`}
     </div>` : `<div class="card">
       ${sites.length ? `<table class="cards"><thead><tr>
         <th>${tr('Page')}</th><th>${tr('Checked')}</th><th class="right">${tr('Seen')}</th><th></th></tr></thead><tbody>
         ${sites.map((s) => `<tr>
           <td data-label="${tr('Page')}"><b>${esc(s.label)}</b>
-            <br><span class="muted" style="font-size:12.5px;word-break:break-all">${esc(s.url)}</span>
-            ${s.keywords ? `<br><span class="muted" style="font-size:12.5px">${tr('Keywords')}: ${esc(s.keywords)}</span>` : ''}
+            <br><span class="muted" style="font-size:12px;word-break:break-all">${esc(s.url)}</span>
+            ${s.keywords ? `<br><span class="muted" style="font-size:12px">${tr('Keywords')}: ${esc(s.keywords)}</span>` : ''}
             ${s.kind === 'page' ? `<br><span class="badge">${tr('text of the page')}</span>` : ''}</td>
           <td data-label="${tr('Checked')}">${s.last_checked_at ? fdate(String(s.last_checked_at).slice(0, 10)) : tr('not yet')}
-            ${s.last_check_by ? `<br><span class="muted" style="font-size:12.5px">${tr(WATCH_BY[s.last_check_by] || s.last_check_by)}</span>` : ''}
-            ${s.last_error ? `<br><span class="muted" style="color:var(--red);font-size:12.5px">${esc(s.last_error)}</span>` : ''}</td>
+            ${s.last_check_by ? `<br><span class="muted" style="font-size:12px">${tr(WATCH_BY[s.last_check_by] || s.last_check_by)}</span>` : ''}
+            ${s.last_error ? `<br><span class="muted" style="color:var(--red);font-size:12px">${esc(s.last_error)}</span>` : ''}</td>
           <td class="right" data-label="${tr('Seen')}">${s.items_total}</td>
           <td class="right">${canWrite() ? `<button class="btn ghost small" data-wcheck="${s.id}">${tr('Check now')}</button>
             <button class="btn danger small" data-wdel="${s.id}">✕</button>` : ''}</td></tr>`).join('')}
@@ -4665,7 +4689,7 @@ function renderWatch(el, state) {
             <input name="keywords" placeholder="${tr('licitatie, teren, concesiune')}"></div>
           <button class="btn small">${tr('Watch it')}</button>
         </form>
-        <p class="muted" style="margin:10px 0 0;font-size:12.5px">${tr('Most councils run WordPress: add /feed/ to the address and every notice arrives with its own title and link. Keywords only highlight — everything new is reported either way.')}</p>
+        <p class="muted" style="margin:10px 0 0;font-size:12px">${tr('Most councils run WordPress: add /feed/ to the address and every notice arrives with its own title and link. Keywords only highlight — everything new is reported either way.')}</p>
       </div>` : ''}
     </div>`}`;
 
@@ -4740,9 +4764,9 @@ async function viewChores(el, tab = 'daily') {
     : 'Recurring jobs around the house. Ticking one marks it done for today — it comes back tomorrow.')}</p></div></div>
     <section class="card chorehead">
       <div class="row" style="justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap">
-        <div><div class="muted" style="font-size:12.5px">${tr(isTodo ? 'Still to do' : 'Left for today')}</div>
+        <div><div class="muted" style="font-size:12px">${tr(isTodo ? 'Still to do' : 'Left for today')}</div>
           <div class="chorecount">${isTodo ? rows.length - done : todayOpen}</div></div>
-        <div style="text-align:right"><div class="muted" style="font-size:12.5px">${tr(isTodo ? 'Ticked off' : tab === 'weekly' ? 'Done this week' : 'Done today')}</div>
+        <div style="text-align:right"><div class="muted" style="font-size:12px">${tr(isTodo ? 'Ticked off' : tab === 'weekly' ? 'Done this week' : 'Done today')}</div>
           <div class="amount"><b>${done}/${rows.length}</b></div></div>
       </div>
       <div class="scorebar" style="margin-top:10px"><i style="width:${pct}%"></i></div>
@@ -4778,7 +4802,7 @@ async function viewChores(el, tab = 'daily') {
   ]).filter(Boolean).join(' · ')}</span>
           </span>
         </label>
-        ${canWrite() ? `<button class="btn danger small" data-${isTodo ? 'tddel' : 'chdel'}="${c.id}" aria-label="${tr('Delete')}">✕</button>` : ''}
+        ${canWrite() ? `<button class="btn danger small iconbtn" data-${isTodo ? 'tddel' : 'chdel'}="${c.id}" aria-label="${tr('Delete')}" data-tip="${tr('Delete')}">✕</button>` : ''}
       </li>`).join('')}</ul>`
       : `<div class="empty"><b>${tr(isTodo ? 'Nothing on the list' : 'Nothing here yet')}</b>${tr(isTodo ? 'Add a one-off job below — it stays put until someone ticks it.' : 'Add a chore below and it will show up every day.')}</div>`}
 
@@ -4892,12 +4916,12 @@ function seatingPlan(host, state) {
   host.innerHTML = `
     <section class="kpi" style="margin:14px 0 4px">
       <div class="card"><div class="label">${tr('Confirmed')}</div><div class="value">${t.confirmed}</div>
-        <div class="muted" style="font-size:12.5px">${headLine(t.heads) || `${t.parties} ${tr(t.parties === 1 ? 'invitation' : 'invitations')}`}</div></div>
+        <div class="muted" style="font-size:12px">${headLine(t.heads) || `${t.parties} ${tr(t.parties === 1 ? 'invitation' : 'invitations')}`}</div></div>
       <div class="card"><div class="label">${tr('Seats in the room')}</div><div class="value">${t.capacity}</div>
-        <div class="muted" style="font-size:12.5px">${state.tables.length} ${tr(state.tables.length === 1 ? 'table' : 'tables')}</div></div>
+        <div class="muted" style="font-size:12px">${state.tables.length} ${tr(state.tables.length === 1 ? 'table' : 'tables')}</div></div>
       <div class="card"><div class="label">${tr('Still to seat')}</div>
         <div class="value${state.unseated.length ? ' neg' : ''}">${state.unseated.reduce((s, g) => s + g.size, 0)}</div>
-        <div class="muted" style="font-size:12.5px">${short < 0
+        <div class="muted" style="font-size:12px">${short < 0
           ? `<span style="color:var(--red)">${-short} ${tr('more than the room holds')}</span>`
           : `${short} ${tr('spare')}`}</div></div>
     </section>
@@ -4915,7 +4939,7 @@ function seatingPlan(host, state) {
     ? `<button type="button" class="seatrename" data-trename="${tb.id}" title="${tr('Rename this table')}"><b>${esc(tableLabel(tb.name))}</b></button>`
     : `<b>${esc(tableLabel(tb.name))}</b>`}
           <span class="seatcount${tb.over ? ' over' : ''}">${tb.taken}/${tb.capacity}</span>
-          ${canWrite() ? `<button class="btn danger tiny" data-tdel="${tb.id}" aria-label="${tr('Delete')}">✕</button>` : ''}
+          ${canWrite() ? `<button class="btn danger tiny iconbtn" data-tdel="${tb.id}" aria-label="${tr('Delete')}" data-tip="${tr('Delete')}">✕</button>` : ''}
         </div>
         ${tb.taken ? `<div class="seatheads">${headLine(tb.heads)}</div>` : ''}
         ${canWrite() ? `<form class="seatedit" data-tedit="${tb.id}" hidden>
@@ -4937,7 +4961,7 @@ function seatingPlan(host, state) {
           <div><label>${tr('Seats each')}</label><input name="capacity" type="number" min="1" step="1" required></div>
           <button class="btn small">${tr('Add tables')}</button>
         </form>
-        <p class="muted" style="margin:10px 0 0;font-size:12.5px">${tr('Drag a guest onto a table, or tap the guest and then the table.')}</p>
+        <p class="muted" style="margin:10px 0 0;font-size:12px">${tr('Drag a guest onto a table, or tap the guest and then the table.')}</p>
       </div>
     </div>` : ''}`;
 
@@ -5400,7 +5424,7 @@ async function viewFamily(el) {
       <button class="btn ghost small" data-copy="${esc(FAMILY.invite_code)}">Copy code</button>
       <button class="btn ghost small" id="rotate">Generate new code</button></p>
       <p style="margin:6px 0"><label>Or send this link — it opens Register with the code filled in:</label>
-      <span class="row"><input readonly value="${esc(inviteLink())}" class="selectall" style="flex:1;min-width:200px;font-size:13px">
+      <span class="row"><input readonly value="${esc(inviteLink())}" class="selectall" style="flex:1;min-width:200px;font-size:14px">
       <button class="btn ghost small" data-copy="${esc(inviteLink())}">Copy link</button></span></p>
       <p class="muted">New members join as adults. Change their role below after they join.</p>
       <form id="inviteform" class="row" style="margin-top:12px;align-items:flex-end">
@@ -5422,7 +5446,7 @@ async function viewFamily(el) {
         <div><label>Currency</label><select name="currency">${Object.entries(CURRENCIES).map(([code, sym]) =>
           `<option value="${code}" ${code === FAMILY.currency ? 'selected' : ''}>${code}${code === sym ? '' : ` (${sym})`}</option>`).join('')}</select></div>
         <button class="btn">Save</button></form>
-        <p class="muted" style="margin:10px 0 0;font-size:12.5px">${tr('Changing this relabels existing amounts — it does not convert them.')}</p></div>` : ''}`;
+        <p class="muted" style="margin:10px 0 0;font-size:12px">${tr('Changing this relabels existing amounts — it does not convert them.')}</p></div>` : ''}`;
   $('#rotate')?.addEventListener('click', async () => {
     const r = await api('/family/invite/rotate', { method: 'POST' });
     FAMILY.invite_code = r.invite_code; viewFamily(el);
@@ -5474,7 +5498,7 @@ async function viewSettings(el) {
       <p class="muted" style="margin:16px 0 6px">Which alerts do you want?</p>
       <div class="row" style="flex-wrap:wrap;gap:6px 16px">
         ${[['vehicles', 'Vehicles (RCA, ITP, rovinietă…)'], ['property', 'Property insurance'], ['tenant', 'Tenant & rent'], ['documents', 'Documents (acte)'], ['birthdays', 'Birthdays']]
-          .map(([g, lb]) => `<label style="display:inline-flex;align-items:center;gap:7px;margin:0;font-size:13.5px;font-weight:500;color:var(--ink)"><input type="checkbox" data-ngroup="${g}" ${String(ME.notif_muted || '').split(',').includes(g) ? '' : 'checked'} style="width:auto"> ${lb}</label>`).join('')}
+          .map(([g, lb]) => `<label style="display:inline-flex;align-items:center;gap:7px;margin:0;font-size:14px;font-weight:500;color:var(--ink)"><input type="checkbox" data-ngroup="${g}" ${String(ME.notif_muted || '').split(',').includes(g) ? '' : 'checked'} style="width:auto"> ${lb}</label>`).join('')}
       </div>
       <p class="muted" style="margin:14px 0 6px">Quiet hours (push notifications wait until morning)</p>
       <div class="row">
@@ -5943,6 +5967,38 @@ document.addEventListener('submit', (e) => {
   }, { passive: true });
 })();
 
+/* ---------- form validation on blur ----------
+   Never while typing into an untouched field; on the first blur, the browser's own rules
+   (required, type, min, pattern) decide; the mark clears on the next keystroke or on focus. */
+(() => {
+  const FIELD = 'input:not([type=hidden]):not([type=checkbox]):not([type=radio]), select, textarea';
+  const message = (el) => {
+    const ro = LANG === 'ro', v = el.validity;
+    if (v.valueMissing) return ro ? 'Completează acest câmp.' : 'Fill in this field.';
+    if (v.typeMismatch && el.type === 'email') return ro ? 'Scrie o adresă ca nume@exemplu.ro.' : 'Enter an address like name@example.com.';
+    if (v.rangeUnderflow) return ro ? `Folosește cel puțin ${el.min}.` : `Use ${el.min} or more.`;
+    if (v.tooShort) return ro ? `Folosește cel puțin ${el.minLength} caractere.` : `Use at least ${el.minLength} characters.`;
+    return el.validationMessage;
+  };
+  const clear = (el) => {
+    if (el.getAttribute('aria-invalid') !== 'true') return;
+    el.removeAttribute('aria-invalid');
+    document.getElementById(el.dataset.errId || '')?.remove();
+  };
+  app.addEventListener('focusout', (e) => {
+    const el = e.target;
+    if (!el.matches?.(FIELD) || !el.form || el.checkValidity()) return;
+    if (!el.dataset.errId) el.dataset.errId = 'fe' + Math.random().toString(36).slice(2, 8);
+    let msg = document.getElementById(el.dataset.errId);
+    if (!msg) { msg = document.createElement('div'); msg.id = el.dataset.errId; msg.className = 'field-err'; el.insertAdjacentElement('afterend', msg); }
+    msg.textContent = message(el);
+    el.setAttribute('aria-invalid', 'true');
+    el.setAttribute('aria-describedby', el.dataset.errId);
+  });
+  app.addEventListener('input', (e) => { if (e.target.matches?.(FIELD)) clear(e.target); });
+  app.addEventListener('focusin', (e) => { if (e.target.matches?.(FIELD)) clear(e.target); });
+})();
+
 /* ---------- scroll-craft layer ----------
    The scroll-craft skill's devices, written for a working app. Paired with the two
    "scroll-craft" blocks at the end of styles.css; removing those and this section is the undo.
@@ -5979,7 +6035,7 @@ const SC = (() => {
         if (!e.isIntersecting) continue;
         io.unobserve(e.target);
         // blocks that arrive together are staggered in reading order, ~300ms at the most
-        e.target.style.transitionDelay = `${Math.min(i++, 6) * 50}ms`;
+        e.target.style.transitionDelay = `${Math.min(i++, 6) * 30}ms`;
         show(e.target);
       }
     }, { rootMargin: '0px 0px -6% 0px' });
