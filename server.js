@@ -4633,6 +4633,184 @@ app.post('/api/import/transactions', auth, canWrite, (req, res) => {
 });
 const CATEGORY_SET = new Set(['Groceries', 'Utilities', 'Transportation', 'Entertainment', 'Healthcare', 'Education', 'Taxes', 'Credit', 'Subscriptions', 'Restaurants', 'Other']);
 
+// ---------- the money game: paying down, saving up ----------
+/* The dashboard's motivation card, and every number in it is the household's own. There are no
+   points that mean nothing: the level is the share of everything borrowed that has been paid back,
+   the debt-free date comes from the same amortisation the Credits tab uses, a badge is a fact that
+   is either true or not, and the month's challenge sets its target from last month's real figures.
+   Money owed to people comes first. A bank charges interest and waits; a friend or a relative does
+   neither and is still owed, so a leu given back to a person counts GAME_PEOPLE_WEIGHT times in the
+   level, it has the month's challenge whenever any is open, and the calculator pays it before any
+   credit. Money is only ever summed in the household's currency; a loan in euro is listed in euro
+   and left out of the level rather than added to lei. Spending is account spending (on_card = 0),
+   the same figure the dashboard reports, so a card purchase is not counted twice once the card
+   bill is paid. */
+// Twenty-five steps, close together at the start and even after: on a thirty-year mortgage the
+// next level has to be months away, not years, or there is nothing to play for.
+const GAME_LEVELS = [0, 1, 2, 3, 5, 7, 10, 13, 16, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100];
+const GAME_PEOPLE_WEIGHT = 3;
+const GAME_DISCRETIONARY = ['Restaurants', 'Entertainment', 'Other'];
+// the same annuity as creditStats, before it is rounded for display
+function gamePayment(c) {
+  const P = Number(c.principal), r = Number(c.interest_rate) / 100 / 12, n = Math.max(1, Math.round(Number(c.term_months)));
+  return r > 0 ? (P * r) / (1 - Math.pow(1 + r, -n)) : P / n;
+}
+function gameState(fid, now = new Date()) {
+  const cur = familyCurrencyCode(fid);
+  const round = (n) => Math.round(n * 100) / 100;
+  const ym = (offset) => new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + offset, 1)).toISOString().slice(0, 7);
+  const thisM = ym(0), lastM = ym(-1);
+  const todayIso = now.toISOString().slice(0, 10);
+
+  // ---- debt: credits, and money owed to people
+  const credits = db.prepare('SELECT * FROM credits WHERE family_id = ?').all(fid);
+  const pays = db.prepare('SELECT * FROM credit_payments WHERE family_id = ?').all(fid);
+  const cs = credits.map((c) => ({ c, s: creditStats(c, pays.filter((p) => p.credit_id === c.id)) }));
+  const owedToPeople = db.prepare(`${LOAN_SELECT} WHERE l.family_id = ? AND l.direction = 'in'`).all(fid).map((r) => loanRow(r, cur));
+  const loansIn = owedToPeople.filter((l) => l.currency === cur);
+  const creditBorrowed = cs.reduce((a, x) => a + Number(x.c.principal), 0);
+  const creditOwed = cs.reduce((a, x) => a + Math.max(0, x.s.balance), 0);
+  const peopleBorrowed = loansIn.reduce((a, l) => a + Number(l.amount), 0);
+  const peopleOwed = loansIn.reduce((a, l) => a + Math.max(0, l.balance), 0);
+  const borrowed = creditBorrowed + peopleBorrowed;
+  const owed = creditOwed + peopleOwed;
+  // the level weighs a leu given back to a person as GAME_PEOPLE_WEIGHT lei paid to a bank
+  const W = GAME_PEOPLE_WEIGHT;
+  const wBorrowed = creditBorrowed + W * peopleBorrowed;
+  const wPaid = (creditBorrowed - creditOwed) + W * (peopleBorrowed - peopleOwed);
+  const paidPct = wBorrowed > 0 ? Math.max(0, Math.min(100, (wPaid / wBorrowed) * 100)) : null;
+  const level = paidPct == null ? 0 : GAME_LEVELS.filter((t) => paidPct >= t).length - 1;
+  const nextPct = paidPct == null ? null : GAME_LEVELS[level + 1] ?? null;
+  // what the next level costs, paid to a credit, or paid back to people (a third of it)
+  const toNextW = nextPct == null ? null : Math.max(0, wBorrowed * (nextPct / 100) - wPaid);
+  const active = cs.filter((x) => x.s.balance > 0.005);
+  const freeDate = active.length ? active.map((x) => x.s.payoff_date).sort().pop() : null;
+  // the people still owed, the most pressing first: overdue, then by the date promised, then the oldest
+  const people = owedToPeople.filter((l) => !l.settled).map((l) => ({
+    id: l.id, person: l.person, amount: round(Number(l.amount)), repaid: l.repaid, balance: l.balance,
+    currency: l.currency, date: l.date, due_date: l.due_date || null, overdue: !!(l.due_date && l.due_date < todayIso),
+  })).sort((a, b) => (a.due_date || '9999').localeCompare(b.due_date || '9999') || a.date.localeCompare(b.date));
+
+  // ---- months: income, account spending and net saving, the last 12 complete months plus this one
+  const months = Array.from({ length: 13 }, (_, i) => ym(i - 12));
+  const byMonth = (sql) => Object.fromEntries(db.prepare(sql).all(fid, months[0]).map((r) => [r.m, Number(r.t) || 0]));
+  const inc = byMonth('SELECT substr(date,1,7) AS m, SUM(amount) AS t FROM incomes WHERE family_id = ? AND substr(date,1,7) >= ? GROUP BY m');
+  const sp = byMonth('SELECT substr(date,1,7) AS m, SUM(amount) AS t FROM expenses WHERE family_id = ? AND on_card = 0 AND substr(date,1,7) >= ? GROUP BY m');
+  const sv = byMonth("SELECT substr(date,1,7) AS m, SUM(CASE WHEN kind = 'deposit' THEN amount ELSE -amount END) AS t FROM savings WHERE family_id = ? AND substr(date,1,7) >= ? GROUP BY m");
+  const hist = months.map((m) => ({ m, income: round(inc[m] || 0), spent: round(sp[m] || 0), saved: round(sv[m] || 0) }));
+  const complete = hist.slice(0, -1);
+  // the streak counts back from last month; a month with no income recorded ends it, since "on the
+  // plus side" means nothing without the money that came in
+  let streak = 0;
+  for (let i = complete.length - 1; i >= 0; i--) {
+    const h = complete[i];
+    if (h.income > 0 && h.income > h.spent) streak++; else break;
+  }
+  const recent = complete.slice(-3).filter((h) => h.spent > 0 || h.income > 0);
+  const avgSpend = recent.length ? recent.reduce((a, h) => a + h.spent, 0) / recent.length : 0;
+  const avgIncome = recent.length ? recent.reduce((a, h) => a + h.income, 0) / recent.length : 0;
+
+  // ---- savings
+  const savingsBal = Number(db.prepare("SELECT COALESCE(SUM(CASE WHEN kind = 'deposit' THEN amount ELSE -amount END), 0) AS t FROM savings WHERE family_id = ?").get(fid).t) || 0;
+  const cover = avgSpend > 0 ? savingsBal / avgSpend : null;
+  const goals = db.prepare(`SELECT g.*, COALESCE((SELECT SUM(CASE WHEN s.kind = 'deposit' THEN s.amount ELSE -s.amount END)
+    FROM savings s WHERE s.goal_id = g.id), 0) AS saved FROM savings_goals g WHERE g.family_id = ?`).all(fid);
+  const goalsReached = goals.filter((g) => g.done || Number(g.saved) >= Number(g.target)).length;
+
+  // ---- last month's budgets
+  const budgets = db.prepare('SELECT category, amount FROM budgets WHERE family_id = ? AND month = ?').all(fid, lastM);
+  const lastSpent = Object.fromEntries(db.prepare('SELECT category, SUM(amount) AS t FROM expenses WHERE family_id = ? AND on_card = 0 AND substr(date,1,7) = ? GROUP BY category').all(fid, lastM).map((r) => [r.category, Number(r.t)]));
+  const withinBudget = budgets.length > 0 && budgets.every((b) => (lastSpent[b.category] || 0) <= Number(b.amount));
+
+  // ---- the month's challenge. Somebody still owed money always has it; otherwise three kinds take
+  // turns, one per month, each with a target taken from last month. A kind with nothing to measure
+  // falls through to the next.
+  const thisSpent = Object.fromEntries(db.prepare('SELECT category, SUM(amount) AS t FROM expenses WHERE family_id = ? AND on_card = 0 AND substr(date,1,7) = ? GROUP BY category').all(fid, thisM).map((r) => [r.category, Number(r.t)]));
+  const nowH = hist[hist.length - 1];
+  const round10 = (n) => Math.max(10, Math.round(n / 10) * 10);
+  let challenge = null;
+  const backThisMonth = Object.fromEntries(db.prepare('SELECT loan_id, SUM(amount) AS t FROM personal_loan_payments WHERE family_id = ? AND substr(date,1,7) = ? GROUP BY loan_id')
+    .all(fid, thisM).map((r) => [r.loan_id, Number(r.t) || 0]));
+  // Every leu given back to anyone this month counts, so paying the friend who asked first is never
+  // wasted on a challenge about somebody else; the most pressing person is named as where to start.
+  // A household that cleared the last of it this month keeps the challenge, won, until the month is out.
+  const backNow = loansIn.reduce((a, l) => a + (backThisMonth[l.id] || 0), 0);
+  if (peopleOwed > 0.005 || backNow > 0) {
+    const atStart = peopleOwed + backNow;
+    // a tenth of a month's income, or a quarter of what was owed when there is no income to go by;
+    // never more than was owed on the first, so the last instalment is a challenge that can be won
+    const base = avgIncome > 0 ? round10(avgIncome * 0.1) : round10(atStart / 4);
+    const first = people.find((x) => x.currency === cur);
+    challenge = { kind: 'people', currency: cur, target: round(Math.min(base, atStart)), progress: round(backNow), balance: round(peopleOwed),
+      person: first?.person || null, due_date: first?.due_date || null, overdue: !!first?.overdue };
+  }
+  const kinds = ['save', 'cut', 'plus'];
+  const start = now.getUTCMonth() % kinds.length;
+  for (let k = 0; k < kinds.length && !challenge; k++) {
+    const kind = kinds[(start + k) % kinds.length];
+    if (kind === 'save' && avgIncome > 0) {
+      challenge = { kind, target: round10(avgIncome * 0.1), progress: Math.max(0, nowH.saved) };
+    } else if (kind === 'cut') {
+      const top = GAME_DISCRETIONARY.map((c) => [c, lastSpent[c] || 0]).sort((a, b) => b[1] - a[1])[0];
+      if (top && top[1] >= 50) challenge = { kind, category: top[0], last: round(top[1]), target: round10(top[1] * 0.8), progress: round(thisSpent[top[0]] || 0) };
+    } else if (kind === 'plus' && avgIncome > 0) {
+      challenge = { kind, target: round10(avgIncome * 0.15), progress: round(nowH.income - nowH.spent) };
+    }
+  }
+  if (challenge) {
+    // a cut is won by staying under; the others by reaching the target
+    challenge.done = challenge.kind === 'cut' ? false : challenge.progress >= challenge.target;
+    challenge.over = challenge.kind === 'cut' ? challenge.progress > challenge.target : false;
+    challenge.month = thisM;
+  }
+
+  // ---- badges: facts, with how close the unearned ones are. The people badges lead the list.
+  const pct = (v) => Math.max(0, Math.min(1, v));
+  const badges = [];
+  if (owedToPeople.length) {
+    const settled = owedToPeople.filter((l) => l.settled).length;
+    badges.push({ id: 'people_one', done: settled > 0, people: true });
+    badges.push({ id: 'people_free', done: settled === owedToPeople.length, people: true, progress: pct(settled / owedToPeople.length) });
+  }
+  if (borrowed > 0) {
+    badges.push({ id: 'prepay', done: pays.length > 0 });
+    badges.push({ id: 'quarter', done: paidPct >= 25, progress: pct(paidPct / 25) });
+    badges.push({ id: 'half', done: paidPct >= 50, progress: pct(paidPct / 50) });
+    badges.push({ id: 'closed', done: cs.some((x) => x.s.balance <= 0.005) });
+  }
+  const last = complete[complete.length - 1];
+  badges.push({ id: 'plus', done: last.income > 0 && last.income > last.spent });
+  badges.push({ id: 'streak3', done: streak >= 3, progress: pct(streak / 3), value: streak });
+  badges.push({ id: 'cushion1', done: cover != null && cover >= 1, progress: pct((cover || 0) / 1) });
+  badges.push({ id: 'cushion3', done: cover != null && cover >= 3, progress: pct((cover || 0) / 3) });
+  badges.push({ id: 'cushion6', done: cover != null && cover >= 6, progress: pct((cover || 0) / 6) });
+  if (goals.length) badges.push({ id: 'goal', done: goalsReached > 0 });
+  if (budgets.length) badges.push({ id: 'budget', done: withinBudget });
+
+  return {
+    currency: cur,
+    debt: {
+      borrowed: round(borrowed), owed: round(owed), paid_pct: paidPct == null ? null : Math.round(paidPct * 10) / 10,
+      level, levels: GAME_LEVELS, next_pct: nextPct, people_weight: W,
+      // the share of the way from this level to the next, for the small bar under the big one
+      level_progress: nextPct == null ? 1 : pct((paidPct - GAME_LEVELS[level]) / (nextPct - GAME_LEVELS[level])),
+      to_next: toNextW == null ? null : round(toNextW),
+      // the same step paid back to people instead, when what they are owed is enough to make it
+      to_next_people: toNextW == null || peopleOwed * W < toNextW ? null : round(toNextW / W),
+      free_date: freeDate,
+      // what the debt-free calculator needs, and nothing else: a balance, a monthly rate, a payment.
+      // The payment is the unrounded annuity: rounded to bani, thirty years of it leave a few lei
+      // owing at the end, and the calculator would count a whole extra month for them.
+      credits: active.map((x) => ({ name: x.c.name, balance: x.s.balance, rate: Number(x.c.interest_rate) / 100 / 12, payment: gamePayment(x.c), months_left: x.s.months_left })),
+      people,
+      loans_owed: round(peopleOwed),
+    },
+    savings: { balance: round(savingsBal), cover: cover == null ? null : Math.round(cover * 10) / 10, avg_spend: round(avgSpend) },
+    streak, months: hist, challenge, badges,
+  };
+}
+app.get('/api/game', auth, (req, res) => res.json(gameState(req.user.family_id)));
+
 // ---------- dashboard stats ----------
 // the same month-in-words the report emails, readable from the app so the two can never disagree.
 // Defaults to the month that just ended — the current one is only half a story.
