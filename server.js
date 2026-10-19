@@ -1331,6 +1331,46 @@ app.delete('/api/credits/:id/payments/:pid', auth, canWrite, (req, res) => {
    than a credit with the interesting parts nulled out. The balance is always derived from the
    repayment rows, never stored, so a repayment deleted by mistake puts the debt back exactly. */
 const familyCurrencyCode = (fid) => db.prepare('SELECT currency FROM families WHERE id = ?').get(fid)?.currency || 'RON';
+/* ---------- exchange rates (BNR) ----------
+   Only the money game adds amounts across currencies, and only where leaving one out would be
+   the bigger lie: €3.000 owed to a person is still owed, and a game that ignores it rewards the
+   wrong debt. The BNR reference rate is fetched at start and twice a day and kept in fx_rates, so
+   a restart, or a day BNR cannot be reached, uses the last rate it had. FX_RATES ("EUR:4.97,GBP:5.8")
+   fixes them instead, for the tests and for a server with no way out. */
+const FX_FIXED = Object.fromEntries(String(process.env.FX_RATES || '').split(',')
+  .map((p) => p.split(':')).filter(([c, r]) => c && Number(r) > 0).map(([c, r]) => [c.trim().toUpperCase(), Number(r)]));
+// lei for one unit of `code`, or null when there is no rate yet
+function fxRate(code) {
+  if (!code || code === 'RON') return 1;
+  if (FX_FIXED[code]) return FX_FIXED[code];
+  return db.prepare('SELECT rate FROM fx_rates WHERE code = ?').get(code)?.rate || null;
+}
+// `amount` in `from`, expressed in `to`; null rather than a guess when a rate is missing
+function fxConvert(amount, from, to) {
+  const a = fxRate(from), b = fxRate(to);
+  return a && b ? (Number(amount) * a) / b : null;
+}
+async function refreshFx() {
+  // FX_URL points it at another feed of the same shape, which is how the parser is tested
+  if (Object.keys(FX_FIXED).length || (process.env.NODE_ENV === 'test' && !process.env.FX_URL)) return;
+  try {
+    // curs.bnr.ro: since the 2026 site redesign, www.bnr.ro/nbrfxrates.xml redirects to the home page
+    const r = await fetch(process.env.FX_URL || 'https://curs.bnr.ro/nbrfxrates.xml', { signal: AbortSignal.timeout(15000) });
+    if (!r.ok) throw new Error(`BNR answered ${r.status}`);
+    const xml = await r.text();
+    const date = (xml.match(/<Cube date="(\d{4}-\d{2}-\d{2})"/) || [])[1];
+    if (!date) throw new Error('no publication date in the BNR feed');
+    const put = db.prepare(`INSERT INTO fx_rates (code, rate, date, fetched_at) VALUES (?, ?, ?, datetime('now'))
+      ON CONFLICT(code) DO UPDATE SET rate = excluded.rate, date = excluded.date, fetched_at = excluded.fetched_at`);
+    for (const code of ['EUR', 'GBP']) {
+      // a few currencies are quoted per 100 units; EUR and GBP are not, but the multiplier is honoured
+      const m = xml.match(new RegExp(`<Rate currency="${code}"(?: multiplier="(\\d+)")?>([\\d.]+)</Rate>`));
+      if (m && Number(m[2]) > 0) put.run(code, Number(m[2]) / (Number(m[1]) || 1), date);
+    }
+  } catch (err) { console.error('fx: BNR rates not refreshed:', err.message); }
+}
+setTimeout(refreshFx, process.env.FX_URL ? 0 : 5 * 1000).unref();
+setInterval(refreshFx, 12 * 3600 * 1000).unref();
 const LOAN_SELECT = `
   SELECT l.*, u.name AS user_name,
          COALESCE((SELECT SUM(p.amount) FROM personal_loan_payments p WHERE p.loan_id = l.id), 0) AS repaid
@@ -4666,14 +4706,27 @@ function gameState(fid, now = new Date()) {
   const credits = db.prepare('SELECT * FROM credits WHERE family_id = ?').all(fid);
   const pays = db.prepare('SELECT * FROM credit_payments WHERE family_id = ?').all(fid);
   const cs = credits.map((c) => ({ c, s: creditStats(c, pays.filter((p) => p.credit_id === c.id)) }));
-  const owedToPeople = db.prepare(`${LOAN_SELECT} WHERE l.family_id = ? AND l.direction = 'in'`).all(fid).map((r) => loanRow(r, cur));
-  const loansIn = owedToPeople.filter((l) => l.currency === cur);
+  // what was repaid to each person this month, in that loan's own currency
+  const backThisMonth = Object.fromEntries(db.prepare('SELECT loan_id, SUM(amount) AS t FROM personal_loan_payments WHERE family_id = ? AND substr(date,1,7) = ? GROUP BY loan_id')
+    .all(fid, thisM).map((r) => [r.loan_id, Number(r.t) || 0]));
+  // a debt in euro joins the household's sums at today's BNR rate (`home` = in household currency);
+  // with no rate to be had it stays listed and is left out of the sums, never added at par
+  const owedToPeople = db.prepare(`${LOAN_SELECT} WHERE l.family_id = ? AND l.direction = 'in'`).all(fid).map((r) => {
+    const l = loanRow(r, cur);
+    const k = fxConvert(1, l.currency, cur);
+    return { ...l, rate: k, amount_home: k == null ? null : Number(l.amount) * k, balance_home: k == null ? null : Math.max(0, l.balance) * k,
+      back_now: backThisMonth[l.id] || 0, back_now_home: k == null ? null : (backThisMonth[l.id] || 0) * k };
+  });
+  const loansIn = owedToPeople.filter((l) => l.rate != null);
   const creditBorrowed = cs.reduce((a, x) => a + Number(x.c.principal), 0);
   const creditOwed = cs.reduce((a, x) => a + Math.max(0, x.s.balance), 0);
-  const peopleBorrowed = loansIn.reduce((a, l) => a + Number(l.amount), 0);
-  const peopleOwed = loansIn.reduce((a, l) => a + Math.max(0, l.balance), 0);
+  const peopleBorrowed = loansIn.reduce((a, l) => a + l.amount_home, 0);
+  const peopleOwed = loansIn.reduce((a, l) => a + l.balance_home, 0);
   const borrowed = creditBorrowed + peopleBorrowed;
   const owed = creditOwed + peopleOwed;
+  // the plain share of the money paid back, the same leu for a bank and for a person: what the
+  // "a quarter paid" and "half paid" badges mean. The ×3 is the level's alone.
+  const plainPct = borrowed > 0 ? Math.max(0, Math.min(100, ((borrowed - owed) / borrowed) * 100)) : null;
   // the level weighs a leu given back to a person as GAME_PEOPLE_WEIGHT lei paid to a bank
   const W = GAME_PEOPLE_WEIGHT;
   const wBorrowed = creditBorrowed + W * peopleBorrowed;
@@ -4686,10 +4739,22 @@ function gameState(fid, now = new Date()) {
   const active = cs.filter((x) => x.s.balance > 0.005);
   const freeDate = active.length ? active.map((x) => x.s.payoff_date).sort().pop() : null;
   // the people still owed, the most pressing first: overdue, then by the date promised, then the oldest
-  const people = owedToPeople.filter((l) => !l.settled).map((l) => ({
-    id: l.id, person: l.person, amount: round(Number(l.amount)), repaid: l.repaid, balance: l.balance,
-    currency: l.currency, date: l.date, due_date: l.due_date || null, overdue: !!(l.due_date && l.due_date < todayIso),
-  })).sort((a, b) => (a.due_date || '9999').localeCompare(b.due_date || '9999') || a.date.localeCompare(b.date));
+  // A person with a date promised gets a plan: what is left on the first of this month, spread
+  // evenly over the months up to and including the one it is due. Overdue means all of it, now.
+  const monthIndex = (iso) => Number(iso.slice(0, 4)) * 12 + Number(iso.slice(5, 7));
+  const people = owedToPeople.filter((l) => !l.settled).map((l) => {
+    let plan = null;
+    if (l.due_date) {
+      const monthsLeft = Math.max(1, monthIndex(l.due_date) - monthIndex(thisM + '-01') + 1);
+      const monthly = (Math.max(0, l.balance) + l.back_now) / monthsLeft;
+      plan = { months_left: monthsLeft, monthly: round(monthly), monthly_home: l.rate == null ? null : round(monthly * l.rate), back_now: round(l.back_now) };
+    }
+    return {
+      id: l.id, person: l.person, amount: round(Number(l.amount)), repaid: l.repaid, balance: l.balance,
+      currency: l.currency, rate: l.rate, balance_home: l.balance_home == null ? null : round(l.balance_home),
+      date: l.date, due_date: l.due_date || null, overdue: !!(l.due_date && l.due_date < todayIso), plan,
+    };
+  }).sort((a, b) => (a.due_date || '9999').localeCompare(b.due_date || '9999') || a.date.localeCompare(b.date));
 
   // ---- months: income, account spending and net saving, the last 12 complete months plus this one
   const months = Array.from({ length: 13 }, (_, i) => ym(i - 12));
@@ -4712,7 +4777,24 @@ function gameState(fid, now = new Date()) {
 
   // ---- savings
   const savingsBal = Number(db.prepare("SELECT COALESCE(SUM(CASE WHEN kind = 'deposit' THEN amount ELSE -amount END), 0) AS t FROM savings WHERE family_id = ?").get(fid).t) || 0;
-  const cover = avgSpend > 0 ? savingsBal / avgSpend : null;
+  // The cushion is counted in months of the bare necessities, not in an average month of
+  // everything: a month with a holiday or an early credit repayment in it is not what savings have
+  // to carry. A month of necessities is the credits' instalments, the bills (recurring ones at their
+  // monthly rate, one-off ones averaged over three months), and whatever else the household lists as
+  // unavoidable: the kindergarten, food.
+  const creditsMonthly = active.reduce((a, x) => a + Number(x.s.monthly_total || 0), 0);
+  const billRows = db.prepare('SELECT amount, recur_months, recur_days, due_date FROM bills WHERE family_id = ? AND amount > 0').all(fid);
+  const billsMonthly = billRows.reduce((a, b) => {
+    if (Number(b.recur_days) > 0) return a + (Number(b.amount) * 30.4375) / Number(b.recur_days);
+    if (Number(b.recur_months) > 0) return a + Number(b.amount) / Number(b.recur_months);
+    // a one-off bill due in this month or the two before it, spread over those three
+    const m = String(b.due_date).slice(0, 7);
+    return m >= ym(-2) && m <= thisM ? a + Number(b.amount) / 3 : a;
+  }, 0);
+  const essentialItems = db.prepare('SELECT id, label, amount FROM essentials WHERE family_id = ? ORDER BY id').all(fid)
+    .map((e) => ({ id: e.id, label: e.label, amount: round(Number(e.amount)) }));
+  const essentialMonth = creditsMonthly + billsMonthly + essentialItems.reduce((a, e) => a + e.amount, 0);
+  const cover = essentialMonth > 0 ? savingsBal / essentialMonth : null;
   const goals = db.prepare(`SELECT g.*, COALESCE((SELECT SUM(CASE WHEN s.kind = 'deposit' THEN s.amount ELSE -s.amount END)
     FROM savings s WHERE s.goal_id = g.id), 0) AS saved FROM savings_goals g WHERE g.family_id = ?`).all(fid);
   const goalsReached = goals.filter((g) => g.done || Number(g.saved) >= Number(g.target)).length;
@@ -4729,20 +4811,21 @@ function gameState(fid, now = new Date()) {
   const nowH = hist[hist.length - 1];
   const round10 = (n) => Math.max(10, Math.round(n / 10) * 10);
   let challenge = null;
-  const backThisMonth = Object.fromEntries(db.prepare('SELECT loan_id, SUM(amount) AS t FROM personal_loan_payments WHERE family_id = ? AND substr(date,1,7) = ? GROUP BY loan_id')
-    .all(fid, thisM).map((r) => [r.loan_id, Number(r.t) || 0]));
   // Every leu given back to anyone this month counts, so paying the friend who asked first is never
   // wasted on a challenge about somebody else; the most pressing person is named as where to start.
+  // The target is what the dates promised add up to this month; with no date promised anywhere, a
+  // tenth of a month's income (or a quarter of what is owed when there is no income to go by).
   // A household that cleared the last of it this month keeps the challenge, won, until the month is out.
-  const backNow = loansIn.reduce((a, l) => a + (backThisMonth[l.id] || 0), 0);
+  const backNow = loansIn.reduce((a, l) => a + l.back_now_home, 0);
   if (peopleOwed > 0.005 || backNow > 0) {
     const atStart = peopleOwed + backNow;
-    // a tenth of a month's income, or a quarter of what was owed when there is no income to go by;
-    // never more than was owed on the first, so the last instalment is a challenge that can be won
-    const base = avgIncome > 0 ? round10(avgIncome * 0.1) : round10(atStart / 4);
-    const first = people.find((x) => x.currency === cur);
+    const planned = people.filter((x) => x.plan && x.plan.monthly_home != null);
+    const ceil10 = (n) => Math.max(10, Math.ceil(n / 10) * 10);
+    const base = planned.length ? ceil10(planned.reduce((a, x) => a + x.plan.monthly_home, 0))
+      : avgIncome > 0 ? round10(avgIncome * 0.1) : round10(atStart / 4);
+    const first = people.find((x) => x.rate != null);
     challenge = { kind: 'people', currency: cur, target: round(Math.min(base, atStart)), progress: round(backNow), balance: round(peopleOwed),
-      person: first?.person || null, due_date: first?.due_date || null, overdue: !!first?.overdue };
+      from_dates: planned.length > 0, person: first?.person || null, due_date: first?.due_date || null, overdue: !!first?.overdue };
   }
   const kinds = ['save', 'cut', 'plus'];
   const start = now.getUTCMonth() % kinds.length;
@@ -4774,8 +4857,8 @@ function gameState(fid, now = new Date()) {
   }
   if (borrowed > 0) {
     badges.push({ id: 'prepay', done: pays.length > 0 });
-    badges.push({ id: 'quarter', done: paidPct >= 25, progress: pct(paidPct / 25) });
-    badges.push({ id: 'half', done: paidPct >= 50, progress: pct(paidPct / 50) });
+    badges.push({ id: 'quarter', done: plainPct >= 25, progress: pct(plainPct / 25) });
+    badges.push({ id: 'half', done: plainPct >= 50, progress: pct(plainPct / 50) });
     badges.push({ id: 'closed', done: cs.some((x) => x.s.balance <= 0.005) });
   }
   const last = complete[complete.length - 1];
@@ -4791,7 +4874,7 @@ function gameState(fid, now = new Date()) {
     currency: cur,
     debt: {
       borrowed: round(borrowed), owed: round(owed), paid_pct: paidPct == null ? null : Math.round(paidPct * 10) / 10,
-      level, levels: GAME_LEVELS, next_pct: nextPct, people_weight: W,
+      level, levels: GAME_LEVELS, next_pct: nextPct, people_weight: W, plain_pct: plainPct == null ? null : Math.round(plainPct * 10) / 10,
       // the share of the way from this level to the next, for the small bar under the big one
       level_progress: nextPct == null ? 1 : pct((paidPct - GAME_LEVELS[level]) / (nextPct - GAME_LEVELS[level])),
       to_next: toNextW == null ? null : round(toNextW),
@@ -4805,11 +4888,37 @@ function gameState(fid, now = new Date()) {
       people,
       loans_owed: round(peopleOwed),
     },
-    savings: { balance: round(savingsBal), cover: cover == null ? null : Math.round(cover * 10) / 10, avg_spend: round(avgSpend) },
+    savings: {
+      balance: round(savingsBal), cover: cover == null ? null : Math.round(cover * 10) / 10, avg_spend: round(avgSpend),
+      // one month of the bare necessities, and what it is made of
+      month: round(essentialMonth), parts: { credits: round(creditsMonthly), bills: round(billsMonthly), items: essentialItems },
+    },
     streak, months: hist, challenge, badges,
   };
 }
 app.get('/api/game', auth, (req, res) => res.json(gameState(req.user.family_id)));
+// the household's own list of what a month cannot do without, beyond credits and bills; the whole
+// list is sent and replaces the old one, so a row removed in the form is gone
+app.put('/api/essentials', auth, canWrite, (req, res) => {
+  const items = Array.isArray(req.body?.items) ? req.body.items : null;
+  if (!items) return res.status(400).json({ error: 'Send the list of items' });
+  if (items.length > 20) return res.status(400).json({ error: 'At most 20 items' });
+  const clean = [];
+  for (const it of items) {
+    const label = str(it?.label);
+    const amount = Number(it?.amount);
+    if (!label) return res.status(400).json({ error: 'Every item needs a name' });
+    if (label.length > 60) return res.status(400).json({ error: 'A name can be at most 60 characters' });
+    if (!(amount >= 0) || amount > 1e7) return res.status(400).json({ error: `"${label}" needs an amount of 0 or more` });
+    clean.push([label, Math.round(amount * 100) / 100]);
+  }
+  db.transaction(() => {
+    db.prepare('DELETE FROM essentials WHERE family_id = ?').run(req.user.family_id);
+    const ins = db.prepare('INSERT INTO essentials (family_id, label, amount) VALUES (?, ?, ?)');
+    for (const [label, amount] of clean) ins.run(req.user.family_id, label, amount);
+  })();
+  res.json(db.prepare('SELECT id, label, amount FROM essentials WHERE family_id = ? ORDER BY id').all(req.user.family_id));
+});
 
 // ---------- dashboard stats ----------
 // the same month-in-words the report emails, readable from the app so the two can never disagree.

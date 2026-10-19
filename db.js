@@ -502,6 +502,25 @@ CREATE TABLE IF NOT EXISTS personal_loan_payments (
 );
 CREATE INDEX IF NOT EXISTS idx_personal_loan_payments_loan ON personal_loan_payments(loan_id);
 
+-- the BNR reference rate for each foreign currency, lei per one unit, kept so a restart or a day
+-- with BNR unreachable still has the last known rate
+CREATE TABLE IF NOT EXISTS fx_rates (
+  code TEXT PRIMARY KEY,
+  rate REAL NOT NULL,          -- RON per 1 unit of code
+  date TEXT NOT NULL,          -- the BNR publication date
+  fetched_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- what a month of the bare necessities costs beyond credits and bills (kindergarten, food): the
+-- safety cushion is measured in these months, not in an average month of everything
+CREATE TABLE IF NOT EXISTS essentials (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  family_id INTEGER NOT NULL REFERENCES families(id) ON DELETE CASCADE,
+  label TEXT NOT NULL,
+  amount REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_essentials_family ON essentials(family_id);
+
 -- one-off jobs: the things done once that then stay done. A chore is a definition plus a completion
 -- per period, which is exactly what makes it come back; a todo has no period at all, so it carries
 -- its own done flag and the moment it was ticked.

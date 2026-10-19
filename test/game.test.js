@@ -84,21 +84,24 @@ test('the game counts the household’s own money, once, in its own currency', a
     assert.equal(badge('streak3').done, true);
   });
 
-  await t.test('the cushion is savings over a month of account spending', () => {
+  await t.test('the cushion is savings over a month of the bare necessities, not of everything', () => {
     assert.equal(g.savings.balance, 7000);
-    assert.equal(g.savings.avg_spend, 3000);
-    assert.equal(g.savings.cover, 2.3);
+    assert.equal(g.savings.avg_spend, 3000, 'the average month of everything is still reported');
+    // no bills and no list yet: a month of necessities is the credit's instalment alone
+    assert.equal(g.savings.month, c.monthly_total);
+    assert.equal(g.savings.cover, Math.round((7000 / c.monthly_total) * 10) / 10);
     const badge = (id) => g.badges.find((b) => b.id === id);
     assert.equal(badge('cushion1').done, true);
-    assert.equal(badge('cushion3').done, false);
-    assert.ok(Math.abs(badge('cushion3').progress - 7000 / 9000) < 1e-9, 'how close the next one is');
+    assert.equal(badge('cushion6').done, 7000 / c.monthly_total >= 6);
   });
 
   await t.test('somebody still owed money has the month’s challenge, whatever month it is', () => {
     assert.equal(g.challenge.month, today().slice(0, 7));
     assert.equal(g.challenge.kind, 'people');
     assert.equal(g.challenge.person, 'Mihai', 'named as where to start: the most pressing person owed in lei');
-    assert.equal(g.challenge.target, 500, 'a tenth of a month’s income');
+    // Mihai was promised his 1 000 within three months: a third of it, rounded up to the next ten
+    assert.equal(g.challenge.target, 340, 'what the date promised asks of this month');
+    assert.equal(g.challenge.from_dates, true);
     assert.equal(g.challenge.progress, 0);
     assert.equal(g.challenge.done, false);
   });
@@ -201,4 +204,107 @@ test('the extra pays people back before any credit', () => {
   const bankOnly = gameSimulate(credits, 500);
   assert.ok(sim.months > bankOnly.months, 'the credit waits its turn, which is the price of putting people first');
   assert.ok(sim.months < gameSimulate(credits, 0).months, 'and still ends sooner than with no extra at all');
+});
+
+test('a debt in euro counts at the BNR rate, and a date promised becomes a monthly plan', async (t) => {
+  const api = await startServer({ FX_RATES: 'EUR:5' });
+  t.after(() => api.stop());
+  const eni = (await api.post('/api/loans', { person: 'Eni', amount: 3000, currency: 'EUR', date: monthDay(-1), due_date: monthDay(2, 28), direction: 'in' })).body;
+  await api.post('/api/loans', { person: 'Coionii', amount: 12000, currency: 'EUR', date: monthDay(-1), due_date: monthDay(14, 28), direction: 'in' });
+  const g = (await api.get('/api/game')).body;
+
+  assert.equal(g.debt.borrowed, 75000, '15 000 € at 5 lei');
+  assert.equal(g.debt.loans_owed, 75000);
+  const [first, second] = g.debt.people;
+  assert.equal(first.person, 'Eni', 'the nearer date first');
+  assert.equal(first.balance_home, 15000);
+  assert.deepEqual(first.plan, { months_left: 3, monthly: 1000, monthly_home: 5000, back_now: 0 }, 'this month and the two after it');
+  assert.deepEqual(second.plan, { months_left: 15, monthly: 800, monthly_home: 4000, back_now: 0 });
+  assert.equal(g.challenge.kind, 'people');
+  assert.equal(g.challenge.target, 9000, 'what the two dates ask of this month, in lei');
+  assert.equal(g.challenge.from_dates, true);
+
+  // paying Eni a thousand this month: the challenge counts it in lei, and the plan keeps its pace
+  await api.post(`/api/loans/${eni.id}/payments`, { amount: 1000, date: today() });
+  const after = (await api.get('/api/game')).body;
+  assert.equal(after.challenge.progress, 5000);
+  assert.equal(after.challenge.target, 9000, 'the target is set from what was owed on the first');
+  assert.deepEqual(after.debt.people[0].plan, { months_left: 3, monthly: 1000, monthly_home: 5000, back_now: 1000 });
+});
+
+test('with no rate to be had, a euro debt is listed but never added to lei at par', async (t) => {
+  const api = await startServer(); // the test server never reaches BNR
+  t.after(() => api.stop());
+  await api.post('/api/loans', { person: 'Eni', amount: 3000, currency: 'EUR', date: monthDay(-1), direction: 'in' });
+  const g = (await api.get('/api/game')).body;
+  assert.equal(g.debt.borrowed, 0);
+  assert.equal(g.debt.people.length, 1);
+  assert.equal(g.debt.people[0].balance_home, null);
+});
+
+test('the quarter and half badges are the plain share; only the level counts people three times', async (t) => {
+  const api = await startServer();
+  t.after(() => api.stop());
+  await api.post('/api/credits', { name: 'Casa', principal: 10000, interest_rate: 6, term_months: 120, start_date: today() });
+  const ana = (await api.post('/api/loans', { person: 'Ana', amount: 2000, date: monthDay(-1), direction: 'in' })).body;
+  await api.post(`/api/loans/${ana.id}/payments`, { amount: 2000, date: today() });
+  const g = (await api.get('/api/game')).body;
+  // 2 000 of 12 000 paid back is a sixth; counted three times it is 6 000 of 16 000
+  assert.equal(g.debt.plain_pct, 16.7);
+  assert.equal(g.debt.paid_pct, 37.5);
+  assert.ok(g.debt.level >= g.debt.levels.indexOf(35), 'the level moves with the weight');
+  const badge = (id) => g.badges.find((b) => b.id === id);
+  assert.equal(badge('quarter').done, false, 'a sixth of the money is not a quarter of it');
+  assert.ok(Math.abs(badge('quarter').progress - 16.7 / 25) < 0.01);
+});
+
+test('the safety cushion is counted in months of the bare necessities', async (t) => {
+  const api = await startServer();
+  t.after(() => api.stop());
+  const credit = (await api.post('/api/credits', { name: 'Casa', principal: 100000, interest_rate: 6, term_months: 120, start_date: today() })).body;
+  await api.post('/api/bills', { name: 'Internet', category: 'internet', amount: 100, due_date: monthDay(1), recur_months: 1 });
+  await api.post('/api/bills', { name: 'Tratament', category: 'other', amount: 300, due_date: monthDay(1), recur_days: 30 });
+  await api.post('/api/bills', { name: 'Gaz', category: 'gas', amount: 90, due_date: monthDay(0) });
+  // a big month of everything else must not make the cushion look smaller
+  await api.post('/api/expenses', { category: 'Entertainment', amount: 20000, date: monthDay(-1) });
+  await api.post('/api/savings', { kind: 'deposit', amount: 20000, date: monthDay(-1) });
+
+  const put = await api.put('/api/essentials', { items: [{ label: 'Grădiniță Mara', amount: 2500 }, { label: 'Mâncare', amount: 2000 }] });
+  assert.equal(put.status, 200, put.text);
+  assert.deepEqual(put.body.map((i) => [i.label, i.amount]), [['Grădiniță Mara', 2500], ['Mâncare', 2000]]);
+
+  const g = (await api.get('/api/game')).body;
+  const bills = 100 + (300 * 30.4375) / 30 + 90 / 3;
+  assert.equal(g.savings.parts.credits, credit.monthly_total);
+  assert.equal(g.savings.parts.bills, Math.round(bills * 100) / 100);
+  const month = credit.monthly_total + bills + 4500;
+  assert.equal(g.savings.month, Math.round(month * 100) / 100);
+  assert.equal(g.savings.cover, Math.round((20000 / month) * 10) / 10);
+
+  await t.test('the list is replaced whole, and a bad row is refused', async () => {
+    assert.equal((await api.put('/api/essentials', { items: [{ label: '', amount: 10 }] })).status, 400);
+    assert.equal((await api.put('/api/essentials', { items: [{ label: 'Mâncare', amount: -1 }] })).status, 400);
+    assert.equal((await api.put('/api/essentials', { nope: 1 })).status, 400);
+    assert.deepEqual((await api.put('/api/essentials', { items: [{ label: 'Mâncare', amount: 2200 }] })).body.map((i) => i.label), ['Mâncare']);
+    assert.deepEqual((await api.get('/api/game')).body.savings.parts.items.map((i) => [i.label, i.amount]), [['Mâncare', 2200]]);
+  });
+});
+
+test('the BNR feed is read for euro and pound, honouring a multiplier', async (t) => {
+  // the same shape curs.bnr.ro serves, trimmed
+  const xml = `<?xml version="1.0" encoding="utf-8"?><DataSet xmlns="http://www.bnr.ro/xsd"><Body><OrigCurrency>RON</OrigCurrency>
+    <Cube date="2026-10-19"><Rate currency="EUR">5.3272</Rate><Rate currency="GBP" multiplier="1">6.3336</Rate><Rate currency="HUF" multiplier="100">1.4677</Rate></Cube></Body></DataSet>`;
+  const feed = require('node:http').createServer((req, res) => { res.writeHead(200, { 'Content-Type': 'text/xml' }); res.end(xml); });
+  await new Promise((r) => feed.listen(0, '127.0.0.1', r));
+  const api = await startServer({ FX_URL: `http://127.0.0.1:${feed.address().port}/nbrfxrates.xml` });
+  t.after(() => Promise.all([api.stop(), new Promise((r) => feed.close(r))]));
+  await api.post('/api/loans', { person: 'Eni', amount: 1000, currency: 'EUR', date: monthDay(-1), direction: 'in' });
+  let g;
+  for (let i = 0; i < 40; i++) {
+    g = (await api.get('/api/game')).body;
+    if (g.debt.borrowed > 0) break;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  assert.equal(g.debt.borrowed, 5327.2, '1 000 € at the published 5,3272');
+  assert.equal(g.debt.people[0].rate, 5.3272);
 });

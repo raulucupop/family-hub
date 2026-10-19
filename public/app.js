@@ -1885,7 +1885,7 @@ async function viewDashboard(el) {
     t.style.setProperty('--t', t.dataset.t); t.style.setProperty('--b', t.dataset.b || 0);
   }), 80);
   SC.paint();
-  gameWire(el, game);
+  gameWire(el, game, () => viewDashboard(el));
   wireBalance(el, () => viewDashboard(el));
   el.querySelector('#dash').querySelectorAll('[data-tab]').forEach((a) => a.addEventListener('click', () => { PENDING_MONEY_TAB = a.dataset.tab; }));
   // the button lives inside the folded reports section now, so it is wired when that is drawn
@@ -2133,18 +2133,18 @@ const GAME_BADGES = {
   people_one: ['Primul om plătit', 'First person paid back', 'O datorie la o persoană, stinsă de tot.', 'A debt to a person, paid off in full.'],
   people_free: ['Nu datorați nimănui', 'Owe nobody', 'Toți cei de la care ați împrumutat și-au primit banii.', 'Everyone you borrowed from has been paid back.'],
   prepay: ['Prima plată în avans', 'First early repayment', 'O plată anticipată la un credit.', 'An early payment on a credit.'],
-  quarter: ['Un sfert plătit', 'A quarter paid', 'Un sfert din drum, cu oamenii puși de trei ori.', 'A quarter of the way, with people counted three times.'],
-  half: ['Jumătate plătit', 'Half paid', 'Jumătate din drum, cu oamenii puși de trei ori.', 'Half of the way, with people counted three times.'],
+  quarter: ['Un sfert plătit', 'A quarter paid', 'Un sfert din tot ce ați împrumutat e înapoi.', 'A quarter of everything borrowed is paid back.'],
+  half: ['Jumătate plătit', 'Half paid', 'Jumătate din tot ce ați împrumutat e înapoi.', 'Half of everything borrowed is paid back.'],
   closed: ['Un credit închis', 'A credit closed', 'Un credit la bancă, stins de tot.', 'A bank credit, paid off in full.'],
   plus: ['Lună pe plus', 'A month ahead', 'Luna trecută a intrat mai mult decât a ieșit.', 'Last month more came in than went out.'],
   streak3: ['Trei luni pe plus', 'Three months ahead', 'Trei luni la rând pe plus.', 'Three months in a row ahead.'],
-  cushion1: ['Fond de o lună', 'One-month cushion', 'Economii cât o lună de cheltuieli.', 'Savings worth a month of spending.'],
-  cushion3: ['Fond de trei luni', 'Three-month cushion', 'Economii cât trei luni de cheltuieli.', 'Savings worth three months of spending.'],
-  cushion6: ['Fond de șase luni', 'Six-month cushion', 'Economii cât șase luni de cheltuieli.', 'Savings worth six months of spending.'],
+  cushion1: ['Fond de o lună', 'One-month cushion', 'Economii cât o lună de strictul necesar.', 'Savings worth a month of the bare necessities.'],
+  cushion3: ['Fond de trei luni', 'Three-month cushion', 'Economii cât trei luni de strictul necesar.', 'Savings worth three months of the bare necessities.'],
+  cushion6: ['Fond de șase luni', 'Six-month cushion', 'Economii cât șase luni de strictul necesar.', 'Savings worth six months of the bare necessities.'],
   goal: ['Obiectiv atins', 'Goal reached', 'Un obiectiv de economii atins.', 'A savings goal reached.'],
   budget: ['Sub buget', 'Within budget', 'Luna trecută, toate bugetele respectate.', 'Last month, every budget kept.'],
 };
-const GAME_EXTRAS = [0, 200, 500, 1000];
+const GAME_EXTRAS = [0, 1000, 2500, 5000];
 let GAME_EXTRA = 0;
 const gameRo = () => LANG === 'ro';
 const gameMoney = (n) => `${moneyShort(n)} ${cur()}`;
@@ -2193,8 +2193,8 @@ function gameSimulate(credits, extra, people = []) {
 }
 function gameFreeHtml(g) {
   const credits = g.debt.credits;
-  // only the people owed in the household's currency share a pot with the extra lei
-  const people = g.debt.people.filter((p) => p.currency === g.currency);
+  // the people owed, in the household's currency at today's rate, so a debt in euro shares the pot
+  const people = g.debt.people.filter((p) => p.balance_home != null).map((p) => ({ balance: p.balance_home }));
   if (!credits.length && !people.length) return '';
   const ro = gameRo();
   const base = gameSimulate(credits, 0);
@@ -2239,11 +2239,19 @@ function gamePeopleHtml(g) {
     const when = p.overdue ? (ro ? `Termen depășit: ${fdate(p.due_date)}` : `Overdue since ${fdate(p.due_date)}`)
       : p.due_date ? (ro ? `Promis până pe ${fdate(p.due_date)}` : `Promised by ${fdate(p.due_date)}`)
       : (ro ? 'Fără termen' : 'No date agreed');
-    const foreign = p.currency !== g.currency ? ` · ${ro ? 'nu intră în nivel' : 'not in the level'}` : '';
+    // a debt in another currency shows what it is in lei today, or says plainly that it cannot
+    const foreign = p.currency === g.currency ? ''
+      : p.balance_home != null ? ` <span class="muted">≈ ${gameMoney(p.balance_home)}</span>`
+      : ` <span class="muted">· ${ro ? 'fără curs BNR, nu intră în nivel' : 'no BNR rate, not in the level'}</span>`;
+    // with a date promised: what each month has to carry to make it, and how this one is doing
+    const mo = (a) => gameMoneyIn(a, p.currency);
+    const plan = p.plan ? `<p class="game-person__plan">${ro
+      ? `Plan: <b>${mo(p.plan.monthly)}</b> pe lună${p.plan.months_left > 1 ? `, încă ${p.plan.months_left} luni` : ', tot luna asta'} · luna asta: ${mo(p.plan.back_now)} din ${mo(p.plan.monthly)}`
+      : `Plan: <b>${mo(p.plan.monthly)}</b> a month${p.plan.months_left > 1 ? ` for ${p.plan.months_left} more months` : ', all of it this month'} · this month: ${mo(p.plan.back_now)} of ${mo(p.plan.monthly)}`}</p>` : '';
     return `<li class="game-person${p.overdue ? ' is-overdue' : ''}">
-      <div class="game-person__head"><b>${esc(p.person)}</b><span class="amount">${ro ? 'mai aveți' : 'still owed'} <b>${gameMoneyIn(p.balance, p.currency)}</b> ${ro ? 'din' : 'of'} ${gameMoneyIn(p.amount, p.currency)}</span></div>
+      <div class="game-person__head"><b>${esc(p.person)}</b><span class="amount">${ro ? 'mai aveți' : 'still owed'} <b>${gameMoneyIn(p.balance, p.currency)}</b> ${ro ? 'din' : 'of'} ${gameMoneyIn(p.amount, p.currency)}${foreign}</span></div>
       <div class="bar"><i style="width:${Math.round(paid * 100)}%"></i></div>
-      <p class="game-person__s">${when}${foreign}</p>
+      <p class="game-person__s">${when}</p>${plan}
     </li>`;
   }).join('');
   return `<div class="game-people">
@@ -2282,7 +2290,7 @@ function gameChallengeHtml(c) {
     status = c.done
       ? (c.balance > 0.005 ? (ro ? `Reușit. Mai aveți ${m(c.balance)} de dat în total${first}.` : `Done. ${m(c.balance)} still owed in all${first}.`)
         : (ro ? 'Reușit. Nu mai datorați nimic nimănui.' : 'Done. You owe nobody anything.'))
-      : (ro ? `${m(c.progress)} din ${m(c.target)}${first}` : `${m(c.progress)} of ${m(c.target)}${first}`);
+      : (ro ? `${m(c.progress)} din ${m(c.target)}${c.from_dates ? ', cât cer termenele luna asta' : ''}${first}` : `${m(c.progress)} of ${m(c.target)}${c.from_dates ? ', what the dates ask of this month' : ''}${first}`);
   } else if (c.done) status = ro ? 'Reușit. Bravo.' : 'Done. Well played.';
   else status = ro ? `${m(Math.max(0, c.progress))} din ${m(c.target)}` : `${m(Math.max(0, c.progress))} of ${m(c.target)}`;
   const barCls = c.kind === 'cut' ? (c.over ? 'over' : p >= 0.8 ? 'near' : '') : '';
@@ -2307,8 +2315,42 @@ function gameFresh(g) {
     levelUp: Number.isInteger(lastLevel) && g.debt.level > lastLevel,
   };
 }
+// The cushion is counted in months of the bare necessities: credits, bills, and the household's own
+// list (kindergarten, food), which can be edited right here.
+function gameCushionHtml(g) {
+  const ro = gameRo();
+  const s = g.savings;
+  const p = s.parts || { credits: 0, bills: 0, items: [] };
+  const parts = [
+    p.credits > 0 && `${ro ? 'Credite' : 'Credits'} ${gameMoney(p.credits)}`,
+    p.bills > 0 && `${ro ? 'Facturi' : 'Bills'} ${gameMoney(p.bills)}`,
+    ...p.items.map((i) => `${esc(i.label)} ${gameMoney(i.amount)}`),
+  ].filter(Boolean);
+  const row = (i = { label: '', amount: '' }) => `<div class="game-ess__row">
+      <input name="label" maxlength="60" value="${esc(i.label)}" placeholder="${ro ? 'ex. Grădiniță' : 'e.g. Kindergarten'}" aria-label="${ro ? 'Ce' : 'What'}" required>
+      <input name="amount" type="number" min="0" step="1" inputmode="decimal" value="${i.amount === '' ? '' : Number(i.amount)}" placeholder="0" aria-label="${ro ? 'Lei pe lună' : 'A month'}" required>
+      <button type="button" class="btn ghost small iconbtn" data-ess-del aria-label="${ro ? 'Scoate rândul' : 'Remove the row'}" data-tip="${ro ? 'Scoate' : 'Remove'}">✕</button>
+    </div>`;
+  return `<div class="game-tile game-cushion">
+      <p class="game-tile__k">${ro ? 'Fond de siguranță' : 'Safety cushion'}</p>
+      <p class="game-tile__v"><b class="game-big">${s.cover == null ? '—' : gameNum(s.cover)}</b> ${ro ? 'luni de strictul necesar' : 'months of the bare necessities'}</p>
+      <p class="game-tile__s">${gameMoney(s.balance)} ${ro ? 'economisiți' : 'saved'} · ${ro ? 'o lună de strictul necesar' : 'a month of necessities'}: <b>${gameMoney(s.month)}</b></p>
+      ${parts.length ? `<p class="game-ess__parts">${parts.join(' · ')}</p>` : ''}
+      ${canWrite() ? `<button type="button" class="btn ghost small" data-ess-edit aria-expanded="false">${p.items.length ? (ro ? 'Modifică ce mai intră' : 'Change what else counts') : (ro ? 'Adaugă grădiniță, mâncare…' : 'Add kindergarten, food…')}</button>
+      <form class="game-ess" hidden novalidate>
+        <p class="game-ess__hint">${ro ? 'Creditele și facturile se iau singure. Aici treceți restul de care nu puteți scăpa într-o lună.' : 'Credits and bills are counted for you. List the rest a month cannot do without.'}</p>
+        <div class="game-ess__rows">${(p.items.length ? p.items : [{ label: '', amount: '' }]).map(row).join('')}</div>
+        <button type="button" class="btn ghost small" data-ess-add>+ ${ro ? 'Încă un rând' : 'Another row'}</button>
+        <div class="row" style="gap:8px;margin-top:8px">
+          <button type="submit" class="btn small">${ro ? 'Salvează' : 'Save'}</button>
+          <button type="button" class="btn ghost small" data-ess-cancel>${ro ? 'Renunță' : 'Cancel'}</button>
+        </div>
+        <template data-ess-row>${row()}</template>
+      </form>` : ''}
+    </div>`;
+}
 function gameHtml(g) {
-  if (!g || (!(g.debt.borrowed > 0) && !g.debt.people.length && !(g.savings.balance > 0) && !g.challenge)) return '';
+  if (!g || (!(g.debt.borrowed > 0) && !g.debt.people.length && !(g.savings.balance > 0) && !(g.savings.month > 0) && !g.challenge)) return '';
   const ro = gameRo();
   const d = g.debt;
   const top = d.levels.length - 1;
@@ -2339,7 +2381,6 @@ function gameHtml(g) {
       </div>` : ''}
       <p class="game-climb__foot">${ro ? `Mai aveți <b>${gameMoney(d.owed)}</b> din ${gameMoney(d.borrowed)} împrumutați.` : `<b>${gameMoney(d.owed)}</b> left of ${gameMoney(d.borrowed)} borrowed.`}${toNext}</p>
     </div>` : '';
-  const cover = g.savings.cover;
   const tiles = `<div class="game-tiles">
     ${gameChallengeHtml(g.challenge)}
     <div class="game-tile">
@@ -2347,11 +2388,7 @@ function gameHtml(g) {
       <p class="game-tile__v"><b class="game-big">${g.streak}</b> ${ro ? (g.streak === 1 ? 'lună pe plus' : 'luni la rând pe plus') : (g.streak === 1 ? 'month ahead' : 'months in a row ahead')}</p>
       <p class="game-tile__s">${g.streak ? (ro ? 'Luna aceasta o poate prelungi.' : 'This month can extend it.') : (ro ? 'Încheiați o lună cu mai mult decât a ieșit și pornește.' : 'End a month with more in than out to start it.')}</p>
     </div>
-    <div class="game-tile">
-      <p class="game-tile__k">${ro ? 'Fond de siguranță' : 'Safety cushion'}</p>
-      <p class="game-tile__v"><b class="game-big">${cover == null ? '—' : gameNum(cover)}</b> ${ro ? 'luni de cheltuieli' : 'months of spending'}</p>
-      <p class="game-tile__s">${gameMoney(g.savings.balance)} ${ro ? 'economisiți' : 'saved'}${g.savings.avg_spend ? ` · ${ro ? 'o lună costă' : 'a month costs'} ${gameMoney(g.savings.avg_spend)}` : ''}</p>
-    </div>
+    ${gameCushionHtml(g)}
   </div>`;
   const badgeLi = (b) => {
     const [nRo, nEn, dRo, dEn] = GAME_BADGES[b.id] || [b.id, b.id, '', ''];
@@ -2381,16 +2418,65 @@ function gameHtml(g) {
   </section>`;
 }
 // after the dashboard draws: the calculator's buttons, and remembering what was seen
-function gameWire(root, g) {
+function gameWire(root, g, rerender) {
   const box = root.querySelector('#game');
   if (!box || !g) return;
+  const ess = box.querySelector('.game-ess');
+  const essTile = box.querySelector('.game-cushion');
+  const essToggle = box.querySelector('[data-ess-edit]');
+  const essOpen = (open) => {
+    if (!ess) return;
+    ess.hidden = !open;
+    essTile.classList.toggle('is-editing', open);
+    essToggle.hidden = open;
+    essToggle.setAttribute('aria-expanded', String(open));
+    if (open) ess.querySelector('input')?.focus(); else essToggle.focus();
+  };
   box.addEventListener('click', (e) => {
     const b = e.target.closest('[data-extra]');
-    if (!b) return;
-    GAME_EXTRA = Number(b.dataset.extra);
-    box.querySelector('#gamefree').innerHTML = gameFreeHtml(g);
-    box.querySelector(`[data-extra="${GAME_EXTRA}"]`)?.focus();
+    if (b) {
+      GAME_EXTRA = Number(b.dataset.extra);
+      box.querySelector('#gamefree').innerHTML = gameFreeHtml(g);
+      box.querySelector(`[data-extra="${GAME_EXTRA}"]`)?.focus();
+      return;
+    }
+    if (e.target.closest('[data-ess-edit]')) return essOpen(true);
+    if (e.target.closest('[data-ess-cancel]')) return essOpen(false);
+    if (e.target.closest('[data-ess-add]')) {
+      const rows = ess.querySelector('.game-ess__rows');
+      rows.insertAdjacentHTML('beforeend', ess.querySelector('template[data-ess-row]').innerHTML);
+      rows.lastElementChild.querySelector('input')?.focus();
+      return;
+    }
+    const del = e.target.closest('[data-ess-del]');
+    if (del) {
+      const r = del.closest('.game-ess__row');
+      (r.nextElementSibling || r.previousElementSibling)?.querySelector('input')?.focus();
+      r.remove();
+    }
   });
+  ess?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    // a row left completely empty is a row nobody meant; one half filled in is a mistake to point at
+    const rows = [...ess.querySelectorAll('.game-ess__row')].map((r) => ({ r, label: r.querySelector('[name=label]').value.trim(), amount: r.querySelector('[name=amount]').value }));
+    const items = rows.filter((x) => x.label || x.amount !== '');
+    const bad = items.find((x) => !x.label || x.amount === '' || !(Number(x.amount) >= 0));
+    if (bad) {
+      const field = bad.r.querySelector(!bad.label ? '[name=label]' : '[name=amount]');
+      field.setAttribute('aria-invalid', 'true');
+      field.focus();
+      toast(gameRo() ? (!bad.label ? 'Fiecare rând are nevoie de un nume.' : 'Fiecare rând are nevoie de o sumă, 0 sau mai mult.') : (!bad.label ? 'Every row needs a name.' : 'Every row needs an amount of 0 or more.'), 'error');
+      return;
+    }
+    const btn = ess.querySelector('[type=submit]');
+    btn.disabled = true;
+    try {
+      await api('/essentials', { method: 'PUT', body: { items: items.map((x) => ({ label: x.label, amount: Number(x.amount) })) } });
+      toast(gameRo() ? 'Salvat. Fondul de siguranță e recalculat.' : 'Saved. The cushion is recalculated.', 'success');
+      rerender?.();
+    } catch (err) { btn.disabled = false; toast(err.message, 'error'); }
+  });
+  ess?.addEventListener('input', (e) => e.target.removeAttribute('aria-invalid'));
   const { earned, fresh, levelUp } = gameFresh(g);
   const ro = gameRo();
   if (levelUp) {
