@@ -173,7 +173,7 @@ test('the debt-free calculator agrees with the Credits tab, and an extra only ev
   const more = gameSimulate(g.debt.credits, 500);
   assert.ok(more.months < base.months, 'paying more finishes sooner');
   assert.ok(more.interest < base.interest, 'and costs less interest');
-  assert.deepEqual(gameSimulate([], 500), { months: 0, interest: 0, peopleMonths: 0 });
+  assert.deepEqual(gameSimulate([], 500), { months: 0, interest: 0, peopleMonths: 0, paidAt: [] });
 });
 
 test('the extra goes to the dearest credit first', () => {
@@ -300,24 +300,25 @@ test('the BNR feed is read for euro and pound, honouring a multiplier', async (t
   assert.equal(g.debt.people[0].rate, 5.3272);
 });
 
-test('each calculator moves only its own money', () => {
+test('each calculator moves only its own money, and people are paid only from the extra', () => {
   const credits = [{ balance: 20000, rate: 0.01, payment: 500 }];
-  // Eni is promised within 4 months, so 250 a month; Mihai has no date
-  const dated = [{ balance: 1000, pay: 250 }];
-  const undated = [{ balance: 600, pay: 0 }];
+  const people = [{ balance: 1000 }, { balance: 600 }];
 
   // free of credits: people never touch the credit's money, whatever they are owed
-  assert.equal(gameSimulate(credits, 500, [...dated, ...undated], 'credits').months, gameSimulate(credits, 500).months);
-  // owing nobody: the dates alone finish the dated debt on time, and nothing finishes the undated one
-  assert.equal(gameSimulate([], 0, dated, 'people').peopleMonths, 4);
-  assert.equal(gameSimulate([], 0, [...dated, ...undated], 'people').peopleMonths, null);
-  // an extra aimed at people finishes both, and leaves the credit exactly as it was
-  const p = gameSimulate(credits, 500, [...dated, ...undated], 'people');
-  assert.equal(p.peopleMonths, 3, '1 600 owed at 250 by the date plus 500 extra: 750, 750, and the last 100');
+  assert.equal(gameSimulate(credits, 500, people, 'credits').months, gameSimulate(credits, 500).months);
+  // credits pay themselves every month; nobody else does, so with no extra the people are never paid
+  const none = gameSimulate(credits, 0, people, 'all');
+  assert.equal(none.peopleMonths, null);
+  assert.deepEqual(none.paidAt, [null, null]);
+  assert.equal(none.months, gameSimulate(credits, 0).months, 'the credit keeps its schedule all the same');
+  // owing nobody: the extra alone, in order, and the credit exactly as it was
+  const p = gameSimulate(credits, 500, people, 'people');
+  assert.deepEqual(p.paidAt, [2, 4], '1 000 in two months of 500, then the 600 by the fourth');
+  assert.equal(p.peopleMonths, 4);
   assert.equal(p.months, gameSimulate(credits, 0).months, 'the credit keeps its own schedule');
-  // free of everything: people first, then the credit, and sooner than the credit alone
-  const all = gameSimulate(credits, 500, [...dated, ...undated], 'all');
-  assert.equal(all.peopleMonths, 3);
+  // free of everything: people first, then the credit, sooner than the credit alone
+  const all = gameSimulate(credits, 500, people, 'all');
+  assert.deepEqual(all.paidAt, [2, 4]);
   assert.ok(all.months < gameSimulate(credits, 0).months);
   assert.ok(all.months >= gameSimulate(credits, 500).months, 'paying people first is the price of putting them first');
 });

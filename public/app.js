@@ -2147,7 +2147,7 @@ const GAME_BADGES = {
   goal: ['Obiectiv atins', 'Goal reached', 'Un obiectiv de economii atins.', 'A savings goal reached.'],
   budget: ['Sub buget', 'Within budget', 'Luna trecută, toate bugetele respectate.', 'Last month, every budget kept.'],
 };
-const GAME_EXTRAS = [0, 1000, 2500, 5000];
+const GAME_EXTRAS = [0, 1000, 2500, 5000, 7500, 10000];
 // what each calculator is set to: its own extra a month
 const GAME_EXTRA = { credits: 0, people: 0, all: 0 };
 const gameRo = () => LANG === 'ro';
@@ -2167,21 +2167,20 @@ const gameMonthAhead = (n) => {
   return monthLabel(new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + n, 1)).toISOString().slice(0, 7), { short: false });
 };
 // The same amortisation as the Credits tab, for every open credit at once: each pays its own
-// instalment (the last one only what is left). People are paid what their dates ask (`pay`, the
-// balance spread over the months left; nothing for a debt with no date). The extra goes where
-// `to` says: 'credits' only to the credits, 'people' only to the people, 'all' to the people
-// first and then to the credits. Among credits the highest interest goes first, the order that
-// saves the most. A finished credit's instalment does not roll over to the next, so "no extra"
-// is exactly the schedule as it stands.
+// instalment every month (the last one only what is left). Nobody else is paid by itself: money
+// for people only ever comes out of the extra. The extra goes where `to` says: 'credits' only to
+// the credits, 'people' only to the people, 'all' to the people first, in the order given, and
+// then to the credits. Among credits the highest interest goes first, the order that saves the
+// most. A finished credit's instalment does not roll over to the next, so "no extra" is exactly
+// the schedule as it stands. `paidAt` is the month each person is paid off (null: never).
 function gameSimulate(credits, extra, people = [], to = 'all') {
   const cs = credits.map((c) => ({ bal: Number(c.balance), r: Number(c.rate), pay: Number(c.payment) })).filter((c) => c.bal > 0.005);
-  const ps = people.map((p) => ({ bal: Number(p.balance), pay: Number(p.pay) || 0 })).filter((p) => p.bal > 0.005);
-  const toPeople = to !== 'credits', toCredits = to !== 'people';
-  let month = 0, interest = 0, peopleMonths = ps.length ? null : 0, creditMonths = cs.length ? null : 0;
+  const ps = people.map((p) => ({ bal: Math.max(0, Number(p.balance) || 0) }));
+  const paidAt = ps.map((p) => (p.bal > 0.005 ? null : 0));
+  const toPeople = to !== 'credits' && extra > 0, toCredits = to !== 'people';
   const owing = (xs) => xs.some((x) => x.bal > 0.005);
-  // people can only finish if something is paid to them: a date, or an extra aimed their way
-  const peopleMoving = () => ps.some((p) => p.bal > 0.005 && (p.pay > 0 || (extra > 0 && toPeople)));
-  while ((owing(cs) || peopleMoving()) && month < 1200) {
+  let month = 0, interest = 0, creditMonths = cs.length ? null : 0;
+  while ((owing(cs) || (toPeople && owing(ps))) && month < 1200) {
     let pool = extra;
     for (const c of cs) {
       if (c.bal <= 0.005) continue;
@@ -2189,65 +2188,82 @@ function gameSimulate(credits, extra, people = [], to = 'all') {
       interest += i;
       c.bal = Math.max(0, c.bal + i - c.pay);
     }
-    for (const p of ps) if (p.bal > 0.005) p.bal = Math.max(0, p.bal - p.pay);
-    const targets = [...(toPeople ? ps : []), ...(toCredits ? cs.filter((x) => x.bal > 0.005).sort((a, b) => b.r - a.r) : [])];
-    for (const c of targets) {
-      if (pool <= 0) break;
-      if (c.bal <= 0.005) continue;
-      const take = Math.min(pool, c.bal);
-      c.bal -= take; pool -= take;
-    }
     month++;
-    if (peopleMonths == null && !owing(ps)) peopleMonths = month;
+    if (toPeople) {
+      ps.forEach((p, k) => {
+        if (pool <= 0 || p.bal <= 0.005) return;
+        const take = Math.min(pool, p.bal);
+        p.bal -= take; pool -= take;
+        if (p.bal <= 0.005) paidAt[k] = month;
+      });
+    }
+    if (toCredits) {
+      for (const c of cs.filter((x) => x.bal > 0.005).sort((a, b) => b.r - a.r)) {
+        if (pool <= 0) break;
+        const take = Math.min(pool, c.bal);
+        c.bal -= take; pool -= take;
+      }
+    }
     if (creditMonths == null && !owing(cs)) creditMonths = month;
   }
-  return { months: creditMonths ?? month, interest, peopleMonths };
+  const peopleMonths = paidAt.some((m) => m == null) ? null : Math.max(0, ...paidAt);
+  return { months: creditMonths ?? month, interest, peopleMonths, paidAt };
 }
 // Three calculators, each with its own extra: free of credits, free of what is owed to people,
-// and free of both. Each answers one question, so each moves only its own money.
+// and free of both. Credits pay themselves every month; people are paid only from what is left
+// over, so without an extra the debts to people simply stay where they are.
 const GAME_CALCS = ['credits', 'people', 'all'];
 function gameCalcHtml(g, kind) {
   const ro = gameRo();
   const credits = g.debt.credits;
   // the people owed, in the household's currency at today's rate, so a debt in euro shares the pot
   const owed = g.debt.people.filter((p) => p.balance_home != null);
-  const people = owed.map((p) => ({ balance: p.balance_home, pay: p.plan ? p.balance_home / p.plan.months_left : 0 }));
   if (kind === 'credits' && !credits.length) return '';
-  if (kind === 'people' && !people.length) return '';
-  if (kind === 'all' && !(credits.length && people.length)) return '';
-  const undated = owed.filter((p) => !p.plan).map((p) => esc(p.person));
+  if (kind === 'people' && !owed.length) return '';
+  if (kind === 'all' && !(credits.length && owed.length)) return '';
   const extra = GAME_EXTRA[kind] || 0;
   const cs = kind === 'people' ? [] : credits;
-  const ps = kind === 'credits' ? [] : people;
+  const ps = kind === 'credits' ? [] : owed.map((p) => ({ balance: p.balance_home }));
   const base = gameSimulate(cs, 0, ps, kind);
   const sim = extra ? gameSimulate(cs, extra, ps, kind) : base;
-  // the month the question is about, in months from now, for a given run; null when it never
-  // comes. A credit's next instalment is next month's, but a person's plan counts this month as
-  // its first, so the n-th month of paying people back is n - 1 months from now.
+  // In months from now; null when it never comes. A credit's next instalment is next month's,
+  // but money for people can go this month, so the n-th month of paying them is n - 1 from now.
   const peopleEnd = (r) => (r.peopleMonths == null ? null : Math.max(0, r.peopleMonths - 1));
   const end = (r) => (kind === 'credits' ? r.months : kind === 'people' ? peopleEnd(r) : peopleEnd(r) == null ? null : Math.max(r.months, peopleEnd(r)));
   const fromNow = (n) => (n <= 0 ? (ro ? 'chiar luna asta' : 'this very month') : `${ro ? 'peste' : 'in'} ${gameMonths(n)}`);
   const title = { credits: ro ? 'Fără credite' : 'Credit-free', people: ro ? 'Fără datorii la oameni' : 'Owing nobody', all: ro ? 'Fără credite și datorii' : 'Free of everything' }[kind];
-  const where = {
-    credits: ro ? 'Banii în plus merg la creditul cu dobânda cea mai mare.' : 'The extra goes to the credit with the highest interest.',
-    people: ro ? 'Banii în plus merg la oameni, peste ce cer termenele.' : 'The extra goes to people, on top of what the dates ask.',
-    all: ro ? 'Banii în plus merg întâi la oameni, apoi la creditul cu dobânda cea mai mare.' : 'The extra goes to people first, then to the credit with the highest interest.',
-  }[kind];
-  const b = end(base);
-  const head = b != null
-    ? `<p class="game-calc__date"><b class="game-num">${gameMonthAhead(b)}</b><span>${fromNow(b)}</span></p>`
-    : `<p class="game-calc__date"><b class="game-num">—</b><span>${ro ? `${undated.join(', ')} ${undated.length === 1 ? 'nu are' : 'nu au'} termen` : `${undated.join(', ')} ${undated.length === 1 ? 'has' : 'have'} no date`}</span></p>`;
-  let what = where;
-  if (extra) {
-    const e = end(sim);
+  const e = end(sim);
+  // the date at the top answers the question for the amount chosen
+  const head = e != null
+    ? `<p class="game-calc__date"><b class="game-num">${gameMonthAhead(e)}</b><span>${fromNow(e)}</span></p>`
+    : `<p class="game-calc__date"><b class="game-num">—</b><span>${ro ? 'oamenii primesc doar din banii în plus' : 'people are only paid from money left over'}</span></p>`;
+  let what;
+  if (!extra) {
+    what = {
+      credits: ro ? 'Creditele se plătesc singure, lunar. Alegeți o sumă în plus pentru creditul cu dobânda cea mai mare.' : 'Credits pay themselves every month. Pick an extra for the one with the highest interest.',
+      people: ro ? 'Oamenii primesc doar din ce vă rămâne în plus. Alegeți cât puneți deoparte pe lună.' : 'People are only paid from what is left over. Pick how much to set aside a month.',
+      all: ro ? 'Creditele se plătesc singure; oamenii doar din ce rămâne în plus. Suma aleasă merge întâi la oameni, apoi la creditul cu dobânda cea mai mare.' : 'Credits pay themselves; people only from what is left over. The amount goes to people first, then to the credit with the highest interest.',
+    }[kind];
+  } else {
+    const parts = [];
+    const b = end(base);
+    if (kind === 'credits' && b != null && b - e > 0) parts.push(ro ? `cu <b>${gameMonths(b - e)}</b> mai devreme` : `<b>${gameMonths(b - e)}</b> sooner`);
+    // when each person has their money: the n-th month of paying is n - 1 months from now
+    const paidWhen = owed.map((p, k) => `${esc(p.person)} ${sim.paidAt[k] == null ? (ro ? 'niciodată' : 'never') : `${ro ? 'în' : 'in'} ${gameMonthAhead(sim.paidAt[k] - 1)}`}`);
+    if (kind === 'people') parts.push(paidWhen.join(', '));
+    if (kind === 'all' && peopleEnd(sim) != null) parts.push(ro ? `oamenii până în <b>${gameMonthAhead(peopleEnd(sim))}</b>` : `people by <b>${gameMonthAhead(peopleEnd(sim))}</b>`);
     const saved = Math.max(0, base.interest - sim.interest);
-    const sooner = b != null && e != null ? b - e : null;
-    what = e == null ? (ro ? 'Nici așa nu se termină: mai e cineva fără termen.' : 'Not even then: somebody still has no date.')
-      : (ro ? `Cu <b>${gameMoney(extra)}</b> în plus pe lună: <b>${gameMonthAhead(e)}</b>`
-        : `With <b>${gameMoney(extra)}</b> extra a month: <b>${gameMonthAhead(e)}</b>`)
-        + (sooner > 0 ? (ro ? `, cu <b>${gameMonths(sooner)}</b> mai devreme` : `, <b>${gameMonths(sooner)}</b> sooner`) : '')
-        + (kind !== 'people' && saved > 0.5 ? (ro ? `, și <b>${gameMoney(saved)}</b> dobândă pe care nu o mai plătiți` : `, and <b>${gameMoney(saved)}</b> of interest you never pay`) : '')
-        + '.';
+    if (kind !== 'people' && saved > 0.5) parts.push(ro ? `<b>${gameMoney(saved)}</b> dobândă pe care nu o mai plătiți` : `<b>${gameMoney(saved)}</b> of interest you never pay`);
+    what = parts.length ? `${ro ? 'Cu' : 'With'} <b>${gameMoney(extra)}</b> ${ro ? 'în plus pe lună' : 'extra a month'}: ${parts.join(kind === 'people' ? '; ' : ro ? ', și ' : ', and ')}.` : '';
+    // against each person's target: the household's own aim, so said as reached or not, never as late
+    if (kind !== 'credits') {
+      const aimed = owed.map((p, k) => ({ p, at: sim.paidAt[k] })).filter((x) => x.p.plan);
+      const missed = aimed.filter((x) => x.at == null || x.at > x.p.plan.months_left);
+      const target = (p) => `${esc(p.person)} (${monthLabel(p.due_date.slice(0, 7), { short: false })})`;
+      if (missed.length) what += ` ${ro ? 'Nu atinge ținta pentru' : 'Misses the target for'} ${missed.map((x) => target(x.p)).join(', ')}.`;
+      else if (aimed.length) what += ` ${ro ? (aimed.length === 1 ? 'Atinge ținta.' : 'Atinge toate țintele.') : (aimed.length === 1 ? 'Reaches the target.' : 'Reaches every target.')}`;
+    }
+    what = what.trim();
   }
   return `<div class="game-calc" data-calc-box="${kind}">
       <h4 class="game-calc__k">${title}</h4>
@@ -2276,17 +2292,18 @@ function gamePeopleHtml(g) {
   const cards = people.map((p) => {
     const paid = p.amount > 0 ? Math.max(0, Math.min(1, p.repaid / p.amount)) : 0;
     const mo = (a) => gameMoneyIn(a, p.currency);
-    const due = p.overdue ? (ro ? `termen depășit, ${fdate(p.due_date)}` : `overdue, ${fdate(p.due_date)}`)
-      : p.due_date ? (ro ? `până pe ${fdate(p.due_date)}` : `by ${fdate(p.due_date)}`)
-      : (ro ? 'fără termen' : 'no date agreed');
+    // the date is the household's own target, so a passed one is said plainly, not as an alarm
+    const due = p.overdue ? (ro ? `ținta a trecut, ${fdate(p.due_date)}` : `target passed, ${fdate(p.due_date)}`)
+      : p.due_date ? (ro ? `țintă: ${fdate(p.due_date)}` : `target: ${fdate(p.due_date)}`)
+      : (ro ? 'fără țintă' : 'no target');
     // a debt in another currency shows what it is in lei today, or says plainly that it cannot
     const home = p.currency === g.currency ? ''
       : p.balance_home != null ? `<p class="game-person__home">≈ ${gameMoney(p.balance_home)}</p>`
       : `<p class="game-person__home">${ro ? 'Fără curs BNR, nu intră în nivel.' : 'No BNR rate, not in the level.'}</p>`;
-    // with a date promised: what each month has to carry to make it, and how this one is doing
+    // with a target: what each month has to carry to reach it, and how this one is doing
     const done = p.plan && p.plan.back_now >= p.plan.monthly - 0.005;
     const plan = p.plan ? `<div class="game-person__plan${done ? ' is-done' : ''}">
-        <p><b>${mo(p.plan.monthly)}</b> ${ro ? 'pe lună' : 'a month'}${p.plan.months_left > 1 ? (ro ? `, încă ${p.plan.months_left} luni` : `, ${p.plan.months_left} more months`) : (ro ? ', tot luna asta' : ', all of it this month')}</p>
+        <p>${ro ? 'Pentru țintă' : 'For the target'}: <b>${mo(p.plan.monthly)}</b> ${ro ? 'pe lună' : 'a month'}${p.plan.months_left > 1 ? (ro ? `, încă ${p.plan.months_left} luni` : `, ${p.plan.months_left} more months`) : (ro ? ', tot luna asta' : ', all of it this month')}</p>
         <p class="game-person__now">${done ? icon('check') : ''}${ro ? 'Luna asta' : 'This month'}: ${mo(p.plan.back_now)} ${ro ? 'din' : 'of'} ${mo(p.plan.monthly)}</p>
       </div>` : '';
     return `<li class="game-person${p.overdue ? ' is-overdue' : ''}">

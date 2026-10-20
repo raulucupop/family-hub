@@ -4680,7 +4680,7 @@ const CATEGORY_SET = new Set(['Groceries', 'Utilities', 'Transportation', 'Enter
    that is either true or not.
    Money owed to people comes first. A bank charges interest and waits; a friend or a relative does
    neither and is still owed, so a leu given back to a person counts GAME_PEOPLE_WEIGHT times in the
-   level, a date promised becomes a monthly plan, and the calculator pays people before any credit.
+   level, a target date becomes a monthly plan, and a calculator pays people before any credit.
    Money is summed in the household's currency: a debt in euro joins at the BNR rate, and with no
    rate it is listed and left out rather than added at par. Spending is account spending (on_card = 0),
    the same figure the dashboard reports, so a card purchase is not counted twice once the card
@@ -4745,8 +4745,9 @@ function gameState(fid, now = new Date()) {
   const active = cs.filter((x) => x.s.balance > 0.005);
   const freeDate = active.length ? active.map((x) => x.s.payoff_date).sort().pop() : null;
   // the people still owed, the most pressing first: overdue, then by the date promised, then the oldest
-  // A person with a date promised gets a plan: what is left on the first of this month, spread
-  // evenly over the months up to and including the one it is due. Overdue means all of it, now.
+  // A person with a target date gets a plan: what is left on the first of this month, spread
+  // evenly over the months up to and including the target's. The target is the household's own
+  // aim, not a deadline; the plan only says what reaching it would take, nothing is assumed paid.
   const monthIndex = (iso) => Number(iso.slice(0, 4)) * 12 + Number(iso.slice(5, 7));
   const people = owedToPeople.filter((l) => !l.settled).map((l) => {
     let plan = null;
