@@ -1487,115 +1487,116 @@ b, strong, th, optgroup, h1, h2, h3, h4, h5, h6 { font-weight: 600; }
 
 /* ---------- the money game (dashboard "Owed and saved") ---------- */
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-.game { margin-top: 16px; display: grid; gap: 24px; }
+.game {
+  --bronze: #b0793f; --silver: #8c99a3; --gold: #c9a227; --platinum: #4fa3a5; --diamond: #5b8def;
+  margin-top: 16px; display: grid; gap: 32px;
+}
+.game p, .game h4 { margin: 0; }
+.game h4 { font-size: 16px; font-weight: 600; }
 .game__title { margin: 0; }
-.game p { margin: 0; }
-.game-climb { display: grid; gap: 8px; }
-.game-climb__head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; }
-.game-pct b { font-family: var(--display); font-size: 1.55rem; letter-spacing: -.02em; }
-.game-pct { color: var(--ink-soft); font-size: 14px; }
-/* the climb: one track from nothing paid to everything paid, a tick at each level */
-.game-track { position: relative; height: 16px; border-radius: 999px; background: var(--paper); overflow: hidden; box-shadow: inset 0 0 0 1px var(--hair); }
-.game-track__fill { position: absolute; inset: 0; transform-origin: left; transform: scaleX(var(--p)); background: var(--accent); border-radius: inherit; transition: transform 300ms var(--ease-out); }
-.game-track__tick { position: absolute; top: 3px; bottom: 3px; width: 2px; margin-left: -1px; background: var(--rule); border-radius: 1px; }
-.game-track__tick.is-past { background: color-mix(in oklab, var(--card) 70%, transparent); }
-.game-climb__foot { font-size: 14px; color: var(--ink-soft); }
-.game-climb__foot b { color: var(--ink); }
-/* the rank: five metals of five levels each, a pill tinted with its metal */
-.game-level { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
-.game-level .muted { font-size: 14px; }
-.game-level .muted b { font-family: inherit; font-size: inherit; letter-spacing: 0; }
+/* the big figures share one face and one size */
+.game-num { font-family: var(--display); font-size: 1.55rem; font-weight: 600; letter-spacing: -.02em; line-height: 1.1; }
+
+/* ---- the road: five ranks, each in its metal */
+.game-climb { display: grid; gap: 12px; }
+.game-climb__head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.game-level { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.game-level__n { font-size: 14px; color: var(--ink-soft); }
+.game-pct { font-size: 14px; color: var(--ink-soft); }
+.game-pct .game-num { color: var(--ink); }
 .game-rank { --metal: var(--rule); display: inline-block; font-family: var(--display); font-size: 1.55rem; font-weight: 600; letter-spacing: -.02em; line-height: 1.1;
-  padding: 4px 12px; border-radius: 999px; border: 1px solid var(--metal); background: color-mix(in oklab, var(--metal) 16%, var(--card)); color: var(--ink); }
-.game-rank--bronze { --metal: #b0793f; }
-.game-rank--silver { --metal: #8c99a3; }
-.game-rank--gold { --metal: #c9a227; }
-.game-rank--platinum { --metal: #4fa3a5; }
-.game-rank--diamond { --metal: #5b8def; }
+  padding: 4px 16px; border-radius: 999px; background: color-mix(in oklab, var(--metal) 18%, var(--card)); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--metal) 60%, transparent); color: var(--ink); }
+.game-rank--bronze { --metal: var(--bronze); }
+.game-rank--silver { --metal: var(--silver); }
+.game-rank--gold { --metal: var(--gold); }
+.game-rank--platinum { --metal: var(--platinum); }
+.game-rank--diamond { --metal: var(--diamond); }
 .game-rank--free { --metal: var(--ok); }
-/* the short bar: how far through the current level, so there is always something close to win */
-.game-step { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 8px; font-size: 12px; color: var(--ink-soft); }
-.game-step__k { font-weight: 600; }
+.game-road { display: grid; gap: 8px; }
+.game-road__track { position: relative; height: 20px; }
+.game-road__band { --metal: var(--rule); position: absolute; top: 0; bottom: 0; overflow: hidden; border-radius: 4px;
+  background: color-mix(in oklab, var(--metal) 22%, var(--paper)); box-shadow: inset -2px 0 0 var(--card); }
+.game-road__band--bronze { border-radius: 999px 4px 4px 999px; }
+.game-road__band--diamond { border-radius: 4px 999px 999px 4px; box-shadow: none; }
+.game-road__band i { position: absolute; inset: 0 auto 0 0; width: 100%; background: var(--metal); transform-origin: left; transform: scaleX(var(--f));
+  animation: game-road-fill 300ms var(--ease-out) both; animation-delay: calc(var(--i) * 60ms); }
+@keyframes game-road-fill { from { transform: scaleX(0); } }
+.game-road__band--bronze { --metal: var(--bronze); }
+.game-road__band--silver { --metal: var(--silver); }
+.game-road__band--gold { --metal: var(--gold); }
+.game-road__band--platinum { --metal: var(--platinum); }
+.game-road__band--diamond { --metal: var(--diamond); }
+/* "you are here": a ring on the road where the household stands */
+.game-road__here { position: absolute; top: 50%; width: 16px; height: 16px; margin: -8px 0 0 -8px; border-radius: 50%;
+  background: var(--card); box-shadow: 0 0 0 3px var(--ink), var(--e1); }
+.game-road__names { position: relative; height: 16px; font-size: 12px; color: var(--ink-soft); }
+.game-road__names span { position: absolute; top: 0; white-space: nowrap; }
+.game-road__names span.is-reached { color: var(--ink); font-weight: 500; }
+.game-step { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px; font-size: 12px; color: var(--ink-soft); }
+.game-step__k { font-weight: 600; color: var(--ink); }
 .game-step__bar { height: 6px; border-radius: 999px; background: var(--paper); overflow: hidden; }
 .game-step__bar i { display: block; height: 100%; background: var(--amber); border-radius: inherit; }
-/* priority one: money owed to people */
-.game-people { display: grid; gap: 12px; padding: 16px; border-radius: var(--r-ctl); border: 2px solid var(--amber); background: var(--amber-soft); }
-.game-people__head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
-.game-people__k { font-size: 16px; font-weight: 600; }
-.game-people__list { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
-.game-person { display: grid; gap: 4px; }
-.game-person__head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; font-size: 14px; }
-.game-person__head b:first-child { font-size: 16px; }
-.game-person .bar { margin-top: 0; background: var(--card); }
+.game-climb__foot { font-size: 14px; color: var(--ink-soft); max-width: 72ch; }
+.game-climb__foot b { color: var(--ink); }
+
+/* ---- priority one: money owed to people, a card each */
+.game-people { display: grid; gap: 16px; }
+.game-people__head { display: flex; align-items: center; gap: 8px 12px; flex-wrap: wrap; }
+.game-people__x { flex-basis: 100%; font-size: 14px; color: var(--ink-soft); }
+.game-tag { display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--amber); color: #1c2b33; white-space: nowrap; }
+.game-people__list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+.game-person { display: grid; gap: 8px; align-content: start; padding: 16px; border-radius: var(--r-ctl);
+  background: color-mix(in oklab, var(--amber) 7%, var(--card)); box-shadow: inset 0 3px 0 var(--amber), inset 0 0 0 1px var(--line); }
+.game-person.is-overdue { box-shadow: inset 0 3px 0 var(--red), inset 0 0 0 1px var(--line); }
+.game-person__top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.game-person__name { font-size: 16px; font-weight: 600; }
+.game-person__due { font-size: 12px; color: var(--ink-soft); white-space: nowrap; }
+.game-person.is-overdue .game-person__due { color: var(--red); font-weight: 600; }
+.game-person__left { font-size: 14px; color: var(--ink-soft); }
+.game-person__left .game-num { color: var(--ink); }
+.game-person__home { font-size: 12px; color: var(--ink-soft); margin-top: -4px; }
+.game-person .bar { margin-top: 0; background: color-mix(in oklab, var(--amber) 22%, var(--paper)); }
 .game-person .bar i { background: var(--amber); }
-.game-person__s { font-size: 12px; color: var(--ink-soft); }
-.game-person.is-overdue .game-person__s { color: var(--red); font-weight: 600; }
-.game-people__s { font-size: 14px; color: var(--ink-soft); }
-.game-people__s a { color: var(--ink); font-weight: 600; }
-.game-x { display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--amber); color: #1c2b33; white-space: nowrap; }
-.game-challenge.is-people { border: 2px solid var(--amber); }
-.game-challenge.is-people .bar i { background: var(--amber); }
-.game-challenge.is-people.is-won .bar i { background: var(--ok); }
-.game-badge.is-people { border-color: var(--amber); }
-.game-badge.is-people .game-x { justify-self: start; }
-#gamefree:empty { display: none; }
-/* the debt-free calculator */
-.game-free { display: grid; gap: 8px; padding: 16px; border-radius: var(--r-ctl); background: var(--accent-soft); }
+.game-person__plan { display: grid; gap: 4px; padding-top: 8px; border-top: 1px solid var(--line); font-size: 14px; }
+.game-person__now { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--ink-soft); }
+.game-person__now .ic { width: 14px; height: 14px; color: var(--ok); }
+.game-person__plan.is-done .game-person__now { color: var(--ok); font-weight: 600; }
+.game-people__log { justify-self: start; }
+
+/* ---- the debt-free calculator */
+.game-free { display: grid; gap: 12px; padding: 16px; border-radius: var(--r-ctl); background: var(--accent-soft); }
 .game-free__date { font-size: 16px; }
 .game-free__date .muted { font-size: 14px; }
-.game-free__what { font-size: 14px; }
-.game-free__note { font-size: 12px; margin-top: -4px; }
+.game-free__what { font-size: 14px; max-width: 72ch; }
 .game-extra { display: flex; flex-wrap: wrap; gap: 8px; }
-.game-chip { font: inherit; font-size: 14px; font-weight: 500; padding: 8px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--card); color: var(--ink); cursor: pointer; transition: background-color 150ms ease-out, border-color 150ms ease-out, color 150ms ease-out; }
+.game-chip { font: inherit; font-size: 14px; font-weight: 500; padding: 8px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--card); color: var(--ink); cursor: pointer;
+  transition: background-color 150ms ease-out, border-color 150ms ease-out, color 150ms ease-out; }
 .game-chip:hover { border-color: var(--accent); }
 .game-chip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
 .game-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-/* the challenge, the streak, the cushion */
-.game-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; }
-.game-tile { display: grid; gap: 8px; align-content: start; padding: 16px; border-radius: var(--r-ctl); border: 1px solid var(--line); }
-.game-tile__k { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-soft); }
-.game-tile__v { font-size: 16px; font-weight: 500; }
+#gamefree:empty { display: none; }
+
+/* ---- the streak and the cushion */
+.game-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+.game-tile { display: grid; gap: 12px; align-content: start; padding: 16px; border-radius: var(--r-ctl); box-shadow: inset 0 0 0 1px var(--line); }
+.game-tile__k { font-size: 14px; font-weight: 600; color: var(--ink-soft); }
+.game-tile__v { font-size: 16px; }
 .game-tile__s { font-size: 14px; color: var(--ink-soft); }
-.game-tile .bar { margin-top: 0; }
-.game-big { font-family: var(--display); font-size: 1.55rem; letter-spacing: -.02em; }
-.game-challenge.is-won { border-color: var(--ok); background: color-mix(in oklab, var(--ok) 8%, var(--card)); }
-.game-challenge.is-won .bar i { background: var(--ok); }
-.game-challenge.is-over { border-color: var(--red); }
-/* badges: earned ones are filled in, the rest show how close they are */
-.game-badges { display: grid; gap: 8px; }
-.game-badges__k { font-size: 14px; font-weight: 600; }
-.game-badges__k .muted { font-weight: 400; }
-.game-badges__list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
-.game-badge { display: flex; gap: 12px; align-items: flex-start; padding: 12px; border-radius: var(--r-ctl); border: 1px dashed var(--line); color: var(--ink-soft); }
-.game-badge__mark { flex: none; display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; border: 2px solid var(--line); }
-.game-badge__mark .ic { width: 14px; height: 14px; }
-.game-badge__t { display: grid; gap: 4px; min-width: 0; font-size: 14px; }
-.game-badge__d { font-size: 12px; }
-.game-badge__prog { display: block; height: 4px; border-radius: 999px; background: var(--paper); overflow: hidden; }
-.game-badge__prog i { display: block; height: 100%; background: var(--rule); border-radius: inherit; }
-.game-badge.is-done { border-style: solid; border-color: color-mix(in oklab, var(--accent) 40%, var(--line)); background: var(--accent-soft); color: var(--ink); }
-.game-badge.is-done .game-badge__mark { background: var(--accent); border-color: var(--accent); color: #fff; }
-.game-badge.is-done .game-badge__d { color: var(--ink-soft); }
-/* a badge earned since the last visit gets one ring, once */
-.game-badge.is-new { animation: game-new 300ms var(--ease-out) both; box-shadow: 0 0 0 2px var(--accent); }
-@keyframes game-new { from { transform: scale(.96); opacity: .4; } to { transform: none; opacity: 1; } }
-@media (max-width: 860px) {
-  .game-chip { min-height: 44px; }
-  .game-free, .game-tile, .game-people { padding: 12px; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .game-track__fill, .game-chip { transition: none; }
-  .game-badge.is-new { animation: none; }
-}
-/* the badges further off fold away under one line */
-.game-more { margin-top: 8px; }
-.game-more > summary { cursor: pointer; font-size: 14px; font-weight: 500; color: var(--ink-soft); padding: 8px 0; }
-.game-more > summary:hover { color: var(--ink); }
-.game-more[open] > summary { margin-bottom: 8px; }
-/* a person's monthly plan, from the date promised */
-.game-person__plan { font-size: 12px; color: var(--ink); }
-/* the cushion: what a month of the bare necessities is made of, and the list that can be edited */
-.game-ess__parts { font-size: 12px; color: var(--ink-soft); }
+.game-tile__s b { color: var(--ink); }
+/* a dot per month, the last twelve, filled when the month ended ahead */
+.game-dots { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 4px; }
+.game-dot { aspect-ratio: 1; max-width: 20px; border-radius: 50%; box-shadow: inset 0 0 0 2px var(--line); }
+.game-dot--plus { background: var(--accent); box-shadow: none; }
+.game-dot--minus { box-shadow: inset 0 0 0 2px color-mix(in oklab, var(--red) 55%, transparent); }
+.game-dots__ends { display: flex; justify-content: space-between; font-size: 12px; color: var(--ink-soft); margin-top: -8px; }
+/* what a month of the bare necessities is made of */
+.game-mix { display: flex; gap: 2px; height: 12px; border-radius: 999px; overflow: hidden; }
+.game-mix i { display: block; min-width: 4px; }
+.game-mix__legend { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; font-size: 12px; }
+.game-mix__legend li { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; align-items: center; gap: 8px; }
+.game-mix__legend i { width: 8px; height: 8px; border-radius: 2px; }
+.game-mix__legend span { color: var(--ink-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.game-mix__legend b { font-weight: 500; }
 .game-cushion [data-ess-edit] { justify-self: start; }
 .game-cushion.is-editing { grid-column: 1 / -1; }
 .game-ess { display: grid; gap: 8px; }
@@ -1604,4 +1605,39 @@ b, strong, th, optgroup, h1, h2, h3, h4, h5, h6 { font-weight: 600; }
 .game-ess__row { display: grid; grid-template-columns: minmax(0, 1fr) 140px auto; gap: 8px; align-items: center; }
 .game-ess [data-ess-add] { justify-self: start; }
 .game-ess input[aria-invalid="true"] { border-color: var(--red); box-shadow: 0 0 0 1px var(--red); }
-@media (max-width: 860px) { .game-ess__row { grid-template-columns: minmax(0, 1fr) 110px auto; } }
+
+/* ---- badges: medals whose ring fills as they get closer */
+.game-badges { display: grid; gap: 12px; }
+.game-badges__k span { font-weight: 400; color: var(--ink-soft); font-size: 14px; }
+.game-badges__list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px 24px; }
+.game-badge { --ring: var(--accent); display: flex; gap: 12px; align-items: center; color: var(--ink-soft); }
+.game-badge.is-people { --ring: var(--amber); }
+.game-badge__mark { flex: none; display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%;
+  background: conic-gradient(var(--ring) calc(var(--p) * 1turn), var(--line) 0); }
+.game-badge__mark > span { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 50%; background: var(--card); font-size: 12px; font-weight: 500; color: var(--ink-soft); }
+.game-badge__mark .ic { width: 18px; height: 18px; }
+.game-badge.is-done .game-badge__mark > span { background: var(--ring); color: #fff; }
+.game-badge.is-people.is-done .game-badge__mark > span { color: #1c2b33; }
+.game-badge__t { display: grid; gap: 2px; min-width: 0; font-size: 14px; }
+.game-badge__t b { font-weight: 600; color: var(--ink); }
+.game-badge:not(.is-done) .game-badge__t b { font-weight: 500; }
+.game-badge__d { font-size: 12px; }
+/* a badge earned since the last visit gets one ring, once */
+.game-badge.is-new .game-badge__mark { animation: game-new 300ms var(--ease-out) both; box-shadow: 0 0 0 3px color-mix(in oklab, var(--ring) 30%, transparent); }
+@keyframes game-new { from { transform: scale(.8); } to { transform: none; } }
+.game-more > summary { cursor: pointer; font-size: 14px; font-weight: 500; color: var(--ink-soft); padding: 8px 0; }
+.game-more > summary:hover { color: var(--ink); }
+.game-more[open] > summary { margin-bottom: 8px; }
+
+@media (max-width: 860px) {
+  .game { gap: 24px; }
+  .game-chip { min-height: 44px; }
+  .game-free, .game-tile, .game-person { padding: 12px; }
+  .game-ess__row { grid-template-columns: minmax(0, 1fr) 110px auto; }
+}
+/* on a phone the bronze band is a few pixels wide: name only the rank the household is in */
+@media (max-width: 520px) { .game-road__names span:not(.is-current) { display: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .game-road__band i, .game-badge.is-new .game-badge__mark { animation: none; }
+  .game-chip { transition: none; }
+}

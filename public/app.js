@@ -2115,8 +2115,8 @@ function ribbonHtml(reminders) {
    Paying down and saving up, made into something you can win. Every number comes from /api/game,
    which works it out from the household's own rows; this draws them, runs the debt-free
    calculator, and notices a badge or a level earned since the last visit. Money owed to people
-   comes first everywhere here: its own block at the top, the month's challenge, the first call on
-   any extra in the calculator, and three times the weight in the level. */
+   comes first everywhere here: its own block at the top with a monthly plan from each date promised,
+   the first call on any extra in the calculator, and three times the weight in the level. */
 // 25 levels in five ranks of five, then the top. Level 0 is before the first leu.
 const GAME_TIERS = { ro: ['Bronz', 'Argint', 'Aur', 'Platină', 'Diamant'], en: ['Bronze', 'Silver', 'Gold', 'Platinum', 'Diamond'] };
 const GAME_TIER_KEYS = ['bronze', 'silver', 'gold', 'platinum', 'diamond'];
@@ -2228,77 +2228,44 @@ function gameFreeHtml(g) {
     <p class="game-free__what" aria-live="polite">${what}</p>
   </div>`;
 }
-// Priority one: everyone the household still owes, the most pressing first
+// Priority one: everyone the household still owes, one card each, the most pressing first
 function gamePeopleHtml(g) {
   const people = g.debt.people;
   if (!people.length) return '';
   const ro = gameRo();
   const W = g.debt.people_weight;
-  const rows = people.map((p) => {
+  const cards = people.map((p) => {
     const paid = p.amount > 0 ? Math.max(0, Math.min(1, p.repaid / p.amount)) : 0;
-    const when = p.overdue ? (ro ? `Termen depășit: ${fdate(p.due_date)}` : `Overdue since ${fdate(p.due_date)}`)
-      : p.due_date ? (ro ? `Promis până pe ${fdate(p.due_date)}` : `Promised by ${fdate(p.due_date)}`)
-      : (ro ? 'Fără termen' : 'No date agreed');
-    // a debt in another currency shows what it is in lei today, or says plainly that it cannot
-    const foreign = p.currency === g.currency ? ''
-      : p.balance_home != null ? ` <span class="muted">≈ ${gameMoney(p.balance_home)}</span>`
-      : ` <span class="muted">· ${ro ? 'fără curs BNR, nu intră în nivel' : 'no BNR rate, not in the level'}</span>`;
-    // with a date promised: what each month has to carry to make it, and how this one is doing
     const mo = (a) => gameMoneyIn(a, p.currency);
-    const plan = p.plan ? `<p class="game-person__plan">${ro
-      ? `Plan: <b>${mo(p.plan.monthly)}</b> pe lună${p.plan.months_left > 1 ? `, încă ${p.plan.months_left} luni` : ', tot luna asta'} · luna asta: ${mo(p.plan.back_now)} din ${mo(p.plan.monthly)}`
-      : `Plan: <b>${mo(p.plan.monthly)}</b> a month${p.plan.months_left > 1 ? ` for ${p.plan.months_left} more months` : ', all of it this month'} · this month: ${mo(p.plan.back_now)} of ${mo(p.plan.monthly)}`}</p>` : '';
+    const due = p.overdue ? (ro ? `termen depășit, ${fdate(p.due_date)}` : `overdue, ${fdate(p.due_date)}`)
+      : p.due_date ? (ro ? `până pe ${fdate(p.due_date)}` : `by ${fdate(p.due_date)}`)
+      : (ro ? 'fără termen' : 'no date agreed');
+    // a debt in another currency shows what it is in lei today, or says plainly that it cannot
+    const home = p.currency === g.currency ? ''
+      : p.balance_home != null ? `<p class="game-person__home">≈ ${gameMoney(p.balance_home)}</p>`
+      : `<p class="game-person__home">${ro ? 'Fără curs BNR, nu intră în nivel.' : 'No BNR rate, not in the level.'}</p>`;
+    // with a date promised: what each month has to carry to make it, and how this one is doing
+    const done = p.plan && p.plan.back_now >= p.plan.monthly - 0.005;
+    const plan = p.plan ? `<div class="game-person__plan${done ? ' is-done' : ''}">
+        <p><b>${mo(p.plan.monthly)}</b> ${ro ? 'pe lună' : 'a month'}${p.plan.months_left > 1 ? (ro ? `, încă ${p.plan.months_left} luni` : `, ${p.plan.months_left} more months`) : (ro ? ', tot luna asta' : ', all of it this month')}</p>
+        <p class="game-person__now">${done ? icon('check') : ''}${ro ? 'Luna asta' : 'This month'}: ${mo(p.plan.back_now)} ${ro ? 'din' : 'of'} ${mo(p.plan.monthly)}</p>
+      </div>` : '';
     return `<li class="game-person${p.overdue ? ' is-overdue' : ''}">
-      <div class="game-person__head"><b>${esc(p.person)}</b><span class="amount">${ro ? 'mai aveți' : 'still owed'} <b>${gameMoneyIn(p.balance, p.currency)}</b> ${ro ? 'din' : 'of'} ${gameMoneyIn(p.amount, p.currency)}${foreign}</span></div>
-      <div class="bar"><i style="width:${Math.round(paid * 100)}%"></i></div>
-      <p class="game-person__s">${when}</p>${plan}
+      <div class="game-person__top"><b class="game-person__name">${esc(p.person)}</b><span class="game-person__due">${due}</span></div>
+      <p class="game-person__left"><b class="game-num">${mo(p.balance)}</b> ${ro ? 'din' : 'of'} ${mo(p.amount)}</p>
+      ${home}
+      <div class="bar" role="img" aria-label="${ro ? `${Math.round(paid * 100)}% dat înapoi` : `${Math.round(paid * 100)}% given back`}"><i style="width:${Math.round(paid * 100)}%"></i></div>
+      ${plan}
     </li>`;
   }).join('');
   return `<div class="game-people">
     <div class="game-people__head">
-      <p class="game-people__k">${ro ? 'Prioritatea 1 · Datorii la oameni' : 'Priority 1 · Owed to people'}</p>
-      <span class="game-x">×${W} ${ro ? 'la nivel' : 'in the level'}</span>
+      <h4 class="game-people__k">${ro ? 'Datorii la oameni' : 'Owed to people'}</h4>
+      <span class="game-tag">${ro ? 'Prioritatea 1' : 'Priority 1'}</span>
+      <p class="game-people__x">${ro ? `Un leu dat înapoi unui om urcă nivelul cât ${W} lei plătiți la bancă.` : `A leu given back to a person moves the level as much as ${W} paid to a bank.`}</p>
     </div>
-    <ul class="game-people__list">${rows}</ul>
-    <p class="game-people__s">${ro ? `Un leu dat înapoi unui om urcă nivelul cât ${W} lei plătiți la bancă.` : `A leu given back to a person moves the level as much as ${W} paid to a bank.`}
-      ${canWrite() ? `<a href="#money" data-tab="debt">${ro ? 'Notează o restituire' : 'Log a repayment'}</a>` : ''}</p>
-  </div>`;
-}
-function gameChallengeHtml(c) {
-  if (!c) return '';
-  const ro = gameRo();
-  const mon = monthLabel(c.month, { short: false }).split(' ')[0];
-  const p = Math.max(0, Math.min(1, c.progress / c.target));
-  const cat = esc(tr(c.category || ''));
-  const m = (n) => (c.kind === 'people' ? gameMoneyIn(n, c.currency) : gameMoney(n));
-  const title = {
-    people: ro ? `Dați înapoi oamenilor ${m(c.target)} în ${mon}` : `Give back ${m(c.target)} to people in ${mon}`,
-    save: ro ? `Puneți deoparte ${m(c.target)} în ${mon}` : `Put ${m(c.target)} aside in ${mon}`,
-    cut: ro ? `${cat} sub ${m(c.target)} în ${mon}` : `${cat} under ${m(c.target)} in ${mon}`,
-    plus: ro ? `Încheiați ${mon} cu ${m(c.target)} pe plus` : `End ${mon} ${m(c.target)} ahead`,
-  }[c.kind];
-  let status;
-  if (c.kind === 'cut') {
-    status = c.over
-      ? (ro ? `Depășit: ${m(c.progress)}. Luna viitoare iese.` : `Over: ${m(c.progress)}. Next month, then.`)
-      : (ro ? `${m(c.progress)} cheltuiți · mai aveți ${m(c.target - c.progress)} · luna trecută ${m(c.last)}`
-        : `${m(c.progress)} spent · ${m(c.target - c.progress)} left · last month ${m(c.last)}`);
-  } else if (c.kind === 'people') {
-    // where to start: the most pressing person, and the date they were promised
-    const first = c.person ? (ro ? ` · începeți cu ${esc(c.person)}${c.due_date ? (c.overdue ? `, termen depășit ${fdate(c.due_date)}` : `, promis până pe ${fdate(c.due_date)}`) : ''}`
-      : ` · start with ${esc(c.person)}${c.due_date ? (c.overdue ? `, overdue since ${fdate(c.due_date)}` : `, promised by ${fdate(c.due_date)}`) : ''}`) : '';
-    status = c.done
-      ? (c.balance > 0.005 ? (ro ? `Reușit. Mai aveți ${m(c.balance)} de dat în total${first}.` : `Done. ${m(c.balance)} still owed in all${first}.`)
-        : (ro ? 'Reușit. Nu mai datorați nimic nimănui.' : 'Done. You owe nobody anything.'))
-      : (ro ? `${m(c.progress)} din ${m(c.target)}${c.from_dates ? ', cât cer termenele luna asta' : ''}${first}` : `${m(c.progress)} of ${m(c.target)}${c.from_dates ? ', what the dates ask of this month' : ''}${first}`);
-  } else if (c.done) status = ro ? 'Reușit. Bravo.' : 'Done. Well played.';
-  else status = ro ? `${m(Math.max(0, c.progress))} din ${m(c.target)}` : `${m(Math.max(0, c.progress))} of ${m(c.target)}`;
-  const barCls = c.kind === 'cut' ? (c.over ? 'over' : p >= 0.8 ? 'near' : '') : '';
-  return `<div class="game-tile game-challenge${c.kind === 'people' ? ' is-people' : ''}${c.done ? ' is-won' : ''}${c.over ? ' is-over' : ''}">
-    <p class="game-tile__k">${ro ? 'Provocarea lunii' : 'This month’s challenge'}${c.kind === 'people' ? ` · ${ro ? 'prioritatea 1' : 'priority 1'}` : ''}</p>
-    <p class="game-tile__v">${title}</p>
-    <div class="bar"><i class="${barCls}" style="width:${Math.round(p * 100)}%"></i></div>
-    <p class="game-tile__s">${status}</p>
+    <ul class="game-people__list">${cards}</ul>
+    ${canWrite() ? `<a class="btn ghost small game-people__log" href="#money" data-tab="debt">${ro ? 'Notează o restituire' : 'Log a repayment'}</a>` : ''}
   </div>`;
 }
 // which badges are earned and which of those this person has not been shown yet, and whether the
@@ -2315,17 +2282,79 @@ function gameFresh(g) {
     levelUp: Number.isInteger(lastLevel) && g.debt.level > lastLevel,
   };
 }
+// The road: one band per rank, each in its metal, filled as far as the household has come
+function gameRoadHtml(g) {
+  const d = g.debt;
+  if (!(d.borrowed > 0)) return '';
+  const ro = gameRo();
+  const top = d.levels.length - 1;
+  const pct = d.paid_pct || 0;
+  // a rank begins at levels 1, 6, 11, 16, 21; the first band starts at nothing
+  const starts = [0, d.levels[6], d.levels[11], d.levels[16], d.levels[21]];
+  const bands = starts.map((a, t) => {
+    const b = starts[t + 1] ?? 100;
+    const fill = Math.max(0, Math.min(1, (pct - a) / (b - a)));
+    return { a, b, fill, key: GAME_TIER_KEYS[t], name: GAME_TIERS[ro ? 'ro' : 'en'][t] };
+  });
+  const current = Math.max(0, bands.filter((x) => pct >= x.a).length - 1);
+  const nextName = d.next_pct != null ? gameLevelName(d.level + 1, top) : '';
+  const toNext = d.next_pct == null ? ''
+    : d.to_next_people != null
+      ? (ro ? `Până la ${nextName}: încă <b>${gameMoney(d.to_next_people)}</b> dați înapoi oamenilor, sau ${gameMoney(d.to_next)} la credite.`
+        : `To ${nextName}: <b>${gameMoney(d.to_next_people)}</b> more given back to people, or ${gameMoney(d.to_next)} to credits.`)
+      : (ro ? `Până la ${nextName}: încă <b>${gameMoney(d.to_next)}</b>.` : `To ${nextName}: <b>${gameMoney(d.to_next)}</b> to go.`);
+  return `<div class="game-climb">
+      <div class="game-climb__head">
+        <p class="game-level"><span class="game-rank game-rank--${gameTierKey(d.level, top)}">${gameLevelName(d.level, top)}</span>
+          <span class="game-level__n">${ro ? 'Nivelul' : 'Level'} ${d.level} ${ro ? 'din' : 'of'} ${top}</span></p>
+        <p class="game-pct"><b class="game-num">${gameNum(d.paid_pct)}%</b> ${ro ? 'din drum' : 'of the way'}</p>
+      </div>
+      <div class="game-road" role="img" aria-label="${ro ? `${gameNum(d.paid_pct)}% din drum, nivelul ${d.level} din ${top}, ${gameLevelName(d.level, top)}` : `${d.paid_pct}% of the way, level ${d.level} of ${top}, ${gameLevelName(d.level, top)}`}">
+        <div class="game-road__track">
+          ${bands.map((x, i) => `<span class="game-road__band game-road__band--${x.key}" style="left:${x.a}%;width:${x.b - x.a}%"><i style="--f:${x.fill};--i:${i}"></i></span>`).join('')}
+          <span class="game-road__here" style="left:${pct}%"></span>
+        </div>
+        <div class="game-road__names" aria-hidden="true">${bands.map((x, i) => `<span class="${pct >= x.a ? 'is-reached' : ''}${i === current ? ' is-current' : ''}" style="left:${x.a}%">${x.name}</span>`).join('')}</div>
+      </div>
+      ${d.next_pct != null ? `<div class="game-step">
+        <span class="game-step__k">${ro ? 'Spre' : 'To'} ${nextName}</span>
+        <span class="game-step__bar"><i style="width:${Math.round(d.level_progress * 100)}%"></i></span>
+        <span class="game-step__v">${Math.round(d.level_progress * 100)}%</span>
+      </div>` : ''}
+      <p class="game-climb__foot">${ro ? `Mai aveți <b>${gameMoney(d.owed)}</b> din ${gameMoney(d.borrowed)} împrumutați.` : `<b>${gameMoney(d.owed)}</b> left of ${gameMoney(d.borrowed)} borrowed.`} ${toNext}</p>
+    </div>`;
+}
+// The streak, and the last twelve months it is made of: a dot each, filled when the month ended ahead
+function gameStreakHtml(g) {
+  const ro = gameRo();
+  const months = (g.months || []).slice(0, -1).slice(-12);
+  const state = (h) => (h.income > 0 && h.income > h.spent ? 'plus' : h.income > 0 || h.spent > 0 ? 'minus' : 'none');
+  const word = { plus: ro ? 'pe plus' : 'ahead', minus: ro ? 'pe minus' : 'behind', none: ro ? 'fără date' : 'no data' };
+  const dots = months.map((h) => {
+    const s = state(h);
+    return `<li class="game-dot game-dot--${s}" title="${monthLabel(h.m, { short: false })}: ${word[s]}"><span class="sr-only">${monthLabel(h.m, { short: false })}: ${word[s]}</span></li>`;
+  }).join('');
+  return `<div class="game-tile">
+      <p class="game-tile__k">${ro ? 'Seria' : 'Streak'}</p>
+      <p class="game-tile__v"><b class="game-num">${g.streak}</b> ${ro ? (g.streak === 1 ? 'lună pe plus' : 'luni la rând pe plus') : (g.streak === 1 ? 'month ahead' : 'months in a row ahead')}</p>
+      ${months.length ? `<ol class="game-dots">${dots}</ol>
+      <div class="game-dots__ends" aria-hidden="true"><span>${monthLabel(months[0].m)}</span><span>${monthLabel(months[months.length - 1].m)}</span></div>` : ''}
+      <p class="game-tile__s">${g.streak ? (ro ? 'Luna aceasta o poate prelungi.' : 'This month can extend it.') : (ro ? 'Încheiați o lună cu mai mult decât a ieșit și pornește.' : 'End a month with more in than out to start it.')}</p>
+    </div>`;
+}
 // The cushion is counted in months of the bare necessities: credits, bills, and the household's own
-// list (kindergarten, food), which can be edited right here.
+// list (kindergarten, food), which can be edited right here. The bar shows what a month is made of.
+const GAME_MIX_COLOURS = ['#4fa3a5', '#5b8def', '#8c99a3', '#b0793f', '#9a6fb0', '#c9a227'];
 function gameCushionHtml(g) {
   const ro = gameRo();
   const s = g.savings;
   const p = s.parts || { credits: 0, bills: 0, items: [] };
   const parts = [
-    p.credits > 0 && `${ro ? 'Credite' : 'Credits'} ${gameMoney(p.credits)}`,
-    p.bills > 0 && `${ro ? 'Facturi' : 'Bills'} ${gameMoney(p.bills)}`,
-    ...p.items.map((i) => `${esc(i.label)} ${gameMoney(i.amount)}`),
+    p.credits > 0 && { label: ro ? 'Credite' : 'Credits', amount: p.credits, colour: 'var(--accent)' },
+    p.bills > 0 && { label: ro ? 'Facturi' : 'Bills', amount: p.bills, colour: 'var(--amber)' },
+    ...p.items.filter((i) => i.amount > 0).map((i, k) => ({ label: i.label, amount: i.amount, colour: GAME_MIX_COLOURS[k % GAME_MIX_COLOURS.length] })),
   ].filter(Boolean);
+  const total = parts.reduce((a, x) => a + x.amount, 0);
   const row = (i = { label: '', amount: '' }) => `<div class="game-ess__row">
       <input name="label" maxlength="60" value="${esc(i.label)}" placeholder="${ro ? 'ex. Grădiniță' : 'e.g. Kindergarten'}" aria-label="${ro ? 'Ce' : 'What'}" required>
       <input name="amount" type="number" min="0" step="1" inputmode="decimal" value="${i.amount === '' ? '' : Number(i.amount)}" placeholder="0" aria-label="${ro ? 'Lei pe lună' : 'A month'}" required>
@@ -2333,9 +2362,12 @@ function gameCushionHtml(g) {
     </div>`;
   return `<div class="game-tile game-cushion">
       <p class="game-tile__k">${ro ? 'Fond de siguranță' : 'Safety cushion'}</p>
-      <p class="game-tile__v"><b class="game-big">${s.cover == null ? '—' : gameNum(s.cover)}</b> ${ro ? 'luni de strictul necesar' : 'months of the bare necessities'}</p>
-      <p class="game-tile__s">${gameMoney(s.balance)} ${ro ? 'economisiți' : 'saved'} · ${ro ? 'o lună de strictul necesar' : 'a month of necessities'}: <b>${gameMoney(s.month)}</b></p>
-      ${parts.length ? `<p class="game-ess__parts">${parts.join(' · ')}</p>` : ''}
+      <p class="game-tile__v"><b class="game-num">${s.cover == null ? '—' : gameNum(s.cover)}</b> ${ro ? 'luni de strictul necesar' : 'months of the bare necessities'}</p>
+      <p class="game-tile__s">${gameMoney(s.balance)} ${ro ? 'economisiți. O lună de strictul necesar costă' : 'saved. A month of the bare necessities costs'} <b>${gameMoney(s.month)}</b>.</p>
+      ${total > 0 ? `<div class="game-mix" role="img" aria-label="${parts.map((x) => `${esc(x.label)} ${gameMoney(x.amount)}`).join(', ')}">
+        ${parts.map((x) => `<i style="flex-grow:${x.amount};background:${x.colour}"></i>`).join('')}
+      </div>
+      <ul class="game-mix__legend">${parts.map((x) => `<li><i style="background:${x.colour}" aria-hidden="true"></i><span>${esc(x.label)}</span><b>${gameMoney(x.amount)}</b></li>`).join('')}</ul>` : ''}
       ${canWrite() ? `<button type="button" class="btn ghost small" data-ess-edit aria-expanded="false">${p.items.length ? (ro ? 'Modifică ce mai intră' : 'Change what else counts') : (ro ? 'Adaugă grădiniță, mâncare…' : 'Add kindergarten, food…')}</button>
       <form class="game-ess" hidden novalidate>
         <p class="game-ess__hint">${ro ? 'Creditele și facturile se iau singure. Aici treceți restul de care nu puteți scăpa într-o lună.' : 'Credits and bills are counted for you. List the rest a month cannot do without.'}</p>
@@ -2350,54 +2382,19 @@ function gameCushionHtml(g) {
     </div>`;
 }
 function gameHtml(g) {
-  if (!g || (!(g.debt.borrowed > 0) && !g.debt.people.length && !(g.savings.balance > 0) && !(g.savings.month > 0) && !g.challenge)) return '';
+  if (!g || (!(g.debt.borrowed > 0) && !g.debt.people.length && !(g.savings.balance > 0) && !(g.savings.month > 0))) return '';
   const ro = gameRo();
   const d = g.debt;
-  const top = d.levels.length - 1;
   const { earned, fresh } = gameFresh(g);
-  const nextName = d.next_pct != null ? gameLevelName(d.level + 1, top) : '';
-  const toNext = d.next_pct == null ? ''
-    : d.to_next_people != null
-      ? (ro ? ` Până la ${nextName}: încă <b>${gameMoney(d.to_next_people)}</b> dați înapoi oamenilor, sau ${gameMoney(d.to_next)} la credite.`
-        : ` To ${nextName}: <b>${gameMoney(d.to_next_people)}</b> more given back to people, or ${gameMoney(d.to_next)} to credits.`)
-      : (ro ? ` Până la ${nextName}: încă <b>${gameMoney(d.to_next)}</b>.` : ` To ${nextName}: <b>${gameMoney(d.to_next)}</b> to go.`);
-  // a tick where each rank begins, so the long bar shows where Silver, Gold… start
-  const tierTicks = d.levels.filter((_, i) => i > 1 && i < top && (i - 1) % 5 === 0);
-  const debtBlock = d.borrowed > 0 ? `
-    <div class="game-climb">
-      <div class="game-climb__head">
-        <p class="game-level"><span class="game-rank game-rank--${gameTierKey(d.level, top)}">${gameLevelName(d.level, top)}</span>
-          <span class="muted">${ro ? 'Nivelul' : 'Level'} <b>${d.level}</b> ${ro ? 'din' : 'of'} ${top}</span></p>
-        <p class="game-pct"><b>${gameNum(d.paid_pct)}%</b> ${ro ? 'din drum' : 'of the way'}</p>
-      </div>
-      <div class="game-track" role="img" aria-label="${ro ? `${gameNum(d.paid_pct)}% din drum, nivelul ${d.level} din ${top}` : `${d.paid_pct}% of the way, level ${d.level} of ${top}`}">
-        <span class="game-track__fill" style="--p:${(d.paid_pct || 0) / 100}"></span>
-        ${tierTicks.map((t) => `<span class="game-track__tick${d.paid_pct >= t ? ' is-past' : ''}" style="left:${t}%"></span>`).join('')}
-      </div>
-      ${d.next_pct != null ? `<div class="game-step">
-        <span class="game-step__k">${ro ? 'Spre' : 'To'} ${nextName}</span>
-        <span class="game-step__bar"><i style="width:${Math.round(d.level_progress * 100)}%"></i></span>
-        <span class="game-step__v">${Math.round(d.level_progress * 100)}%</span>
-      </div>` : ''}
-      <p class="game-climb__foot">${ro ? `Mai aveți <b>${gameMoney(d.owed)}</b> din ${gameMoney(d.borrowed)} împrumutați.` : `<b>${gameMoney(d.owed)}</b> left of ${gameMoney(d.borrowed)} borrowed.`}${toNext}</p>
-    </div>` : '';
-  const tiles = `<div class="game-tiles">
-    ${gameChallengeHtml(g.challenge)}
-    <div class="game-tile">
-      <p class="game-tile__k">${ro ? 'Seria' : 'Streak'}</p>
-      <p class="game-tile__v"><b class="game-big">${g.streak}</b> ${ro ? (g.streak === 1 ? 'lună pe plus' : 'luni la rând pe plus') : (g.streak === 1 ? 'month ahead' : 'months in a row ahead')}</p>
-      <p class="game-tile__s">${g.streak ? (ro ? 'Luna aceasta o poate prelungi.' : 'This month can extend it.') : (ro ? 'Încheiați o lună cu mai mult decât a ieșit și pornește.' : 'End a month with more in than out to start it.')}</p>
-    </div>
-    ${gameCushionHtml(g)}
-  </div>`;
+  // a badge is a medal: a ring that fills as it gets closer, solid once it is won
   const badgeLi = (b) => {
     const [nRo, nEn, dRo, dEn] = GAME_BADGES[b.id] || [b.id, b.id, '', ''];
-    const prog = !b.done && b.progress > 0 ? `<span class="game-badge__prog"><i style="width:${Math.round(b.progress * 100)}%"></i></span>` : '';
-    const tag = b.people ? `<span class="game-x">${ro ? 'prioritatea 1' : 'priority 1'}</span>` : '';
-    return `<li class="game-badge${b.done ? ' is-done' : ''}${b.people ? ' is-people' : ''}${fresh.includes(b.id) ? ' is-new' : ''}">
-      <span class="game-badge__mark" aria-hidden="true">${b.done ? icon('check') : ''}</span>
-      <span class="game-badge__t"><b>${ro ? nRo : nEn}</b>${tag}<span class="game-badge__d">${ro ? dRo : dEn}</span>${prog}</span>
-      <span class="sr-only">${b.done ? (ro ? 'câștigată' : 'earned') : (ro ? 'încă nu' : 'not yet')}</span></li>`;
+    const p = b.done ? 1 : Math.max(0, Math.min(1, b.progress || 0));
+    const inside = b.done ? icon('check') : p > 0 ? `${Math.round(p * 100)}%` : '';
+    return `<li class="game-badge${b.done ? ' is-done' : ''}${b.people ? ' is-people' : ''}${fresh.includes(b.id) ? ' is-new' : ''}" style="--p:${p}">
+      <span class="game-badge__mark" aria-hidden="true"><span>${inside}</span></span>
+      <span class="game-badge__t"><b>${ro ? nRo : nEn}</b><span class="game-badge__d">${ro ? dRo : dEn}</span></span>
+      <span class="sr-only">${b.done ? (ro ? 'câștigată' : 'earned') : (ro ? `${Math.round(p * 100)}% din drum` : `${Math.round(p * 100)}% of the way`)}</span></li>`;
   };
   // in view: what is won, the people badges, and the three closest to being won; the rest fold away,
   // so the list reads as the next few wins rather than a wall of empty circles
@@ -2406,7 +2403,7 @@ function gameHtml(g) {
   const inView = g.badges.filter((b) => b.done || b.people || near.has(b.id));
   const folded = g.badges.filter((b) => !inView.includes(b));
   const badges = `<div class="game-badges">
-    <p class="game-badges__k">${ro ? 'Insigne' : 'Badges'} <span class="muted">${earned.length} ${ro ? 'din' : 'of'} ${g.badges.length}</span></p>
+    <h4 class="game-badges__k">${ro ? 'Insigne' : 'Badges'} <span>${earned.length} ${ro ? 'din' : 'of'} ${g.badges.length}</span></h4>
     <ul class="game-badges__list">${inView.map(badgeLi).join('')}</ul>
     ${folded.length ? `<details class="game-more"><summary>${ro ? `Celelalte ${folded.length} insigne` : `The other ${folded.length} badges`}</summary>
       <ul class="game-badges__list">${folded.map(badgeLi).join('')}</ul></details>` : ''}
@@ -2414,7 +2411,9 @@ function gameHtml(g) {
   const title = d.borrowed > 0 || d.people.length ? (ro ? 'Drumul spre zero datorii' : 'The road to zero debt') : (ro ? 'Drumul spre fondul de siguranță' : 'The road to a safety cushion');
   return `<section class="card game" id="game">
     <h3 class="game__title">${title}</h3>
-    ${gamePeopleHtml(g)}${debtBlock}<div id="gamefree">${gameFreeHtml(g)}</div>${tiles}${badges}
+    ${gameRoadHtml(g)}${gamePeopleHtml(g)}<div id="gamefree">${gameFreeHtml(g)}</div>
+    <div class="game-tiles">${gameStreakHtml(g)}${gameCushionHtml(g)}</div>
+    ${badges}
   </section>`;
 }
 // after the dashboard draws: the calculator's buttons, and remembering what was seen

@@ -21,7 +21,7 @@ test('an empty household starts at the bottom with nothing to claim', async (t) 
   assert.equal(g.debt.level, 0);
   assert.deepEqual(g.debt.credits, []);
   assert.equal(g.streak, 0);
-  assert.equal(g.challenge, null, 'no figures to set a target from');
+  assert.equal('challenge' in g, false, 'there is no month’s challenge any more');
   const ids = g.badges.map((b) => b.id);
   assert.ok(!ids.includes('quarter') && !ids.includes('closed'), 'debt badges only for a household that borrowed');
   assert.ok(!ids.includes('goal') && !ids.includes('budget'), 'nothing to win without a goal or a budget');
@@ -95,15 +95,13 @@ test('the game counts the household’s own money, once, in its own currency', a
     assert.equal(badge('cushion6').done, 7000 / c.monthly_total >= 6);
   });
 
-  await t.test('somebody still owed money has the month’s challenge, whatever month it is', () => {
-    assert.equal(g.challenge.month, today().slice(0, 7));
-    assert.equal(g.challenge.kind, 'people');
-    assert.equal(g.challenge.person, 'Mihai', 'named as where to start: the most pressing person owed in lei');
-    // Mihai was promised his 1 000 within three months: a third of it, rounded up to the next ten
-    assert.equal(g.challenge.target, 340, 'what the date promised asks of this month');
-    assert.equal(g.challenge.from_dates, true);
-    assert.equal(g.challenge.progress, 0);
-    assert.equal(g.challenge.done, false);
+  await t.test('a date promised to a person becomes a monthly plan', () => {
+    // Mihai was promised his 1 000 within three months: this one and the two after it
+    const p = g.debt.people.find((x) => x.person === 'Mihai');
+    assert.equal(p.plan.months_left, 3);
+    assert.equal(p.plan.monthly, 333.33);
+    assert.equal(p.plan.back_now, 0);
+    assert.equal(g.debt.people.find((x) => x.person === 'Hans').plan, null, 'no date, no plan');
   });
 
   await t.test('the people owed are listed first, in their own currency, the most pressing first', () => {
@@ -117,17 +115,14 @@ test('the game counts the household’s own money, once, in its own currency', a
     const expected = Math.round(((10000 - c.balance + 3 * 300) / 13000) * 1000) / 10;
     assert.equal(after.debt.paid_pct, expected);
     assert.equal(after.debt.owed, Math.round((c.balance + 700) * 100) / 100, 'the money itself is counted once');
-    assert.equal(after.challenge.progress, 300, 'this month’s repayment counts toward the challenge');
-    assert.equal(after.challenge.balance, 700);
-    // paying Mihai off entirely settles the challenge and earns the first people badge
+    const plan = after.debt.people.find((x) => x.person === 'Mihai').plan;
+    assert.equal(plan.back_now, 300, 'this month’s repayment shows against the plan');
+    assert.equal(plan.monthly, 333.33, 'the plan is set from what was owed on the first, so paying keeps its pace');
+    // paying Mihai off entirely earns the first people badge
     await api.post(`/api/loans/${mihai.id}/payments`, { amount: 700, date: today() });
     const paid = (await api.get('/api/game')).body;
     assert.equal(paid.badges.find((b) => b.id === 'people_one').done, true);
     assert.equal(paid.badges.find((b) => b.id === 'people_free').done, false, 'Hans is still owed');
-    assert.equal(paid.challenge.kind, 'people', 'the last of it paid this month: the challenge stays, won, until the month is out');
-    assert.equal(paid.challenge.done, true);
-    assert.equal(paid.challenge.progress, 1000, 'every leu given back this month, to anyone, counts');
-    assert.equal(paid.challenge.balance, 0);
     assert.deepEqual(paid.debt.people.map((x) => x.person), ['Hans']);
   });
 
@@ -220,15 +215,10 @@ test('a debt in euro counts at the BNR rate, and a date promised becomes a month
   assert.equal(first.balance_home, 15000);
   assert.deepEqual(first.plan, { months_left: 3, monthly: 1000, monthly_home: 5000, back_now: 0 }, 'this month and the two after it');
   assert.deepEqual(second.plan, { months_left: 15, monthly: 800, monthly_home: 4000, back_now: 0 });
-  assert.equal(g.challenge.kind, 'people');
-  assert.equal(g.challenge.target, 9000, 'what the two dates ask of this month, in lei');
-  assert.equal(g.challenge.from_dates, true);
 
-  // paying Eni a thousand this month: the challenge counts it in lei, and the plan keeps its pace
+  // paying Eni a thousand this month: the plan keeps its pace and shows what came back
   await api.post(`/api/loans/${eni.id}/payments`, { amount: 1000, date: today() });
   const after = (await api.get('/api/game')).body;
-  assert.equal(after.challenge.progress, 5000);
-  assert.equal(after.challenge.target, 9000, 'the target is set from what was owed on the first');
   assert.deepEqual(after.debt.people[0].plan, { months_left: 3, monthly: 1000, monthly_home: 5000, back_now: 1000 });
 });
 
