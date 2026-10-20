@@ -2117,17 +2117,20 @@ function ribbonHtml(reminders) {
    calculator, and notices a badge or a level earned since the last visit. Money owed to people
    comes first everywhere here: its own block at the top with a monthly plan from each date promised,
    the first call on any extra in the calculator, and three times the weight in the level. */
-// 25 levels in five ranks of five, then the top. Level 0 is before the first leu.
+// The levels come from the server in five ranks of equal size, then the top; level 0 is before
+// the first leu. The rank size is worked out from the list, so more levels need no change here.
 const GAME_TIERS = { ro: ['Bronz', 'Argint', 'Aur', 'Platină', 'Diamant'], en: ['Bronze', 'Silver', 'Gold', 'Platinum', 'Diamond'] };
 const GAME_TIER_KEYS = ['bronze', 'silver', 'gold', 'platinum', 'diamond'];
+const GAME_ROMAN = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII'];
+const gamePerTier = (top) => Math.max(1, (top - 1) / GAME_TIER_KEYS.length);
 function gameLevelName(level, top) {
   const ro = gameRo();
   if (level <= 0) return ro ? 'Începutul' : 'The start';
   if (level >= top) return ro ? 'Liberi de datorii' : 'Debt-free';
-  const t = Math.floor((level - 1) / 5);
-  return `${GAME_TIERS[ro ? 'ro' : 'en'][t]} ${['I', 'II', 'III', 'IV', 'V'][(level - 1) % 5]}`;
+  const per = gamePerTier(top);
+  return `${GAME_TIERS[ro ? 'ro' : 'en'][Math.floor((level - 1) / per)]} ${GAME_ROMAN[(level - 1) % per] || ''}`.trim();
 }
-const gameTierKey = (level, top) => (level <= 0 ? 'start' : level >= top ? 'free' : GAME_TIER_KEYS[Math.floor((level - 1) / 5)]);
+const gameTierKey = (level, top) => (level <= 0 ? 'start' : level >= top ? 'free' : GAME_TIER_KEYS[Math.floor((level - 1) / gamePerTier(top))]);
 // [name ro, name en, what it means ro, what it means en]
 const GAME_BADGES = {
   people_one: ['Primul om plătit', 'First person paid back', 'O datorie la o persoană, stinsă de tot.', 'A debt to a person, paid off in full.'],
@@ -2145,7 +2148,8 @@ const GAME_BADGES = {
   budget: ['Sub buget', 'Within budget', 'Luna trecută, toate bugetele respectate.', 'Last month, every budget kept.'],
 };
 const GAME_EXTRAS = [0, 1000, 2500, 5000];
-let GAME_EXTRA = 0;
+// what each calculator is set to: its own extra a month
+const GAME_EXTRA = { credits: 0, people: 0, all: 0 };
 const gameRo = () => LANG === 'ro';
 const gameMoney = (n) => `${moneyShort(n)} ${cur()}`;
 const gameMoneyIn = (n, code) => `${moneyShort(n)} ${CURRENCIES[code] || code || cur()}`;
@@ -2163,15 +2167,21 @@ const gameMonthAhead = (n) => {
   return monthLabel(new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + n, 1)).toISOString().slice(0, 7), { short: false });
 };
 // The same amortisation as the Credits tab, for every open credit at once: each pays its own
-// instalment (the last one only what is left). The extra goes first to the people owed, in the
-// order given, then to the credit with the highest interest, the order that saves the most. A
-// finished credit's instalment does not roll over to the next, so "no extra" is exactly the
-// schedule as it stands. People have no schedule, so without an extra they are never done.
-function gameSimulate(credits, extra, people = []) {
+// instalment (the last one only what is left). People are paid what their dates ask (`pay`, the
+// balance spread over the months left; nothing for a debt with no date). The extra goes where
+// `to` says: 'credits' only to the credits, 'people' only to the people, 'all' to the people
+// first and then to the credits. Among credits the highest interest goes first, the order that
+// saves the most. A finished credit's instalment does not roll over to the next, so "no extra"
+// is exactly the schedule as it stands.
+function gameSimulate(credits, extra, people = [], to = 'all') {
   const cs = credits.map((c) => ({ bal: Number(c.balance), r: Number(c.rate), pay: Number(c.payment) })).filter((c) => c.bal > 0.005);
-  const ps = people.map((p) => ({ bal: Number(p.balance) })).filter((p) => p.bal > 0.005);
+  const ps = people.map((p) => ({ bal: Number(p.balance), pay: Number(p.pay) || 0 })).filter((p) => p.bal > 0.005);
+  const toPeople = to !== 'credits', toCredits = to !== 'people';
   let month = 0, interest = 0, peopleMonths = ps.length ? null : 0, creditMonths = cs.length ? null : 0;
-  while ((cs.some((c) => c.bal > 0.005) || (extra > 0 && ps.some((p) => p.bal > 0.005))) && month < 1200) {
+  const owing = (xs) => xs.some((x) => x.bal > 0.005);
+  // people can only finish if something is paid to them: a date, or an extra aimed their way
+  const peopleMoving = () => ps.some((p) => p.bal > 0.005 && (p.pay > 0 || (extra > 0 && toPeople)));
+  while ((owing(cs) || peopleMoving()) && month < 1200) {
     let pool = extra;
     for (const c of cs) {
       if (c.bal <= 0.005) continue;
@@ -2179,54 +2189,83 @@ function gameSimulate(credits, extra, people = []) {
       interest += i;
       c.bal = Math.max(0, c.bal + i - c.pay);
     }
-    for (const c of [...ps, ...cs.filter((x) => x.bal > 0.005).sort((a, b) => b.r - a.r)]) {
+    for (const p of ps) if (p.bal > 0.005) p.bal = Math.max(0, p.bal - p.pay);
+    const targets = [...(toPeople ? ps : []), ...(toCredits ? cs.filter((x) => x.bal > 0.005).sort((a, b) => b.r - a.r) : [])];
+    for (const c of targets) {
       if (pool <= 0) break;
       if (c.bal <= 0.005) continue;
       const take = Math.min(pool, c.bal);
       c.bal -= take; pool -= take;
     }
     month++;
-    if (peopleMonths == null && !ps.some((p) => p.bal > 0.005)) peopleMonths = month;
-    if (creditMonths == null && !cs.some((c) => c.bal > 0.005)) creditMonths = month;
+    if (peopleMonths == null && !owing(ps)) peopleMonths = month;
+    if (creditMonths == null && !owing(cs)) creditMonths = month;
   }
   return { months: creditMonths ?? month, interest, peopleMonths };
 }
-function gameFreeHtml(g) {
+// Three calculators, each with its own extra: free of credits, free of what is owed to people,
+// and free of both. Each answers one question, so each moves only its own money.
+const GAME_CALCS = ['credits', 'people', 'all'];
+function gameCalcHtml(g, kind) {
+  const ro = gameRo();
   const credits = g.debt.credits;
   // the people owed, in the household's currency at today's rate, so a debt in euro shares the pot
-  const people = g.debt.people.filter((p) => p.balance_home != null).map((p) => ({ balance: p.balance_home }));
-  if (!credits.length && !people.length) return '';
-  const ro = gameRo();
-  const base = gameSimulate(credits, 0);
-  let what;
-  if (!GAME_EXTRA) {
-    what = people.length
-      ? (ro ? 'Alegeți o sumă în plus pe lună. Merge întâi la oameni, apoi la creditul cu dobânda cea mai mare.' : 'Pick an extra amount a month. It goes to people first, then to the credit with the highest interest.')
-      : (ro ? 'Alegeți o sumă în plus pe lună și vedeți ce câștigați.' : 'Pick an extra amount a month and see what it wins you.');
-  } else {
-    const sim = gameSimulate(credits, GAME_EXTRA, people);
-    const sooner = base.months - sim.months, saved = Math.max(0, base.interest - sim.interest);
-    const parts = [];
-    if (people.length) {
-      parts.push(ro ? `oamenii sunt plătiți în <b>${gameMonths(sim.peopleMonths)}</b> (${gameMonthAhead(sim.peopleMonths)})`
-        : `people are paid back in <b>${gameMonths(sim.peopleMonths)}</b> (${gameMonthAhead(sim.peopleMonths)})`);
-    }
-    if (credits.length) {
-      const free = ro ? `${people.length ? 'apoi ' : ''}liberi de credite în <b>${gameMonthAhead(sim.months)}</b>` : `${people.length ? 'then ' : ''}credit-free in <b>${gameMonthAhead(sim.months)}</b>`;
-      const gain = sooner > 0
-        ? (ro ? `, cu <b>${gameMonths(sooner)}</b> mai devreme, și <b>${gameMoney(saved)}</b> dobândă pe care nu o mai plătiți` : `, <b>${gameMonths(sooner)}</b> sooner, and <b>${gameMoney(saved)}</b> of interest you never pay`)
-        : '';
-      parts.push(free + gain);
-    }
-    what = `${ro ? 'Cu' : 'With'} <b>${gameMoney(GAME_EXTRA)}</b> ${ro ? 'în plus pe lună' : 'extra a month'}: ${parts.join(', ')}.`;
+  const owed = g.debt.people.filter((p) => p.balance_home != null);
+  const people = owed.map((p) => ({ balance: p.balance_home, pay: p.plan ? p.balance_home / p.plan.months_left : 0 }));
+  if (kind === 'credits' && !credits.length) return '';
+  if (kind === 'people' && !people.length) return '';
+  if (kind === 'all' && !(credits.length && people.length)) return '';
+  const undated = owed.filter((p) => !p.plan).map((p) => esc(p.person));
+  const extra = GAME_EXTRA[kind] || 0;
+  const cs = kind === 'people' ? [] : credits;
+  const ps = kind === 'credits' ? [] : people;
+  const base = gameSimulate(cs, 0, ps, kind);
+  const sim = extra ? gameSimulate(cs, extra, ps, kind) : base;
+  // the month the question is about, in months from now, for a given run; null when it never
+  // comes. A credit's next instalment is next month's, but a person's plan counts this month as
+  // its first, so the n-th month of paying people back is n - 1 months from now.
+  const peopleEnd = (r) => (r.peopleMonths == null ? null : Math.max(0, r.peopleMonths - 1));
+  const end = (r) => (kind === 'credits' ? r.months : kind === 'people' ? peopleEnd(r) : peopleEnd(r) == null ? null : Math.max(r.months, peopleEnd(r)));
+  const fromNow = (n) => (n <= 0 ? (ro ? 'chiar luna asta' : 'this very month') : `${ro ? 'peste' : 'in'} ${gameMonths(n)}`);
+  const title = { credits: ro ? 'Fără credite' : 'Credit-free', people: ro ? 'Fără datorii la oameni' : 'Owing nobody', all: ro ? 'Fără credite și datorii' : 'Free of everything' }[kind];
+  const where = {
+    credits: ro ? 'Banii în plus merg la creditul cu dobânda cea mai mare.' : 'The extra goes to the credit with the highest interest.',
+    people: ro ? 'Banii în plus merg la oameni, peste ce cer termenele.' : 'The extra goes to people, on top of what the dates ask.',
+    all: ro ? 'Banii în plus merg întâi la oameni, apoi la creditul cu dobânda cea mai mare.' : 'The extra goes to people first, then to the credit with the highest interest.',
+  }[kind];
+  const b = end(base);
+  const head = b != null
+    ? `<p class="game-calc__date"><b class="game-num">${gameMonthAhead(b)}</b><span>${fromNow(b)}</span></p>`
+    : `<p class="game-calc__date"><b class="game-num">—</b><span>${ro ? `${undated.join(', ')} ${undated.length === 1 ? 'nu are' : 'nu au'} termen` : `${undated.join(', ')} ${undated.length === 1 ? 'has' : 'have'} no date`}</span></p>`;
+  let what = where;
+  if (extra) {
+    const e = end(sim);
+    const saved = Math.max(0, base.interest - sim.interest);
+    const sooner = b != null && e != null ? b - e : null;
+    what = e == null ? (ro ? 'Nici așa nu se termină: mai e cineva fără termen.' : 'Not even then: somebody still has no date.')
+      : (ro ? `Cu <b>${gameMoney(extra)}</b> în plus pe lună: <b>${gameMonthAhead(e)}</b>`
+        : `With <b>${gameMoney(extra)}</b> extra a month: <b>${gameMonthAhead(e)}</b>`)
+        + (sooner > 0 ? (ro ? `, cu <b>${gameMonths(sooner)}</b> mai devreme` : `, <b>${gameMonths(sooner)}</b> sooner`) : '')
+        + (kind !== 'people' && saved > 0.5 ? (ro ? `, și <b>${gameMoney(saved)}</b> dobândă pe care nu o mai plătiți` : `, and <b>${gameMoney(saved)}</b> of interest you never pay`) : '')
+        + '.';
   }
-  return `<div class="game-free">
-    ${credits.length ? `<p class="game-free__date">${ro ? 'Fără credite în' : 'Credit-free in'} <b>${gameMonthAhead(base.months)}</b> <span class="muted">· ${ro ? 'peste' : 'in'} ${gameMonths(base.months)}</span></p>` : ''}
-    <div class="game-extra" role="group" aria-label="${ro ? 'Sumă în plus pe lună' : 'Extra a month'}">
-      ${GAME_EXTRAS.map((v) => `<button type="button" class="game-chip" data-extra="${v}" aria-pressed="${GAME_EXTRA === v}">${v ? '+' + gameMoney(v) : (ro ? 'Fără' : 'None')}</button>`).join('')}
-    </div>
-    <p class="game-free__what" aria-live="polite">${what}</p>
-  </div>`;
+  return `<div class="game-calc" data-calc-box="${kind}">
+      <h4 class="game-calc__k">${title}</h4>
+      ${head}
+      <div class="game-extra" role="group" aria-label="${ro ? `${title}: sumă în plus pe lună` : `${title}: extra a month`}">
+        ${GAME_EXTRAS.map((v) => `<button type="button" class="game-chip" data-calc="${kind}" data-extra="${v}" aria-pressed="${extra === v}">${v ? '+' + moneyShort(v) : (ro ? 'Fără' : 'None')}</button>`).join('')}
+      </div>
+      <p class="game-calc__what" aria-live="polite">${what}</p>
+    </div>`;
+}
+function gameFreeHtml(g) {
+  const calcs = GAME_CALCS.map((k) => gameCalcHtml(g, k)).filter(Boolean);
+  if (!calcs.length) return '';
+  const ro = gameRo();
+  return `<div class="game-calcs">
+      <div class="game-calcs__head"><h4>${ro ? 'Calculatoare' : 'Calculators'}</h4><p>${ro ? `Butoanele sunt bani în plus pe lună, în ${cur()}.` : `The buttons are extra money a month, in ${cur()}.`}</p></div>
+      <div class="game-calcs__grid">${calcs.join('')}</div>
+    </div>`;
 }
 // Priority one: everyone the household still owes, one card each, the most pressing first
 function gamePeopleHtml(g) {
@@ -2289,8 +2328,9 @@ function gameRoadHtml(g) {
   const ro = gameRo();
   const top = d.levels.length - 1;
   const pct = d.paid_pct || 0;
-  // a rank begins at levels 1, 6, 11, 16, 21; the first band starts at nothing
-  const starts = [0, d.levels[6], d.levels[11], d.levels[16], d.levels[21]];
+  // a rank begins at level 1, per + 1, 2·per + 1…; the first band starts at nothing
+  const per = gamePerTier(top);
+  const starts = GAME_TIER_KEYS.map((_, t) => (t === 0 ? 0 : d.levels[t * per + 1]));
   const bands = starts.map((a, t) => {
     const b = starts[t + 1] ?? 100;
     const fill = Math.max(0, Math.min(1, (pct - a) / (b - a)));
@@ -2434,9 +2474,10 @@ function gameWire(root, g, rerender) {
   box.addEventListener('click', (e) => {
     const b = e.target.closest('[data-extra]');
     if (b) {
-      GAME_EXTRA = Number(b.dataset.extra);
+      const kind = b.dataset.calc;
+      GAME_EXTRA[kind] = Number(b.dataset.extra);
       box.querySelector('#gamefree').innerHTML = gameFreeHtml(g);
-      box.querySelector(`[data-extra="${GAME_EXTRA}"]`)?.focus();
+      box.querySelector(`[data-calc="${kind}"][data-extra="${GAME_EXTRA[kind]}"]`)?.focus();
       return;
     }
     if (e.target.closest('[data-ess-edit]')) return essOpen(true);

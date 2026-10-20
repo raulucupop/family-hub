@@ -4685,9 +4685,16 @@ const CATEGORY_SET = new Set(['Groceries', 'Utilities', 'Transportation', 'Enter
    rate it is listed and left out rather than added at par. Spending is account spending (on_card = 0),
    the same figure the dashboard reports, so a card purchase is not counted twice once the card
    bill is paid. */
-// Twenty-five steps, close together at the start and even after: on a thirty-year mortgage the
-// next level has to be months away, not years, or there is nothing to play for.
-const GAME_LEVELS = [0, 1, 2, 3, 5, 7, 10, 13, 16, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100];
+// Fifty steps, five ranks of ten, then the top. Close together at the start (half a percent) and
+// never far apart after: on a thirty-year mortgage the next level has to be months away, not
+// years, or there is nothing to play for. The ranks begin at 0.5, 10, 30, 55 and 80%.
+const GAME_LEVELS = [0,
+  0.5, 1, 1.5, 2, 3, 4, 5, 6, 7, 8.5, // bronze
+  10, 12, 14, 16, 18, 20, 22, 24, 26, 28, // silver
+  30, 32.5, 35, 37.5, 40, 42.5, 45, 47.5, 50, 52.5, // gold
+  55, 57.5, 60, 62.5, 65, 67.5, 70, 72.5, 75, 77.5, // platinum
+  80, 82, 84, 86, 88, 90, 92, 94, 96, 98, // diamond
+  100];
 const GAME_PEOPLE_WEIGHT = 3;
 // the same annuity as creditStats, before it is rounded for display
 function gamePayment(c) {

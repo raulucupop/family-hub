@@ -58,7 +58,8 @@ test('the game counts the household’s own money, once, in its own currency', a
     const pct = Math.round(((10000 - c.balance) / 13000) * 1000) / 10;
     assert.equal(g.debt.paid_pct, pct);
     const levels = g.debt.levels;
-    assert.equal(levels.length, 26, 'twenty-five levels above the start');
+    assert.equal(levels.length, 52, 'fifty levels, the start and the top');
+    assert.deepEqual([levels[1], levels[11], levels[21], levels[31], levels[41]], [0.5, 10, 30, 55, 80], 'where each rank begins');
     assert.ok(levels.slice(1).every((x, i) => x > levels[i]), 'each level is further than the last');
     assert.equal(g.debt.level, levels.filter((x) => pct >= x).length - 1);
     assert.equal(g.debt.next_pct, levels[g.debt.level + 1]);
@@ -242,7 +243,7 @@ test('the quarter and half badges are the plain share; only the level counts peo
   // 2 000 of 12 000 paid back is a sixth; counted three times it is 6 000 of 16 000
   assert.equal(g.debt.plain_pct, 16.7);
   assert.equal(g.debt.paid_pct, 37.5);
-  assert.ok(g.debt.level >= g.debt.levels.indexOf(35), 'the level moves with the weight');
+  assert.equal(g.debt.level, g.debt.levels.indexOf(37.5), 'the level moves with the weight');
   const badge = (id) => g.badges.find((b) => b.id === id);
   assert.equal(badge('quarter').done, false, 'a sixth of the money is not a quarter of it');
   assert.ok(Math.abs(badge('quarter').progress - 16.7 / 25) < 0.01);
@@ -297,4 +298,26 @@ test('the BNR feed is read for euro and pound, honouring a multiplier', async (t
   }
   assert.equal(g.debt.borrowed, 5327.2, '1 000 € at the published 5,3272');
   assert.equal(g.debt.people[0].rate, 5.3272);
+});
+
+test('each calculator moves only its own money', () => {
+  const credits = [{ balance: 20000, rate: 0.01, payment: 500 }];
+  // Eni is promised within 4 months, so 250 a month; Mihai has no date
+  const dated = [{ balance: 1000, pay: 250 }];
+  const undated = [{ balance: 600, pay: 0 }];
+
+  // free of credits: people never touch the credit's money, whatever they are owed
+  assert.equal(gameSimulate(credits, 500, [...dated, ...undated], 'credits').months, gameSimulate(credits, 500).months);
+  // owing nobody: the dates alone finish the dated debt on time, and nothing finishes the undated one
+  assert.equal(gameSimulate([], 0, dated, 'people').peopleMonths, 4);
+  assert.equal(gameSimulate([], 0, [...dated, ...undated], 'people').peopleMonths, null);
+  // an extra aimed at people finishes both, and leaves the credit exactly as it was
+  const p = gameSimulate(credits, 500, [...dated, ...undated], 'people');
+  assert.equal(p.peopleMonths, 3, '1 600 owed at 250 by the date plus 500 extra: 750, 750, and the last 100');
+  assert.equal(p.months, gameSimulate(credits, 0).months, 'the credit keeps its own schedule');
+  // free of everything: people first, then the credit, and sooner than the credit alone
+  const all = gameSimulate(credits, 500, [...dated, ...undated], 'all');
+  assert.equal(all.peopleMonths, 3);
+  assert.ok(all.months < gameSimulate(credits, 0).months);
+  assert.ok(all.months >= gameSimulate(credits, 500).months, 'paying people first is the price of putting them first');
 });
