@@ -3864,6 +3864,16 @@ app.put('/api/watch/:id', auth, canWrite, (req, res) => {
     .run(str(b.label) || row.label, url, b.kind === 'page' || b.kind === 'feed' ? b.kind : row.kind,
       b.keywords === undefined ? row.keywords : str(b.keywords),
       b.active === false || b.active === 0 ? 0 : 1, row.id);
+  // New keywords re-mark what is already on the list too. Otherwise dropping "concurs" left every
+  // job competition already fetched still flagged as matching, and the list looked unchanged.
+  if (b.keywords !== undefined && (str(b.keywords) || '') !== (row.keywords || '')) {
+    const mark = db.prepare('UPDATE watched_items SET hit = ? WHERE id = ?');
+    db.transaction(() => {
+      for (const it of db.prepare('SELECT id, title, summary FROM watched_items WHERE site_id = ?').all(row.id)) {
+        mark.run(keywordHit(`${it.title} ${it.summary || ''}`, str(b.keywords)) ? 1 : 0, it.id);
+      }
+    })();
+  }
   res.json(watchState(req.user.family_id));
 });
 app.delete('/api/watch/:id', auth, canWrite, (req, res) => {

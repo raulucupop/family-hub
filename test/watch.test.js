@@ -121,6 +121,16 @@ test('the first check is a baseline and says nothing', async (t) => {
     assert.equal(r.body.checked.found, 1, 'keywords flag, they never filter');
     assert.equal(r.body.items[0].hit, 0);
   });
+
+  await t.test('changing the keywords re-marks the notices already on the list', async () => {
+    const hits = (b) => Object.fromEntries(b.items.map((i) => [i.title, i.hit]));
+    let r = await api.put(`/api/watch/${id}`, { keywords: 'program' });
+    assert.equal(hits(r.body)['Program cu publicul'], 1, 'a notice that matches the new word is flagged');
+    assert.equal(hits(r.body)['Anunț licitație terenuri'], 0, 'and one that only matched the old words is not any more');
+    r = await api.put(`/api/watch/${id}`, { keywords: 'licitatie, teren' });
+    assert.equal(hits(r.body)['Anunț licitație terenuri'], 1);
+    assert.equal(hits(r.body)['Program cu publicul'], 0);
+  });
 });
 
 test('a site that fails is recorded as failing, not as silence', async (t) => {

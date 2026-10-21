@@ -4054,7 +4054,7 @@ function draftsCard(drafts) {
           <p class="muted">${esc(String(d.snippet))}</p></details>` : ''}
       </div></div>`).join('')}</section>`;
 }
-const PROVIDER_NAMES = { eon: 'E.ON', orange: 'Orange', hidroelectrica: 'Hidroelectrica', digi: 'Digi' };
+const PROVIDER_NAMES = { eon: 'E.ON', orange: 'Orange', hidroelectrica: 'Hidroelectrica', digi: 'Digi', retim: 'Retim' };
 async function viewBills(el) {
   const [bills, members, properties, vehicles, drafts] = await Promise.all([api('/bills'), api('/family/members'), api('/properties'), api('/vehicles'), api('/mail-drafts').catch(() => [])]);
   const t = today();

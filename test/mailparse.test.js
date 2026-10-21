@@ -39,6 +39,14 @@ test('an E.ON invoice, as E.ON writes it', () => {
   assert.equal(r.invoice_no, '10834704992');
 });
 
+test('a Retim invoice: known by its sender, with nothing in the body to read an amount from', () => {
+  // the real mail: "Informare emitere factura" from facturare@retim.ro, a PDF and no text
+  const r = parse({ from: 'RETIM SA <facturare@retim.ro>', subject: 'Informare emitere factura', text: '' });
+  assert.equal(r.provider, 'retim');
+  assert.equal(r.label, 'Retim');
+  assert.equal(r.amount, null, 'no number is invented when the mail has none');
+});
+
 test('the amount label decides, not the first number near "lei"', () => {
   // E.ON shows the invoice total AND what is left to pay; only the second one is owed now
   const r = parse({
