@@ -42,8 +42,8 @@ app.disable('x-powered-by'); // no reason to advertise Express + its version
 const CSP = [
   "default-src 'self'",
   "script-src 'self'",
-  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-  'font-src https://fonts.gstatic.com',
+  "style-src 'self' 'unsafe-inline'",
+  "font-src 'self'", // the two typefaces are served from public/fonts, not from Google
   "img-src 'self' data:",
   "connect-src 'self'",
   "object-src 'none'",
@@ -61,9 +61,8 @@ app.use((req, res, next) => {
   // - COOP severs window.opener ties with cross-origin pages (e.g. the Revolut tab a tenant opens)
   // - CORP stops other origins embedding our responses (avatars, scans) as their subresources;
   //   Google/Apple Calendar fetch the .ics server-side, which browser-enforced CORP does not touch
-  // - COEP 'credentialless' rather than 'require-corp': the CDN/font requests are then made
-  //   cookie-less and allowed, so Chart.js and Google Fonts keep loading; require-corp would
-  //   depend on every third party sending CORP headers
+  // - COEP 'credentialless' rather than 'require-corp': any cross-origin request is then made
+  //   cookie-less and allowed; require-corp would depend on every third party sending CORP headers
   res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
   res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
   res.setHeader('Cross-Origin-Embedder-Policy', 'credentialless');
@@ -74,7 +73,40 @@ app.use((req, res, next) => {
 
 app.use(express.json());
 app.use(cookieParser());
-app.use(express.static(path.join(__dirname, 'public')));
+
+// What the browser runs: the split, minified build in public/dist (scripts/build.js) — but only
+// while it was made from the very app.js on disk. An app.js edited without a rebuild is served as it
+// is instead of next to a stale build that no longer matches it. FH_NO_BUILD=1 forces app.js, which
+// is the readable one to debug with.
+const PUBLIC = path.join(__dirname, 'public');
+const BUILD = (() => {
+  if (process.env.FH_NO_BUILD) return null;
+  try {
+    const m = JSON.parse(fs.readFileSync(path.join(PUBLIC, 'dist', 'manifest.json'), 'utf8'));
+    // line endings left out of it: git on Windows checks app.js out with CRLF, the server with LF
+    const src = require('crypto').createHash('sha256').update(fs.readFileSync(path.join(PUBLIC, 'app.js'), 'utf8').replace(/\r\n/g, '\n')).digest('hex');
+    if (m.source !== src) { console.warn('public/dist was built from another app.js — serving app.js (run: npm run build)'); return null; }
+    const files = [m.core, ...Object.values(m.chunks)];
+    return files.every((f) => fs.existsSync(path.join(PUBLIC, 'dist', f))) ? { ...m, files } : null;
+  } catch { return null; }
+})();
+const INDEX_HTML = (() => {
+  const html = fs.readFileSync(path.join(PUBLIC, 'index.html'), 'utf8');
+  return BUILD ? html.replace('<script src="/app.js"></script>', `<script src="/dist/${BUILD.core}"></script>`) : html;
+})();
+// the service worker caches what this deploy serves, under a name that changes with it
+const SW_JS = (() => {
+  const sw = fs.readFileSync(path.join(PUBLIC, 'sw.js'), 'utf8');
+  if (!BUILD) return sw;
+  return sw.replace("'/app.js'", BUILD.files.map((f) => `'/dist/${f}'`).join(', '))
+    .replace(/const CACHE = '[^']*';/, `const CACHE = 'fh-${BUILD.source.slice(0, 10)}';`);
+})();
+app.get(['/', '/index.html'], (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.type('html').send(INDEX_HTML); });
+app.get('/sw.js', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.type('application/javascript').send(SW_JS); });
+// a built file's name carries its own hash, so it never changes under the same name: cache it for good
+app.use('/dist', express.static(path.join(PUBLIC, 'dist'), { immutable: true, maxAge: '365d' }));
+app.use('/fonts', express.static(path.join(PUBLIC, 'fonts'), { maxAge: '30d' }));
+app.use(express.static(PUBLIC));
 
 // ---------- helpers ----------
 const COOKIE = 'fh_token';
@@ -248,8 +280,10 @@ app.post('/api/auth/register', async (req, res) => {
   // hashing before validating let a stranger spend ~200ms of this single-threaded process per
   // request on nothing — and hashSync blocks the loop, freezing the app for everyone else.
   const hash = await bcrypt.hash(String(password), 10);
-  const info = db.prepare('INSERT INTO users (family_id, name, email, password_hash, role, tenant_property_id) VALUES (?,?,?,?,?,?)')
-    .run(familyId, String(name).trim(), emailNorm, hash, role, tenantPropertyId);
+  // the account speaks the language the sign-up screen was in; a client that says nothing gets English
+  const lang = req.body?.lang === 'ro' ? 'ro' : 'en';
+  const info = db.prepare('INSERT INTO users (family_id, name, email, password_hash, role, tenant_property_id, lang) VALUES (?,?,?,?,?,?,?)')
+    .run(familyId, String(name).trim(), emailNorm, hash, role, tenantPropertyId, lang);
   const user = db.prepare('SELECT id, family_id, name, email, role, token_version FROM users WHERE id = ?').get(info.lastInsertRowid);
   loginSucceeded(keys); // a real sign-up clears the allowance it just consumed
   setAuthCookie(res, signToken(user));
@@ -359,7 +393,7 @@ app.post('/api/auth/logout', (req, res) => {
 });
 
 app.get('/api/me', auth, (req, res) => {
-  const family = db.prepare('SELECT id, name, invite_code, currency FROM families WHERE id = ?').get(req.user.family_id);
+  const family = db.prepare('SELECT id, name, invite_code, currency, nav_hidden FROM families WHERE id = ?').get(req.user.family_id);
   if (req.user.role !== 'admin') delete family.invite_code;
   res.json({ user: req.user, family });
 });
@@ -420,8 +454,14 @@ app.post('/api/family/invite/email', auth, adminOnly, async (req, res) => {
     res.status(500).json({ error: 'Could not send the email — try again in a few minutes' });
   }
 });
+// pages that can be taken out of the menu; the ones the app cannot do without stay
+const NAV_HIDEABLE = ['review', 'search', 'import', 'properties', 'tenants', 'vehicles', 'acte', 'garantii', 'chores', 'lists', 'watch'];
 app.patch('/api/family', auth, adminOnly, (req, res) => {
-  const { name, currency } = req.body || {};
+  const { name, currency, nav_hidden } = req.body || {};
+  if (nav_hidden !== undefined) {
+    const pages = (Array.isArray(nav_hidden) ? nav_hidden : []).filter((p) => NAV_HIDEABLE.includes(p));
+    db.prepare('UPDATE families SET nav_hidden = ? WHERE id = ?').run([...new Set(pages)].join(','), req.user.family_id);
+  }
   if (name) db.prepare('UPDATE families SET name = ? WHERE id = ?').run(String(name).trim(), req.user.family_id);
   if (currency) {
     // free text let anything through, including a typo that would then label every amount in the
@@ -768,6 +808,51 @@ function autoLogIncomes() {
     db.prepare('UPDATE recurring_incomes SET last_period = ? WHERE id = ?').run(period, r.id);
   }
 }
+// What makes two income rows "the same income": the person, and the first word of what it is called,
+// accents and the month in brackets left out — "Salariu Magna (septembrie)" and "Salariu" are one
+// salary, "Alocația de stat copii" and "Alocație copil" one allowance.
+function incomeKey(source) {
+  const w = String(source || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
+    .replace(/\([^)]*\)/g, ' ').match(/[a-z]+/);
+  return w ? w[0].slice(0, 5) : '';
+}
+// Incomes typed in by hand month after month: the same person, the same kind of income, in at least
+// two of the last three months, for roughly the same amount, and not already on a schedule.
+app.get('/api/recurring-incomes/suggest', auth, (req, res) => {
+  const fid = req.user.family_id;
+  const now = new Date();
+  const from = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 2, 1)).toISOString().slice(0, 10);
+  const rows = db.prepare(`SELECT i.*, u.name AS user_name FROM incomes i LEFT JOIN users u ON u.id = i.user_id
+    WHERE i.family_id = ? AND i.date >= ? ORDER BY i.date DESC, i.id DESC`).all(fid, from);
+  const sched = db.prepare('SELECT user_id, source, amount FROM recurring_incomes WHERE family_id = ? AND active = 1').all(fid);
+  const groups = new Map();
+  for (const r of rows) {
+    const key = incomeKey(r.source);
+    if (!key) continue;
+    const g = `${r.user_id}|${key}`;
+    if (!groups.has(g)) groups.set(g, []);
+    groups.get(g).push(r);
+  }
+  const out = [];
+  for (const [g, list] of groups) {
+    const latest = list[0];
+    const months = new Set(list.map((r) => r.date.slice(0, 7)));
+    if (months.size < 2) continue;
+    if (!list.every((r) => Math.abs(r.amount - latest.amount) <= latest.amount * 0.15)) continue;
+    const covered = sched.some((s) => s.user_id === latest.user_id
+      && (incomeKey(s.source) === g.split('|')[1] || Math.abs(s.amount - latest.amount) <= latest.amount * 0.03));
+    if (covered) continue;
+    const amounts = list.map((r) => r.amount);
+    out.push({
+      key: g,
+      source: String(latest.source).replace(/\s*\([^)]*\)\s*/g, ' ').trim(),
+      user_id: latest.user_id, user_name: latest.user_name,
+      amount: latest.amount, day: Number(latest.date.slice(8, 10)),
+      months: months.size, varies: Math.max(...amounts) - Math.min(...amounts) > 0.005,
+    });
+  }
+  res.json(out.sort((a, b) => b.amount - a.amount));
+});
 app.get('/api/recurring-incomes', auth, (req, res) => {
   res.json(db.prepare('SELECT r.*, u.name AS user_name FROM recurring_incomes r LEFT JOIN users u ON u.id = r.user_id WHERE r.family_id = ? ORDER BY r.active DESC, r.id DESC').all(req.user.family_id));
 });
@@ -784,6 +869,15 @@ app.post('/api/recurring-incomes', auth, canWrite, (req, res) => {
   if (uid == null) uid = req.user.id;
   const info = db.prepare('INSERT INTO recurring_incomes (family_id, user_id, source, amount, day) VALUES (?,?,?,?,?)')
     .run(req.user.family_id, uid, str(b.source), Number(b.amount), day);
+  // This month's money was usually typed in by hand already — that is why the income is being made
+  // recurring in the first place. Logging it again "because the day has passed" counted the salary
+  // twice; when it is already there, the schedule starts next month.
+  const period = new Date().toISOString().slice(0, 7);
+  const key = incomeKey(b.source);
+  const already = db.prepare('SELECT source, amount FROM incomes WHERE family_id = ? AND user_id IS ? AND substr(date,1,7) = ?')
+    .all(req.user.family_id, uid, period)
+    .some((r) => incomeKey(r.source) === key || Math.abs(r.amount - Number(b.amount)) <= Number(b.amount) * 0.03);
+  if (already) db.prepare('UPDATE recurring_incomes SET last_period = ? WHERE id = ?').run(period, info.lastInsertRowid);
   autoLogIncomes(); // if this month's day already passed, log it right away
   res.json(db.prepare('SELECT * FROM recurring_incomes WHERE id = ?').get(info.lastInsertRowid));
 });
@@ -889,7 +983,7 @@ app.get('/api/upcoming-month', auth, (req, res) => {
     const stats = creditStats(c, db.prepare('SELECT * FROM credit_payments WHERE credit_id = ?').all(c.id));
     if (!(stats.months_left > 0) && stats.balance <= 0.005) continue; // paid off
     const date = monthDate(period, Number(String(c.start_date).slice(8, 10)) || 1);
-    items.push({ kind: 'credit', label: c.name, amount: Math.round((stats.monthly_payment + (Number(c.commission) || 0)) * 100) / 100, date });
+    items.push({ kind: 'credit', label: c.name, amount: stats.monthly_total, date });
   }
   for (const b of db.prepare("SELECT * FROM bills WHERE family_id = ? AND auto_pay = 1 AND status = 'unpaid' AND amount > 0 AND due_date > ? AND due_date <= ?").all(fid, today, monthEnd)) {
     items.push({ kind: 'bill', label: b.name, amount: Number(b.amount), date: b.due_date });
@@ -975,7 +1069,7 @@ function forecastFor(fam, wantDays) {
       const stats = creditStats(c, db.prepare('SELECT * FROM credit_payments WHERE credit_id = ?').all(c.id));
       if (!(stats.months_left > 0) && stats.balance <= 0.005) continue;
       add(monthDate(p, Number(String(c.start_date).slice(8, 10)) || 1), 'credit', c.name,
-        -(Math.round((stats.monthly_payment + (Number(c.commission) || 0)) * 100) / 100));
+        -stats.monthly_total);
     }
   }
   // every unpaid bill, not only the auto-paid ones: a bill you have to pay by hand still leaves
@@ -1032,12 +1126,15 @@ app.get('/api/budgets/suggest', auth, (req, res) => {
   const monthAt = (back) => new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - back, 1)).toISOString().slice(0, 7);
   const from = monthAt(n), to = monthAt(1);
   const rows = db.prepare(`
-    SELECT category, SUM(amount) AS total FROM expenses
+    SELECT category, SUM(amount) AS total, COUNT(DISTINCT substr(date,1,7)) AS months FROM expenses
     WHERE family_id = ? AND on_card = 0 AND substr(date,1,7) >= ? AND substr(date,1,7) <= ?
     GROUP BY category ORDER BY total DESC
   `).all(req.user.family_id, from, to);
-  // rounded up to the nearest 10 — a budget you are instantly over is useless
-  const categories = rows.map((r) => ({ category: r.category, avg: r.total / n, amount: Math.max(10, Math.ceil(r.total / n / 10) * 10) }));
+  // rounded up to the nearest 10 — a budget you are instantly over is useless.
+  // `months` is how many of those months had anything in the category at all: an average over
+  // three months of which two were empty is not "what it usually costs", and comparing against it
+  // called a new kindergarten fee 3041% above normal.
+  const categories = rows.map((r) => ({ category: r.category, avg: r.total / n, months: r.months, amount: Math.max(10, Math.ceil(r.total / n / 10) * 10) }));
   res.json({ months: n, from, to, categories });
 });
 app.post('/api/budgets/bulk', auth, canWrite, (req, res) => {
@@ -1097,6 +1194,7 @@ function creditStats(credit, prepays) {
   if (balanceNow === null) balanceNow = bal; // already paid off before today
 
   const commission = Number(credit.commission) || 0;
+  const insurance = Number(credit.insurance) || 0;
   // breakdown of the NEXT installment: interest accrues on today's balance, the rest is principal.
   // paying one month in advance = that principal portion + 1% early-repayment fee.
   const nextInterest = Math.max(0, balanceNow) * r;
@@ -1104,7 +1202,9 @@ function creditStats(credit, prepays) {
   return {
     monthly_payment: Math.round(payment * 100) / 100,
     commission: Math.round(commission * 100) / 100,
-    monthly_total: Math.round((payment + commission) * 100) / 100, // rate + fixed commission
+    insurance: Math.round(insurance * 100) / 100,
+    // rate + fixed commission + the bank's credit insurance: everything that leaves the account for it
+    monthly_total: Math.round((payment + commission + insurance) * 100) / 100,
     next_principal: Math.round(nextPrincipal * 100) / 100,
     next_interest: Math.round(nextInterest * 100) / 100,
     advance_month_cost: Math.round(nextPrincipal * 1.01 * 100) / 100, // next principal + 1%
@@ -1117,7 +1217,8 @@ function creditStats(credit, prepays) {
     payoff_date: addMonths(credit.start_date, months),
   };
 }
-// once a month, on/after each credit's payment day, log its monthly payment (rate + commission) as an expense
+// once a month, on/after each credit's payment day, log its monthly payment (rate + commission) as an
+// expense, and the credit insurance, when it has one, as a second line beside it
 function autoLogCreditExpenses() {
   const period = new Date().toISOString().slice(0, 7);
   const todayDay = new Date().getUTCDate();
@@ -1133,6 +1234,7 @@ function autoLogCreditExpenses() {
       continue;
     }
     const total = Math.round((stats.monthly_payment + (Number(c.commission) || 0)) * 100) / 100;
+    const insurance = Math.round((Number(c.insurance) || 0) * 100) / 100;
     // a credit tied to a property carries that link onto the expense, so the mortgage lands in
     // the property's own cost history — without it "is this flat making money?" ignores the loan
     // the mirror label is built as "<category>: <note>", so the note here carries no "Credit:"
@@ -1142,6 +1244,12 @@ function autoLogCreditExpenses() {
       const info = db.prepare('INSERT INTO expenses (family_id, user_id, category, amount, note, date, property_id) VALUES (?,?,?,?,?,?,?)')
         .run(c.family_id, c.user_id, 'Credit', total, `Credit: ${c.name} ${period}`, dueDate, c.property_id);
       mirrorExpense(c.family_id, info.lastInsertRowid, b, c.user_id);
+      if (insurance > 0) {
+        const ib = { ...b, amount: insurance, note: `${c.name} ${period}` };
+        const ii = db.prepare('INSERT INTO expenses (family_id, user_id, category, amount, note, date, property_id) VALUES (?,?,?,?,?,?,?)')
+          .run(c.family_id, c.user_id, 'Credit', insurance, `Asigurare credit: ${c.name} ${period}`, dueDate, c.property_id);
+        mirrorExpense(c.family_id, ii.lastInsertRowid, ib, c.user_id);
+      }
       db.prepare('UPDATE credits SET auto_expense_period = ? WHERE id = ?').run(period, c.id);
     })();
   }
@@ -1152,6 +1260,7 @@ function validateCredit(b, fid, prevPropId = null) {
   if (!(Number(b.interest_rate) >= 0)) return 'Dobanda (interest %) must be 0 or more';
   if (!(Number(b.term_months) >= 1)) return 'Term must be at least 1 month';
   if (b.commission != null && b.commission !== '' && !(Number(b.commission) >= 0)) return 'Commission must be 0 or more';
+  if (b.insurance != null && b.insurance !== '' && !(Number(b.insurance) >= 0)) return 'Insurance must be 0 or more';
   if (!isDate(b.start_date)) return 'Start date must be YYYY-MM-DD';
   if (num(b.user_id) != null && !db.prepare('SELECT id FROM users WHERE id = ? AND family_id = ?').get(num(b.user_id), fid)) {
     return 'Holder must be a member of the family';
@@ -1179,10 +1288,10 @@ app.post('/api/credits', auth, canWrite, (req, res) => {
   const err = validateCredit(b, req.user.family_id);
   if (err) return res.status(400).json({ error: err });
   const info = db.prepare(`
-    INSERT INTO credits (family_id, name, lender, principal, interest_rate, term_months, start_date, commission, user_id, property_id, notes)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?)
+    INSERT INTO credits (family_id, name, lender, principal, interest_rate, term_months, start_date, commission, insurance, user_id, property_id, notes)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
   `).run(req.user.family_id, str(b.name), str(b.lender), Number(b.principal), Number(b.interest_rate),
-    Math.round(Number(b.term_months)), b.start_date, Number(b.commission) || 0, num(b.user_id), num(b.property_id), str(b.notes));
+    Math.round(Number(b.term_months)), b.start_date, Number(b.commission) || 0, Number(b.insurance) || 0, num(b.user_id), num(b.property_id), str(b.notes));
   const row = db.prepare(`${CREDIT_SELECT} WHERE c.id = ?`).get(info.lastInsertRowid);
   res.json({ ...row, ...creditStats(row, []) });
 });
@@ -1192,9 +1301,9 @@ app.put('/api/credits/:id', auth, canWrite, (req, res) => {
   const b = { ...row, ...req.body };
   const err = validateCredit(b, req.user.family_id, num(row.property_id));
   if (err) return res.status(400).json({ error: err });
-  db.prepare('UPDATE credits SET name=?, lender=?, principal=?, interest_rate=?, term_months=?, start_date=?, commission=?, user_id=?, property_id=?, notes=? WHERE id=?')
+  db.prepare('UPDATE credits SET name=?, lender=?, principal=?, interest_rate=?, term_months=?, start_date=?, commission=?, insurance=?, user_id=?, property_id=?, notes=? WHERE id=?')
     .run(str(b.name), str(b.lender), Number(b.principal), Number(b.interest_rate), Math.round(Number(b.term_months)), b.start_date,
-      Number(b.commission) || 0, num(b.user_id), num(b.property_id), str(b.notes), row.id);
+      Number(b.commission) || 0, Number(b.insurance) || 0, num(b.user_id), num(b.property_id), str(b.notes), row.id);
   const updated = db.prepare(`${CREDIT_SELECT} WHERE c.id = ?`).get(row.id);
   const pays = db.prepare('SELECT * FROM credit_payments WHERE credit_id = ?').all(row.id);
   res.json({ ...updated, ...creditStats(updated, pays) });
@@ -1542,17 +1651,19 @@ app.get('/api/bills', auth, (req, res) => {
   const bills = db.prepare(`${BILL_SELECT} WHERE b.family_id = ? ORDER BY b.due_date`).all(req.user.family_id);
   res.json(bills);
 });
+// how many days ahead a bill asks for an alert: a whole number of days up to a month, or none
+const remindDays = (v) => { const n = Math.round(Number(v)); return v === '' || v == null || !(n >= 1 && n <= 30) ? null : n; };
 app.post('/api/bills', auth, canWrite, (req, res) => {
   const b = req.body || {};
   if (!b.name || !b.category || !isDate(b.due_date)) return res.status(400).json({ error: 'Name, category and due date are required' });
   const err = validateBillLinks(b, req.user.family_id);
   if (err) return res.status(400).json({ error: err });
   const info = db.prepare(`
-    INSERT INTO bills (family_id, name, provider, category, expense_category, amount, due_date, recur_months, recur_days, auto_pay, owner_id, property_id, vehicle_id, notes)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    INSERT INTO bills (family_id, name, provider, category, expense_category, amount, due_date, recur_months, recur_days, auto_pay, owner_id, property_id, vehicle_id, notes, remind_days)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
   `).run(req.user.family_id, str(b.name), str(b.provider), str(b.category), str(b.expense_category), num(b.amount), b.due_date,
     Number(b.recur_months) || 0, Number(b.recur_days) || 0,
-    b.auto_pay ? 1 : 0, num(b.owner_id), num(b.property_id), num(b.vehicle_id), str(b.notes));
+    b.auto_pay ? 1 : 0, num(b.owner_id), num(b.property_id), num(b.vehicle_id), str(b.notes), remindDays(b.remind_days));
   res.json(db.prepare(`${BILL_SELECT} WHERE b.id = ?`).get(info.lastInsertRowid));
 });
 app.put('/api/bills/:id', auth, canWrite, (req, res) => {
@@ -1563,10 +1674,10 @@ app.put('/api/bills/:id', auth, canWrite, (req, res) => {
   const err = validateBillLinks(b, req.user.family_id, num(row.property_id));
   if (err) return res.status(400).json({ error: err });
   db.prepare(`
-    UPDATE bills SET name=?, provider=?, category=?, expense_category=?, amount=?, due_date=?, recur_months=?, recur_days=?, status=?, auto_pay=?, owner_id=?, property_id=?, vehicle_id=?, notes=? WHERE id=?
+    UPDATE bills SET name=?, provider=?, category=?, expense_category=?, amount=?, due_date=?, recur_months=?, recur_days=?, status=?, auto_pay=?, owner_id=?, property_id=?, vehicle_id=?, notes=?, remind_days=? WHERE id=?
   `).run(str(b.name), str(b.provider), str(b.category), str(b.expense_category), num(b.amount), b.due_date,
     Number(b.recur_months) || 0, Number(b.recur_days) || 0,
-    b.status === 'paid' ? 'paid' : 'unpaid', b.auto_pay ? 1 : 0, num(b.owner_id), num(b.property_id), num(b.vehicle_id), str(b.notes), row.id);
+    b.status === 'paid' ? 'paid' : 'unpaid', b.auto_pay ? 1 : 0, num(b.owner_id), num(b.property_id), num(b.vehicle_id), str(b.notes), remindDays(b.remind_days), row.id);
   res.json(db.prepare(`${BILL_SELECT} WHERE b.id = ?`).get(row.id));
 });
 app.delete('/api/bills/:id', auth, canWrite, (req, res) => {
@@ -2873,7 +2984,7 @@ function collectReminders(fid, horizon, scopeUserId = null) {
   };
   for (const b of db.prepare("SELECT * FROM bills WHERE family_id = ? AND status = 'unpaid'").all(fid)) {
     // auto_pay travels with the item so the UI can show it without the "needs you" colour
-    push('bill', b.name, b.provider || b.category, b.due_date, b.id, b.owner_id, { amount: b.amount, auto_pay: b.auto_pay });
+    push('bill', b.name, b.provider || b.category, b.due_date, b.id, b.owner_id, { amount: b.amount, auto_pay: b.auto_pay, remind_days: b.remind_days });
   }
   // a document tied to an entity slot (e.g. property PAD) replaces that field's reminder — no duplicates
   const covered = new Set();
@@ -3204,6 +3315,16 @@ function reviewFor(user) {
   // --- and whether the money holds ---
   const fam = db.prepare('SELECT * FROM families WHERE id = ?').get(fid);
   const f = forecastFor(fam, 60);
+  // what came in and went out since the last look: the first thing a weekly look at money asks,
+  // and the one it can answer without a bank balance
+  const sinceDay = String(since).slice(0, 10);
+  const spentRows = db.prepare(`SELECT category, SUM(amount) AS total FROM expenses
+    WHERE family_id = ? AND on_card = 0 AND date >= ? GROUP BY category ORDER BY total DESC`).all(fid, sinceDay);
+  const week = {
+    spent: Math.round(spentRows.reduce((a, x) => a + x.total, 0) * 100) / 100,
+    income: Math.round((db.prepare('SELECT COALESCE(SUM(amount),0) AS t FROM incomes WHERE family_id = ? AND date >= ?').get(fid, sinceDay).t) * 100) / 100,
+    top: spentRows.slice(0, 3).map((x) => ({ category: x.category, total: Math.round(x.total * 100) / 100 })),
+  };
 
   return {
     since,
@@ -3214,6 +3335,7 @@ function reviewFor(user) {
     meters_pending: metersPending,
     money: f.needs_balance ? { needs_balance: true }
       : { now: f.today, low: f.low.amount, low_date: f.low.date, stale_days: f.stale_days, currency: f.currency },
+    week,
   };
 }
 app.get('/api/review', auth, (req, res) => res.json(reviewFor(req.user)));
@@ -3786,6 +3908,7 @@ const ALERT_GROUPS = {
   tenant: ['tenant_unpaid', 'maintenance', 'meter_pending'],
   documents: ['document'],
   warranties: ['warranty'],
+  bills: ['bill'],
   birthdays: ['birthday'],
 };
 const GROUP_OF_KIND = Object.fromEntries(Object.entries(ALERT_GROUPS).flatMap(([g, kinds]) => kinds.map((k) => [k, g])));
@@ -3805,7 +3928,7 @@ function inQuietHours(qs, qe, h = bucharestHour()) {
 const ALERT_PAGE = {
   rca: '/#vehicles', casco: '/#vehicles', vignette: '/#vehicles', itp: '/#vehicles', road_tax: '/#vehicles',
   property_insurance: '/#properties', tenant_unpaid: '/#properties', maintenance: '/#properties', meter_pending: '/#properties',
-  document: '/#acte', birthday: '/#family', watch: '/#watch', warranty: '/#garantii', billdraft: '/#bills',
+  document: '/#acte', birthday: '/#family', watch: '/#watch', warranty: '/#garantii', billdraft: '/#bills', bill: '/#bills',
 };
 function alertUrl(key) { return ALERT_PAGE[String(key).split(':')[0]] || '/#alerts'; }
 // the thing an alert is about, without the threshold: "rca:3:2026-08-16:14" -> "rca:3:2026-08-16".
@@ -3895,7 +4018,10 @@ function generateNotifications(fid) {
     }
   };
   for (const r of collectReminders(fid, 31)) {
-    if (!ALERT_KINDS.has(r.kind)) continue;
+    // a bill notifies only when somebody asked it to, a set number of days ahead, and never when
+    // it pays itself: the ribbon already shows every bill, the buzz is for the ones paid by hand
+    const billAlert = r.kind === 'bill' && r.remind_days != null && !r.auto_pay;
+    if (!ALERT_KINDS.has(r.kind) && !billAlert) continue;
     const prefix = `${r.kind}:${r.ref_id}:${r.date}:`;
     const base = { label: r.label, entity: r.entity || '', date: r.date, amount: r.amount ? `${Number(r.amount).toFixed(2)} ${rowCur(r.currency, cur)}` : '' };
     if (r.days_left < 0) {
@@ -3903,7 +4029,7 @@ function generateNotifications(fid) {
       add(`${prefix}overdue`, { ...base, days: r.days_left }, r.owner_id);
       continue;
     }
-    for (const t of THRESHOLDS) {
+    for (const t of billAlert ? [0, Number(r.remind_days)] : THRESHOLDS) {
       if (r.days_left <= t) {
         add(`${prefix}${t}`, { ...base, days: r.days_left }, r.owner_id);
         break; // only the tightest threshold crossed right now
@@ -4882,6 +5008,47 @@ app.put('/api/essentials', auth, canWrite, (req, res) => {
   })();
   res.json(db.prepare('SELECT id, label, amount FROM essentials WHERE family_id = ? ORDER BY id').all(req.user.family_id));
 });
+
+// ---------- what each child costs ----------
+// A child's money is mostly paid by a parent: the kindergarten fee is logged by whoever paid it, the
+// therapy bill is "the family's". So an expense counts for a child when it is set on the child, or
+// when the child's name is a word in its note ("Bill: Celule Maria") — Maria and Mara stay apart,
+// because it is the whole word that has to match. Bills set on a child, or named after one, are the
+// fixed part, brought to their monthly cost.
+function kidsCosts(fid) {
+  const kids = db.prepare("SELECT id, name, avatar FROM users WHERE family_id = ? AND role = 'child' ORDER BY created_at").all(fid);
+  if (!kids.length) return [];
+  const words = (t) => String(t || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().match(/[a-z0-9]+/g) || [];
+  const nameOf = (k) => words(k.name)[0] || '';
+  const now = new Date();
+  const ym = (back) => new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - back, 1)).toISOString().slice(0, 7);
+  const thisM = ym(0), prevM = ym(1), from = ym(3);
+  const exps = db.prepare("SELECT user_id, category, amount, note, substr(date,1,7) AS m FROM expenses WHERE family_id = ? AND on_card = 0 AND substr(date,1,7) >= ?").all(fid, from);
+  const bills = db.prepare('SELECT name, amount, recur_months, recur_days, owner_id FROM bills WHERE family_id = ? AND amount > 0 AND (recur_months > 0 OR recur_days > 0)').all(fid);
+  const r2 = (n) => Math.round(n * 100) / 100;
+  return kids.map((k) => {
+    const nm = nameOf(k);
+    const mine = (owner, text) => owner === k.id || (nm && words(text).includes(nm));
+    const own = exps.filter((e) => mine(e.user_id, e.note));
+    const sumIn = (m) => own.filter((e) => e.m === m).reduce((a, e) => a + e.amount, 0);
+    const cats = {};
+    for (const e of own.filter((x) => x.m === thisM)) cats[e.category] = (cats[e.category] || 0) + e.amount;
+    // the three full months before this one, averaged over the months that had anything at all
+    const past = [ym(1), ym(2), ym(3)].map(sumIn).filter((t) => t > 0);
+    const fixed = bills.filter((b) => mine(b.owner_id, b.name)).map((b) => ({
+      name: b.name,
+      monthly: r2(Number(b.recur_days) > 0 ? (Number(b.amount) * 30.4375) / Number(b.recur_days) : Number(b.amount) / Number(b.recur_months)),
+    }));
+    return {
+      id: k.id, name: k.name, avatar: k.avatar,
+      month: r2(sumIn(thisM)), prev: r2(sumIn(prevM)),
+      avg: past.length ? r2(past.reduce((a, t) => a + t, 0) / past.length) : null,
+      categories: Object.entries(cats).map(([category, total]) => ({ category, total: r2(total) })).sort((a, b) => b.total - a.total),
+      fixed, fixed_total: r2(fixed.reduce((a, f) => a + f.monthly, 0)),
+    };
+  });
+}
+app.get('/api/kids-costs', auth, (req, res) => res.json(kidsCosts(req.user.family_id)));
 
 // ---------- dashboard stats ----------
 // the same month-in-words the report emails, readable from the app so the two can never disagree.

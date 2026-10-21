@@ -636,6 +636,9 @@ if (!creditCols.includes('user_id')) db.exec('ALTER TABLE credits ADD COLUMN use
 if (!creditCols.includes('property_id')) db.exec('ALTER TABLE credits ADD COLUMN property_id INTEGER REFERENCES properties(id) ON DELETE SET NULL');
 if (!creditCols.includes('commission')) db.exec('ALTER TABLE credits ADD COLUMN commission REAL NOT NULL DEFAULT 0');
 if (!creditCols.includes('auto_expense_period')) db.exec('ALTER TABLE credits ADD COLUMN auto_expense_period TEXT');
+// the bank's credit insurance (ING Credit Protect and the like): a fixed monthly charge that is part
+// of what the credit costs, booked as its own line next to the instalment
+if (!creditCols.includes('insurance')) db.exec('ALTER TABLE credits ADD COLUMN insurance REAL NOT NULL DEFAULT 0');
 
 const billCols = db.prepare('PRAGMA table_info(bills)').all().map((c) => c.name);
 if (!billCols.includes('auto_pay')) db.exec('ALTER TABLE bills ADD COLUMN auto_pay INTEGER NOT NULL DEFAULT 0');
@@ -644,6 +647,9 @@ if (!billCols.includes('property_id')) db.exec('ALTER TABLE bills ADD COLUMN pro
 if (!billCols.includes('vehicle_id')) db.exec('ALTER TABLE bills ADD COLUMN vehicle_id INTEGER REFERENCES vehicles(id) ON DELETE SET NULL');
 if (!billCols.includes('recur_days')) db.exec('ALTER TABLE bills ADD COLUMN recur_days INTEGER NOT NULL DEFAULT 0');
 if (!billCols.includes('expense_category')) db.exec('ALTER TABLE bills ADD COLUMN expense_category TEXT');
+// a bill paid by hand that the family wants a phone buzz for: alert this many days before it is due
+// (and on the day, and if it slips). NULL = the bill stays in the ribbon and never notifies.
+if (!billCols.includes('remind_days')) db.exec('ALTER TABLE bills ADD COLUMN remind_days INTEGER');
 
 const vehCols = db.prepare('PRAGMA table_info(vehicles)').all().map((c) => c.name);
 if (!vehCols.includes('owner_id')) db.exec('ALTER TABLE vehicles ADD COLUMN owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL');
@@ -779,6 +785,8 @@ if (!famCols.includes('cal_token')) db.exec('ALTER TABLE families ADD COLUMN cal
 if (!famCols.includes('ha_token')) db.exec('ALTER TABLE families ADD COLUMN ha_token TEXT');
 // the address invoices are forwarded to writes in by this token; see mail_drafts
 if (!famCols.includes('mail_token')) db.exec('ALTER TABLE families ADD COLUMN mail_token TEXT');
+// pages the family does not use, left out of the menu for everybody (comma-separated page keys)
+if (!famCols.includes('nav_hidden')) db.exec("ALTER TABLE families ADD COLUMN nav_hidden TEXT NOT NULL DEFAULT ''");
 
 const expCols = db.prepare('PRAGMA table_info(expenses)').all().map((c) => c.name);
 if (!expCols.includes('property_id')) db.exec('ALTER TABLE expenses ADD COLUMN property_id INTEGER REFERENCES properties(id) ON DELETE SET NULL');

@@ -618,9 +618,10 @@ const RO_RX = [
   [/^(.+) — unpaid by tenant$/, '$1 — neplătit de chiriaș'],
   [/^To fix: (.+)$/, 'De reparat: $1'],
 ];
-// before sign-in there is no account language yet: remember the last choice on this device,
-// else follow the device language — a Romanian phone gets a Romanian sign-in screen
-const deviceLang = () => localStorage.getItem('fh_lang') || ((navigator.language || '').toLowerCase().startsWith('ro') ? 'ro' : 'en');
+// before sign-in there is no account language yet: remember the last choice on this device, else
+// Romanian. Following the device language greeted the household in English on every PC set up in
+// English; this is a Romanian household's app, and the English button is one tap away.
+const deviceLang = () => { try { return localStorage.getItem('fh_lang') || 'ro'; } catch { return 'ro'; } };
 let LANG = deviceLang();
 function applyLang() {
   LANG = (ME && ME.lang) || deviceLang();
@@ -1222,11 +1223,8 @@ function render() {
   const closeSheet = () => { sheet.hidden = true; moretab.setAttribute('aria-expanded', 'false'); };
   moretab.onclick = () => { sheet.hidden = !sheet.hidden; moretab.setAttribute('aria-expanded', String(!sheet.hidden)); };
   sheet.querySelectorAll('[data-close], .sheetlink').forEach((x) => x.addEventListener('click', closeSheet));
-  // floating +: one tap to log an expense from anywhere, straight into a focused Amount
-  $('#fab')?.addEventListener('click', () => {
-    EXP_FORM_OPEN = true; FOCUS_AMOUNT = true; PENDING_MONEY_TAB = 'expenses';
-    if (page === 'money') viewMoney($('#page'), 'expenses'); else location.hash = '#money';
-  });
+  // floating +: one tap to log an expense from anywhere, without leaving the page you are on
+  $('#fab')?.addEventListener('click', () => quickExpense(page));
   runView((el) => fn(el, arg), $('#page'), RENDER_SEQ);
   pollNotifications();
 }
@@ -1252,18 +1250,41 @@ function runView(fn, el, seq = RENDER_SEQ) {
   try { ret = fn(el); } catch (err) { report(err); return; } // synchronous throw
   if (ret && typeof ret.catch === 'function') ret.catch(report); // async rejection
 }
-// Thirteen flat links read as one long undifferentiated list; grouped, the sidebar answers "where
-// would that live?" at a glance. `null` starts a new group under the given heading.
+// Seventeen flat links read as one long undifferentiated list; grouped, the sidebar answers "where
+// would that live?" at a glance. `null` starts a new group under the given heading. The four on top
+// are the ones a visit starts from; the five groups are the five things the household keeps here.
 const NAV = [
-  ['dashboard', 'grid', 'Dashboard'], ['review', 'check', 'This week'], ['search', 'search', 'Search'],
+  ['dashboard', 'grid', 'Dashboard'], ['review', 'check', 'This week'], ['search', 'search', 'Search'], ['alerts', 'bell', 'Alerts'],
   [null, 'Money'],
   ['money', 'wallet', 'Budget & expenses'], ['bills', 'receipt', 'Bills'], ['import', 'upload', 'Bank import'],
-  [null, 'Property & things'],
-  ['properties', 'home', 'Properties'], ['tenants', 'key', 'Tenants'], ['vehicles', 'car', 'Vehicles'], ['acte', 'file', 'Acte'],
-  ['garantii', 'shield', 'Warranties'],
-  [null, 'Household'],
-  ['chores', 'chore', 'Chores'], ['lists', 'checklist', 'Lists'], ['watch', 'radar', 'Watched pages'], ['alerts', 'bell', 'Alerts'], ['family', 'users', 'Family'], ['settings', 'gear', 'Settings'],
+  [null, 'nav:House'],
+  ['properties', 'home', 'Properties'], ['tenants', 'key', 'Tenants'], ['chores', 'chore', 'Chores'], ['watch', 'radar', 'Watched pages'],
+  [null, 'nav:Cars'],
+  ['vehicles', 'car', 'Vehicles'],
+  [null, 'nav:Papers'],
+  ['acte', 'file', 'Acte'], ['garantii', 'shield', 'Warranties'],
+  [null, 'nav:Family'],
+  ['family', 'users', 'Family'], ['lists', 'checklist', 'Lists'], ['settings', 'gear', 'Settings'],
 ];
+// the group headings, and the pages a family can take out of its menu (Settings → Menu)
+const NAV_GROUP = { 'nav:House': ['House', 'Casă'], 'nav:Cars': ['Cars', 'Mașini'], 'nav:Papers': ['Papers', 'Acte'], 'nav:Family': ['Family', 'Familie'] };
+const navGroupName = (k) => (NAV_GROUP[k] ? NAV_GROUP[k][LANG === 'ro' ? 1 : 0] : tr(k));
+const NAV_HIDEABLE = ['review', 'search', 'import', 'properties', 'tenants', 'vehicles', 'acte', 'garantii', 'chores', 'lists', 'watch'];
+const navHidden = () => new Set(String(FAMILY?.nav_hidden || '').split(',').filter(Boolean));
+// the menu as this family has it: hidden pages left out, and a heading only when something is under it.
+// A hidden page is still there — a link or a typed address still opens it — it just has no menu spot.
+function navItems(active) {
+  const hidden = navHidden();
+  const out = [];
+  let pending = null;
+  for (const it of NAV) {
+    if (it[0] === null) { pending = it; continue; }
+    if (hidden.has(it[0]) && it[0] !== active) continue;
+    if (pending) { out.push(pending); pending = null; }
+    out.push(it);
+  }
+  return out;
+}
 // the four that earn a permanent spot on a phone; everything else lives behind "More".
 // Alerts is here on purpose: its badge used to sit ~680px off-screen in the old scrolling strip,
 // which made the whole alerts feature invisible on a phone.
@@ -1274,15 +1295,15 @@ function shell(active) {
   return `<div class="shell">
     <nav class="sidebar">
       <div class="brand">Family Hub<small>${esc(FAMILY.name)}</small></div>
-      ${NAV.map(([k, ic, l]) => k === null
-        ? `<div class="navgroup">${tr(ic)}</div>`
+      ${navItems(active).map(([k, ic, l]) => k === null
+        ? `<div class="navgroup">${navGroupName(ic)}</div>`
         : `<a class="navlink ${k === active ? 'active' : ''}" href="#${k}">${icon(ic)}<span>${l}</span>${k === 'alerts' ? badgeHtml() : ''}</a>`).join('')}
       <div class="spacer"></div>
       <a class="whoami row" href="#settings" style="text-decoration:none;color:inherit;gap:8px">${avatarHtml(ME)}<span><b>${esc(ME.name)}</b>${tr(ME.role)} · ${esc(ME.email || '')}</span></a>
       <button class="navlink" data-logout>${icon('logout')}<span>Sign out</span></button>
     </nav>
     <main class="main" id="page">${pageSkeleton()}</main>
-    ${canWrite() && active !== 'money' ? `<button class="fab" id="fab" aria-label="${tr('Add expense')}" data-tip="${tr('Add expense')}">+</button>` : ''}
+    ${canWrite() ? `<button class="fab" id="fab" aria-label="${tr('Add expense')}" data-tip="${tr('Add expense')}">+</button>` : ''}
     <nav class="tabbar">
       ${TABS.map(([k, ic, l]) => `<a class="tab ${k === active ? 'active' : ''}" href="#${k}">
         <span class="ic">${icon(ic)}${k === 'alerts' ? badgeHtml() : ''}</span><span class="tl">${l}</span></a>`).join('')}
@@ -1296,10 +1317,10 @@ function shell(active) {
           // them as headings too — mapped blindly they rendered as a link labelled "undefined".
           // A heading is only emitted once something under it survives the bottom-bar filter.
           let pending = null, out = '', open = false;
-          for (const [k, ic, l] of NAV) {
+          for (const [k, ic, l] of navItems(active)) {
             if (k === null) { if (open) { out += '</div>'; open = false; } pending = ic; continue; }
             if (inTabs(k)) continue;
-            if (pending) { out += `<div class="sheetgroup">${tr(pending)}</div><div class="sheetgrid">`; pending = null; open = true; }
+            if (pending) { out += `<div class="sheetgroup">${navGroupName(pending)}</div><div class="sheetgrid">`; pending = null; open = true; }
             else if (!open) { out += '<div class="sheetgrid">'; open = true; }
             out += `<a class="sheetlink ${k === active ? 'active' : ''}" href="#${k}"><span class="ic">${icon(ic)}</span>${l}</a>`;
           }
@@ -1309,6 +1330,41 @@ function shell(active) {
       </div>
     </div>
   </div>`;
+}
+
+/* The three fields an expense needs on the spot — how much, what for, a word about it — in a small
+   sheet over whatever page is open. Everything else (who, which car or house, the date) takes its
+   usual default: you, nothing, today. "More details" opens the full form on the Money page. */
+function quickExpense(page) {
+  const ro = LANG === 'ro';
+  const wrap = openModal(`<h3 style="margin-top:0">${ro ? 'Cheltuială nouă' : 'New expense'}</h3>
+    <form id="quickexp" class="formgrid quickexp">
+      <div><label for="qx-amount">${ro ? 'Sumă' : 'Amount'} (${cur()})</label><input id="qx-amount" name="amount" type="number" step="0.01" min="0.01" inputmode="decimal" required></div>
+      <div><label for="qx-cat">${ro ? 'Categorie' : 'Category'}</label><select id="qx-cat" name="category">${CATEGORIES.map((c) => `<option value="${c}" ${(LAST_EXP_CAT || 'Groceries') === c ? 'selected' : ''}>${c}</option>`).join('')}</select></div>
+      <div><label for="qx-note">${ro ? 'Notă' : 'Note'}</label><input id="qx-note" name="note" placeholder="${ro ? 'Lidl, farmacie…' : 'Lidl, pharmacy…'}"></div>
+      <button class="btn">${ro ? 'Adaugă cheltuiala' : 'Add expense'}</button>
+    </form>
+    <p style="margin:12px 0 0"><a href="#money" id="qx-more">${ro ? 'Mai multe detalii' : 'More details'}</a></p>`, 'quickexp-card');
+  wrap.querySelector('#qx-amount').focus();
+  wrap.querySelector('#qx-more').onclick = () => {
+    closeModal();
+    EXP_FORM_OPEN = true; FOCUS_AMOUNT = true; PENDING_MONEY_TAB = 'expenses';
+    if (page === 'money') viewMoney($('#page'), 'expenses');
+  };
+  wrap.querySelector('#quickexp').onsubmit = async (e) => {
+    e.preventDefault();
+    const btn = e.target.querySelector('button');
+    const body = { ...Object.fromEntries(new FormData(e.target)), date: today(), user_id: ME.id };
+    btn.disabled = true;
+    try {
+      await api('/expenses', { method: 'POST', body });
+      LAST_EXP_CAT = body.category;
+      closeModal();
+      toast(ro ? `Cheltuială adăugată: ${money(Number(body.amount))}` : `Expense added: ${money(Number(body.amount))}`, 'success');
+      // the page underneath may be showing what was just spent
+      if (page === 'dashboard' || page === 'money') render();
+    } catch (err) { btn.disabled = false; toast(err.message, 'error'); }
+  };
 }
 
 /* ---------- auth ---------- */
@@ -1361,6 +1417,7 @@ async function renderAuth(mode = 'login') {
         renderAuth('login');
         return;
       }
+      if (mode !== 'login') body.lang = LANG; // a new account keeps the language it was made in
       const r = await api(mode === 'login' ? '/auth/login' : '/auth/register', { method: 'POST', body });
       ME = r.user;
       const me = await api('/me'); FAMILY = me.family;
@@ -1720,11 +1777,20 @@ function dashInsight(stats, suggest, months) {
   if (months !== 1) return '';
   const ro = LANG === 'ro';
   const bits = [];
-  // the category most above its own 3-month average (needs a real gap, not rounding noise)
-  const avg = Object.fromEntries((suggest?.categories || []).map((c) => [c.category, c.avg]));
-  let worst = null;
+  // the category most above its own 3-month average (needs a real gap, not rounding noise).
+  // Only a category with spending in every one of those months has an average worth comparing
+  // against; one that is new, or came up once, is named as new instead of as a huge percentage.
+  const basis = suggest?.months || 3;
+  const hist = Object.fromEntries((suggest?.categories || []).map((c) => [c.category, c]));
+  let worst = null, fresh = null;
   for (const c of stats.byCategory || []) {
-    const a = avg[c.category];
+    const h = hist[c.category];
+    if (!h || (h.months ?? basis) < basis) {
+      // a credit's instalment is a schedule, not a habit: a new one is not news to point out
+      if (c.total >= 100 && !PROJECTION_FIXED.has(c.category) && (!fresh || c.total > fresh.total)) fresh = c;
+      continue;
+    }
+    const a = h.avg;
     if (!a || a < 50 || c.total < a * 1.25 || c.total - a < 50) continue;
     const over = (c.total / a - 1) * 100;
     if (!worst || over > worst.over) worst = { category: c.category, over };
@@ -1733,6 +1799,10 @@ function dashInsight(stats, suggest, months) {
     bits.push(ro
       ? `<b>${esc(tr(worst.category))}</b> este cu ${Math.round(worst.over)}% peste media ultimelor 3 luni.`
       : `<b>${esc(tr(worst.category))}</b> is ${Math.round(worst.over)}% above its 3-month average.`);
+  } else if (fresh) {
+    bits.push(ro
+      ? `<b>${esc(tr(fresh.category))}</b>: ${money(fresh.total)} luna asta, o cheltuială nouă. Încă nu sunt 3 luni cu care s-o compar.`
+      : `<b>${esc(tr(fresh.category))}</b>: ${money(fresh.total)} this month, a new expense. There are not yet 3 months to compare it with.`);
   }
   if (!bits.length) return '';
   return `<section class="card insight" style="margin-top:16px"><span class="insight-ic" aria-hidden="true">◆</span>
@@ -1754,7 +1824,7 @@ async function viewDashboard(el) {
   const userQ = DASH_VIEW === 'all' ? '' : `&user=${DASH_VIEW}`;
   // the KPI tiles follow the period selector, but a trend chart of ONE bar teaches nothing —
   // so the history chart always pulls a rolling 12 months, whatever the tiles are showing
-  const [reminders, stats, trend12, budgets, rent, savings, suggest, upcoming, chores, forecast, loans, credits, game] = await Promise.all([
+  const [reminders, stats, trend12, budgets, rent, savings, suggest, upcoming, chores, forecast, loans, credits, game, incOffers, kids] = await Promise.all([
     api(`/reminders?days=60${userQ}`), api(`/stats?months=${DASH_MONTHS}${userQ}`),
     DASH_MONTHS >= 12 ? null : api(`/stats?months=12${userQ}`).catch(() => null), api('/budgets'),
     api('/rent-status').catch(() => []), api('/savings').catch(() => ({ goals: [] })),
@@ -1769,6 +1839,10 @@ async function viewDashboard(el) {
     api('/loans').catch(() => []), api('/credits').catch(() => []),
     // the money game is the whole household's road, so it is only drawn on the whole-household view
     DASH_VIEW === 'all' ? api('/game').catch(() => null) : null,
+    // incomes typed in by hand every month, which could log themselves
+    DASH_VIEW === 'all' && canWrite() ? api('/recurring-incomes/suggest').catch(() => []) : [],
+    // what each child costs a month: a whole-family, single-month reading like the forecast
+    (DASH_MONTHS === 1 && DASH_VIEW === 'all') ? api('/kids-costs').catch(() => []) : [],
   ]);
   const trendStats = trend12 || stats;
   // monthly series behind each KPI, for the sparklines under the numbers
@@ -1784,6 +1858,9 @@ async function viewDashboard(el) {
   const blank = !reminders.length && !stats.byCategory.length && !stats.income && !stats.spent && !budgets.budgets.length;
   const proj = (DASH_MONTHS === 1) ? monthProjection(stats, upcoming) : null;
   const openGoals = (savings.goals || []).filter((g) => !g.done);
+  let incSkip = [];
+  try { incSkip = JSON.parse(localStorage.getItem('fh_inc_skip') || '[]'); } catch { /* private mode */ }
+  const incomeOffers = (incOffers || []).filter((o) => !incSkip.includes(o.key));
   // Each gap is named where it is a gap, rather than all of them being hidden behind one welcome
   // card that only appears when the entire app is empty.
   const gaps = blank || !canWrite() ? [] : [
@@ -1793,6 +1870,8 @@ async function viewDashboard(el) {
     !openGoals.length && { label: tr('Add a savings goal'), href: '#money' },
     (loans || []).some((l) => !l.settled && !l.due_date)
       && { label: tr('Loans with no due date'), href: '#money' },
+    incomeOffers.length
+      && { label: LANG === 'ro' ? `Venituri lunare de făcut recurente (${incomeOffers.length})` : `Monthly incomes to make recurring (${incomeOffers.length})`, href: '#money', tab: 'income' },
   ].filter(Boolean);
   const gameCard = gameHtml(game);
   const owedSaved = [gameCard, exposureHtml(loans, credits), gapsHtml(gaps), goalsHtml(savings.goals), budgets.budgets.length ? 'x' : ''].some((x) => x && x.trim());
@@ -1828,6 +1907,7 @@ async function viewDashboard(el) {
       <div class="card"><div class="label"><span class="kpi-ic">${icon('coins')}</span>Left over</div>${pctPill(net, (stats.prev?.income ?? 0) - (stats.prev?.spent ?? 0), 'up-good')}<div class="value ${net < 0 ? 'neg' : ''}" data-cu="${net}">${money(net)}</div>${deltaAmountHtml(net, (stats.prev?.income ?? 0) - (stats.prev?.spent ?? 0))}${savingsRateHtml(stats.income, net)}<span class="spark-pos">${sparkline(netSeries)}</span></div>
     </section>
     ${dashInsight(stats, suggest, DASH_MONTHS)}
+    ${kidsCostHtml(kids)}
     ${rentHtml(rent)}
     </div>
     ${owedSaved ? `<div class="chapter" id="ch-money" data-chapter>
@@ -1951,6 +2031,24 @@ async function viewDashboard(el) {
 /* The percentage move, as a pill in the card's corner. It says the same thing as the sentence
    underneath, in the shape you can read without reading — so on a phone, where the sentence is
    already there and space is not, the pill is hidden rather than repeated. */
+// One row per child: this month so far, against the months before it, what it went on, and the
+// bills that come round for them whatever happens. Only drawn when a child has any money on them.
+function kidsCostHtml(kids) {
+  const list = (kids || []).filter((k) => k.month > 0 || k.prev > 0 || k.avg || k.fixed.length);
+  if (!list.length) return '';
+  const ro = LANG === 'ro';
+  return `<section class="card kidscost" style="margin-top:16px">
+    <h3 style="margin-top:0">${ro ? 'Cât costă copiii' : 'What the children cost'}</h3>
+    <div class="kidscost__list">${list.map((k) => `<div class="kidscost__kid">
+      <div class="kidscost__head">${avatarHtml(k)}<b>${esc(k.name)}</b>
+        <span class="kidscost__month amount">${money(k.month)}</span></div>
+      <p class="muted kidscost__vs">${ro ? 'luna asta' : 'this month'}${k.avg != null ? ` · ${ro ? 'de obicei' : 'usually'} ${money(k.avg)}` : ''}${k.prev > 0 ? ` · ${ro ? 'luna trecută' : 'last month'} ${money(k.prev)}` : ''}</p>
+      ${k.categories.length ? `<p class="kidscost__cats">${k.categories.slice(0, 3).map((c) => `<span>${esc(tr(c.category))} <b class="amount">${money(c.total)}</b></span>`).join('')}</p>` : ''}
+      ${k.fixed.length ? `<p class="muted kidscost__fixed">${ro ? 'Fixe pe lună' : 'Fixed a month'}: <b class="amount">${money(k.fixed_total)}</b> · ${k.fixed.map((f) => esc(f.name)).join(', ')}</p>` : ''}
+    </div>`).join('')}</div>
+    <p class="muted" style="margin:12px 0 0;font-size:12px">${ro ? 'Se numără ce e trecut pe copil, sau are numele lui în notă. Grădinița plătită de tine intră dacă o treci pe copil (la cheltuială, „De cine”).' : 'Counted: what is set on the child, or has the child’s name in its note. A fee you paid counts once it is set on the child (the expense’s "By").'}</p>
+  </section>`;
+}
 function pctPill(now, before, sense) {
   if (before == null || !isFinite(before) || Math.abs(before) < 0.005) return '';
   const pct = Math.round(((now - before) / Math.abs(before)) * 100);
@@ -2354,6 +2452,9 @@ function gameRoadHtml(g) {
     return { a, b, fill, key: GAME_TIER_KEYS[t], name: GAME_TIERS[ro ? 'ro' : 'en'][t] };
   });
   const current = Math.max(0, bands.filter((x) => pct >= x.a).length - 1);
+  // the last step is "debt-free", not a level, so the count is out of the ranked levels only
+  const ranked = top - 1;
+  const levelOf = d.level >= top ? '' : (ro ? `Nivelul ${d.level} din ${ranked}` : `Level ${d.level} of ${ranked}`);
   const nextName = d.next_pct != null ? gameLevelName(d.level + 1, top) : '';
   const toNext = d.next_pct == null ? ''
     : d.to_next_people != null
@@ -2363,10 +2464,10 @@ function gameRoadHtml(g) {
   return `<div class="game-climb">
       <div class="game-climb__head">
         <p class="game-level"><span class="game-rank game-rank--${gameTierKey(d.level, top)}">${gameLevelName(d.level, top)}</span>
-          <span class="game-level__n">${ro ? 'Nivelul' : 'Level'} ${d.level} ${ro ? 'din' : 'of'} ${top}</span></p>
+          ${levelOf ? `<span class="game-level__n">${levelOf}</span>` : ''}</p>
         <p class="game-pct"><b class="game-num">${gameNum(d.paid_pct)}%</b> ${ro ? 'din drum' : 'of the way'}</p>
       </div>
-      <div class="game-road" role="img" aria-label="${ro ? `${gameNum(d.paid_pct)}% din drum, nivelul ${d.level} din ${top}, ${gameLevelName(d.level, top)}` : `${d.paid_pct}% of the way, level ${d.level} of ${top}, ${gameLevelName(d.level, top)}`}">
+      <div class="game-road" role="img" aria-label="${ro ? `${gameNum(d.paid_pct)}% din drum, ${levelOf ? levelOf.toLowerCase() + ', ' : ''}${gameLevelName(d.level, top)}` : `${d.paid_pct}% of the way, ${levelOf ? levelOf.toLowerCase() + ', ' : ''}${gameLevelName(d.level, top)}`}">
         <div class="game-road__track">
           ${bands.map((x, i) => `<span class="game-road__band game-road__band--${x.key}" style="left:${x.a}%;width:${x.b - x.a}%"><i style="--f:${x.fill};--i:${i}"></i></span>`).join('')}
           <span class="game-road__here" style="left:${pct}%"></span>
@@ -2384,8 +2485,12 @@ function gameRoadHtml(g) {
 // The streak, and the last twelve months it is made of: a dot each, filled when the month ended ahead
 function gameStreakHtml(g) {
   const ro = gameRo();
-  const months = (g.months || []).slice(0, -1).slice(-12);
   const state = (h) => (h.income > 0 && h.income > h.spent ? 'plus' : h.income > 0 || h.spent > 0 ? 'minus' : 'none');
+  // the dots start at the first month anything was written down: nine empty months before the app
+  // was in use are not "no data", they are before the story begins
+  const last12 = (g.months || []).slice(0, -1).slice(-12);
+  const begin = last12.findIndex((h) => state(h) !== 'none');
+  const months = begin < 0 ? [] : last12.slice(begin);
   const word = { plus: ro ? 'pe plus' : 'ahead', minus: ro ? 'pe minus' : 'behind', none: ro ? 'fără date' : 'no data' };
   const dots = months.map((h) => {
     const s = state(h);
@@ -2587,7 +2692,7 @@ function gapsHtml(gaps) {
     <span class="setuplabel">${tr('Not set up yet')}</span>
     ${gaps.map((g) => (g.action
       ? `<button class="btn ghost small" data-gap="${g.action}">${g.label}</button>`
-      : `<a class="btn ghost small" href="${g.href}">${g.label}</a>`)).join('')}
+      : `<a class="btn ghost small" href="${g.href}"${g.tab ? ` data-tab="${g.tab}"` : ''}>${g.label}</a>`)).join('')}
   </section>`;
 }
 
@@ -2909,7 +3014,7 @@ async function moneyDebt(body) {
       <div class="card"><div class="label">${tr('Owed today')}</div><div class="value neg">${money(owed)}</div>
         <div class="muted" style="font-size:12px">${live.length} ${tr(live.length === 1 ? 'loan' : 'loans')}</div></div>
       <div class="card"><div class="label">${tr('Every month')}</div><div class="value">${money(perMonth)}</div>
-        <div class="muted" style="font-size:12px">${tr('instalments + commission')}</div></div>
+        <div class="muted" style="font-size:12px">${live.some((c) => Number(c.insurance) > 0) ? (LANG === 'ro' ? 'rate + comision + asigurare' : 'instalments + commission + insurance') : tr('instalments + commission')}</div></div>
       <div class="card"><div class="label">${tr('Debt-free')}</div><div class="value" style="font-size:20px">${esc(freeLabel)}</div>
         <div class="muted" style="font-size:12px">${maxLeft} ${tr('mo left')}</div></div>
     </section>
@@ -2935,7 +3040,7 @@ async function moneyDebt(body) {
       ${live.slice().sort((a, b) => Number(b.balance) - Number(a.balance)).map((c) => `<tr>
         <td data-label="${tr('Credit')}"><b>${esc(c.name)}</b>${c.lender ? ` <span class="muted">· ${esc(c.lender)}</span>` : ''}</td>
         <td class="right amount" data-label="${tr('Balance today')}">${money(c.balance)}</td>
-        <td class="right amount" data-label="${tr('Monthly total')}">${money(Number(c.monthly_payment || 0) + (Number(c.commission) || 0))}</td>
+        <td class="right amount" data-label="${tr('Monthly total')}">${money(c.monthly_total)}</td>
         <td class="right" data-label="${tr('mo left')}">${Math.round(Number(c.months_left) || 0)}</td></tr>`).join('')}
       </tbody></table>
     </section>
@@ -3422,7 +3527,14 @@ async function moneyExpenses(body, f = {}) {
   }));
 }
 async function moneyIncome(body, who = 'all') {
-  const [all, members, recurring] = await Promise.all([api('/incomes'), api('/family/members'), api('/recurring-incomes')]);
+  const [all, members, recurring, suggested] = await Promise.all([api('/incomes'), api('/family/members'), api('/recurring-incomes'),
+    canWrite() ? api('/recurring-incomes/suggest').catch(() => []) : []]);
+  // incomes that came in two months running, typed by hand each time: offered as a schedule, once.
+  // "Not monthly" is remembered on this device only — it is a nudge, not a setting.
+  let skip = [];
+  try { skip = JSON.parse(localStorage.getItem('fh_inc_skip') || '[]'); } catch { /* private mode */ }
+  const offers = suggested.filter((o) => !skip.includes(o.key));
+  const ro = LANG === 'ro';
   const mname = Object.fromEntries(members.map((m) => [m.id, m.name]));
   const rows = all.filter((r) => who === 'all' || String(r.user_id) === String(who));
   const total = rows.reduce((s, r) => s + r.amount, 0);
@@ -3432,6 +3544,15 @@ async function moneyIncome(body, who = 'all') {
       <div><label>Source</label><input name="source" placeholder="Salary, freelance…" required></div>
       <div><label>Amount (${cur()})</label><input name="amount" type="number" step="0.01" min="0.01" required></div>
       <button class="btn">Add income</button></form></div>` : ''}
+    ${offers.length ? `<div class="card incsuggest" style="margin-top:16px">
+      <h3 style="margin-top:0">${ro ? 'Par venituri lunare' : 'These look monthly'}</h3>
+      <p class="muted" style="margin-top:0">${ro ? 'Le-ați scris de mână în fiecare lună. Făcute recurente, se trec singure în ziua lor.' : 'You typed these in by hand every month. Made recurring, they log themselves on their day.'}</p>
+      <table><tbody>${offers.map((o, i) => `<tr>
+        <td><b>${esc(o.source)}</b> <span class="muted">· ${esc(o.user_name || '')} · ${ro ? 'ziua' : 'day'} ${o.day}${o.varies ? (ro ? ' · suma a variat, o poți corecta lunar' : ' · the amount varied, adjust it when it does') : ''}</span></td>
+        <td class="right amount">${money(o.amount)}<span class="muted">/${ro ? 'lună' : 'mo'}</span></td>
+        <td class="right" style="white-space:nowrap"><button class="btn small" data-incmake="${i}">${ro ? 'Fă-l recurent' : 'Make it recurring'}</button>
+          <button class="btn ghost small" data-incskip="${i}">${ro ? 'Nu e lunar' : 'Not monthly'}</button></td></tr>`).join('')}</tbody></table>
+    </div>` : ''}
     <div class="card" style="margin-top:16px"><h3>Recurring income (salaries)</h3>
       <p class="muted" style="margin-top:0">Logged automatically every month on the chosen day — no manual entry needed.</p>
       ${recurring.length ? `<table><tbody>${recurring.map((r) => `<tr style="${r.active ? '' : 'opacity:.55'}">
@@ -3465,6 +3586,19 @@ async function moneyIncome(body, who = 'all') {
     try { await api('/recurring-incomes', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) }); toast('Recurring income added'); moneyIncome(body, who); }
     catch (err) { toast(err.message); }
   });
+  body.querySelectorAll('[data-incmake]').forEach((b) => (b.onclick = async () => {
+    const o = offers[Number(b.dataset.incmake)];
+    b.disabled = true;
+    try {
+      await api('/recurring-incomes', { method: 'POST', body: { source: o.source, amount: o.amount, day: o.day, user_id: o.user_id } });
+      toast(ro ? `${o.source}: recurent din ziua ${o.day}` : `${o.source}: recurring from day ${o.day}`, 'success');
+      moneyIncome(body, who);
+    } catch (err) { b.disabled = false; toast(err.message); }
+  }));
+  body.querySelectorAll('[data-incskip]').forEach((b) => (b.onclick = () => {
+    try { localStorage.setItem('fh_inc_skip', JSON.stringify([...skip, offers[Number(b.dataset.incskip)].key])); } catch { /* private mode */ }
+    moneyIncome(body, who);
+  }));
   body.querySelectorAll('[data-rtog]').forEach((b) => (b.onclick = async () => {
     await api(`/recurring-incomes/${b.dataset.rtog}/toggle`, { method: 'POST' }); moneyIncome(body, who);
   }));
@@ -3611,6 +3745,7 @@ async function moneyCredits(body) {
       <div><label>Dobândă (% / year)</label><input name="interest_rate" type="number" step="0.01" min="0" required></div>
       <div><label>Term (months)</label><input name="term_months" type="number" step="1" min="1" required></div>
       <div><label>Commission (${cur()}/mo, fixed)</label><input name="commission" type="number" step="0.01" min="0" value="0"></div>
+      <div><label>${LANG === 'ro' ? `Asigurare credit (${cur()}/lună)` : `Credit insurance (${cur()}/mo)`}</label><input name="insurance" type="number" step="0.01" min="0" value="0"></div>
       <div><label>Start date</label><input name="start_date" type="date" value="${today()}" required></div>
       <div><label>Holder</label><select name="user_id"><option value="">Whole family</option>
         ${members.map((m) => `<option value="${m.id}">${esc(m.name)}</option>`).join('')}</select></div>
@@ -3622,11 +3757,11 @@ async function moneyCredits(body) {
   const f = $('#credform');
   if (f) {
     const preview = () => {
-      const P = Number(f.principal.value), rate = f.interest_rate.value, n = Number(f.term_months.value), com = Number(f.commission.value) || 0;
+      const P = Number(f.principal.value), rate = f.interest_rate.value, n = Number(f.term_months.value), com = Number(f.commission.value) || 0, ins = Number(f.insurance?.value) || 0;
       if (P > 0 && n >= 1 && rate !== '' && Number(rate) >= 0) {
         const r = Number(rate) / 100 / 12;
         const pay = r > 0 ? (P * r) / (1 - Math.pow(1 + r, -n)) : P / n;
-        $('#credpreview').textContent = `${tr('Monthly')}: ${money(pay + com)}${com ? ` (${tr('rate')} ${money(pay)} + ${tr('commission')} ${money(com)})` : ''} · ${tr('total interest over')} ${n} ${tr('months')}: ${money(pay * n - P)}`;
+        $('#credpreview').textContent = `${tr('Monthly')}: ${money(pay + com + ins)}${com || ins ? ` (${tr('rate')} ${money(pay)}${com ? ` + ${tr('commission')} ${money(com)}` : ''}${ins ? ` + ${LANG === 'ro' ? 'asigurare' : 'insurance'} ${money(ins)}` : ''})` : ''} · ${tr('total interest over')} ${n} ${tr('months')}: ${money(pay * n - P)}`;
       } else $('#credpreview').textContent = '';
     };
     f.addEventListener('input', preview);
@@ -3647,6 +3782,7 @@ function creditFormFields(members, properties, c = {}) {
     <div><label>Dobândă (% / year)</label><input name="interest_rate" type="number" step="0.01" min="0" value="${c.interest_rate ?? ''}" required></div>
     <div><label>Term (months)</label><input name="term_months" type="number" step="1" min="1" value="${c.term_months ?? ''}" required></div>
     <div><label>Commission (${cur()}/mo, fixed)</label><input name="commission" type="number" step="0.01" min="0" value="${c.commission ?? 0}"></div>
+    <div><label>${LANG === 'ro' ? `Asigurare credit (${cur()}/lună)` : `Credit insurance (${cur()}/mo)`}</label><input name="insurance" type="number" step="0.01" min="0" value="${c.insurance ?? 0}"></div>
     <div><label>Start date</label><input name="start_date" type="date" value="${c.start_date || today()}" required></div>
     <div><label>Holder</label><select name="user_id"><option value="">Whole family</option>${members.map((m) => `<option value="${m.id}" ${String(c.user_id) === String(m.id) ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}</select></div>
     <div><label>Linked property</label><select name="property_id"><option value="">None</option>${ownProps(properties).map((p) => `<option value="${p.id}" ${String(c.property_id) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></div>`;
@@ -3684,7 +3820,7 @@ function creditCard(c, members, properties, refresh) {
       <div class="deadgrid">
         <div class="dead"><span class="muted">Holder</span><div class="d">${esc(c.user_name || 'Whole family')}</div></div>
         <div class="dead"><span class="muted">Property</span><div class="d">${esc(c.property_name || '—')}</div></div>
-        <div class="dead"><span class="muted">${tr('Monthly total')} · dobândă ${c.interest_rate}%</span><div class="d">${money(c.monthly_total)}<br><span class="muted">${tr('principal')} ${money(c.next_principal)} + ${tr('interest')} ${money(c.next_interest)}${c.commission ? ` + com. ${money(c.commission)}` : ''}</span></div></div>
+        <div class="dead"><span class="muted">${tr('Monthly total')} · dobândă ${c.interest_rate}%</span><div class="d">${money(c.monthly_total)}<br><span class="muted">${tr('principal')} ${money(c.next_principal)} + ${tr('interest')} ${money(c.next_interest)}${c.commission ? ` + com. ${money(c.commission)}` : ''}${Number(c.insurance) > 0 ? ` + ${LANG === 'ro' ? 'asig.' : 'ins.'} ${money(c.insurance)}` : ''}</span></div></div>
         <div class="dead"><span class="muted">1 month in advance (principal + 1%)</span><div class="d">${money(c.advance_month_cost)}</div></div>
         <div class="dead"><span class="muted">Balance today</span><div class="d">${money(c.balance)}</div></div>
         <div class="dead"><span class="muted">Payoff</span><div class="d">${fdate(c.payoff_date)} · ${c.months_left} ${tr('mo left')}</div></div>
@@ -3840,6 +3976,9 @@ function billFormFields(members, properties, vehicles, b = {}) {
     <div><label>Link to (optional)</label><select name="link"><option value="">Nothing</option>
       ${ownProps(properties).map((p) => `<option value="property:${p.id}" ${link === `property:${p.id}` ? 'selected' : ''}>⌂ ${esc(p.name)}</option>`).join('')}
       ${vehicles.map((v) => `<option value="vehicle:${v.id}" ${link === `vehicle:${v.id}` ? 'selected' : ''}>⛟ ${esc(v.name)}</option>`).join('')}</select></div>
+    <div><label>${LANG === 'ro' ? 'Notificare pe telefon' : 'Phone alert'}</label><select name="remind_days">
+      ${[['', LANG === 'ro' ? 'Fără' : 'None'], ...[1, 3, 7].map((d) => [String(d), LANG === 'ro' ? `Cu ${d === 1 ? 'o zi' : d + ' zile'} înainte` : `${d} day${d === 1 ? '' : 's'} before`])]
+        .map(([v, l]) => `<option value="${v}" ${String(b.remind_days ?? '') === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
     <div style="align-self:center"><label style="display:inline-flex;align-items:center;gap:8px;font-size:14px"><input type="checkbox" name="auto_pay" value="1" ${b.auto_pay ? 'checked' : ''} style="width:auto"> Auto-paid subscription</label></div>`;
 }
 // Recurring bills run on different clocks — one every 30 days, one quarterly, one yearly — so their
@@ -3932,7 +4071,7 @@ async function viewBills(el) {
         const late = b.status === 'unpaid' && b.due_date < t;
         const dLeft = daysUntil(b.due_date);
         return `<tr>
-          <td><b>${esc(b.name)}</b><br><span class="muted">${esc(b.provider || tr(BILL_CATS[b.category]) || '')}${recurValue(b) === '0' ? '' : ` · ${tr(recurLabel(b))}`}${b.auto_pay ? (LANG === 'ro' ? ' · plată automată' : ' · auto-pay') : ''}${b.expense_category ? ` · ${tr(b.expense_category)}` : ''}${b.property_name ? ` · ⌂ ${esc(b.property_name)}` : ''}${b.vehicle_name ? ` · ⛟ ${esc(b.vehicle_name)}` : ''}</span></td>
+          <td><b>${esc(b.name)}</b><br><span class="muted">${esc(b.provider || tr(BILL_CATS[b.category]) || '')}${recurValue(b) === '0' ? '' : ` · ${tr(recurLabel(b))}`}${b.auto_pay ? (LANG === 'ro' ? ' · plată automată' : ' · auto-pay') : ''}${b.remind_days && !b.auto_pay ? (LANG === 'ro' ? ` · notificare cu ${b.remind_days === 1 ? 'o zi' : b.remind_days + ' zile'} înainte` : ` · alert ${b.remind_days}d before`) : ''}${b.expense_category ? ` · ${tr(b.expense_category)}` : ''}${b.property_name ? ` · ⌂ ${esc(b.property_name)}` : ''}${b.vehicle_name ? ` · ⛟ ${esc(b.vehicle_name)}` : ''}</span></td>
           <td class="lowpri" data-label="${tr('Owner')}">${esc(b.owner_name || 'Family')}</td>
           <td data-label="${tr('Due')}">${fdate(b.due_date)}${b.status === 'unpaid'
             // "11/08/2026" needs a mental subtraction before it means anything; "în 2z" doesn't.
@@ -4786,14 +4925,30 @@ async function viewReview(el) {
     bill_paid: `${tr('Bill paid')}: ${esc(c.label)}`,
   }[c.kind] || esc(c.label));
 
+  // Money first: it is what a weekly look is for. Then what waits on somebody, then what changed.
+  // The commune's notices are news, not decisions — they fold away at the end, with their count.
+  const ro = LANG === 'ro';
+  const notices = r.changed.filter((c) => c.kind === 'watch_new');
+  const changes = r.changed.filter((c) => c.kind !== 'watch_new');
+  const wk = r.week || { spent: 0, income: 0, top: [] };
   el.innerHTML = `<div class="pagehead"><div><h1>${tr('This week')}</h1>
       <p>${r.first_time ? tr('Everything below is from the last seven days. Once you tick this off, next time shows only what is new since then.')
         : `${tr('What changed since')} ${fdate(String(r.since).slice(0, 10))}`}</p></div></div>
 
-    <section class="card"><h3 style="margin-top:0">1 · ${tr('What changed')}</h3>
-    ${r.changed.length
-      ? `<ul class="revlist">${r.changed.map((c) => `<li>${changedLine(c)}</li>`).join('')}</ul>`
-      : `<p class="muted" style="margin:0">${tr('Nothing happened while you were away.')}</p>`}</section>
+    <section class="card"><h3 style="margin-top:0">1 · ${ro ? 'Banii' : 'The money'}</h3>
+    <div class="revweek">
+      <div><span class="muted">${ro ? 'Au ieșit' : 'Went out'}</span><b class="amount">${money(wk.spent)}</b></div>
+      <div><span class="muted">${ro ? 'Au intrat' : 'Came in'}</span><b class="amount">${money(wk.income)}</b></div>
+    </div>
+    ${wk.top.length ? `<p class="muted" style="margin:8px 0 0">${ro ? 'Cel mai mult' : 'Most of it'}: ${wk.top.map((t) => `${esc(tr(t.category))} ${money(t.total)}`).join(' · ')}</p>` : ''}
+    ${cash.needs_balance
+      ? `<p class="muted" style="margin:12px 0 0">${tr('Enter what is in the account on the dashboard and this answers itself.')}</p>`
+      : `<p class="revmoney ${cash.low < 0 ? 'neg' : ''}" style="margin:12px 0 0">
+          ${cash.low < cash.now
+            ? `${tr('Lowest point:')} <b>${money(cash.low)}</b> ${tr('on')} ${fdate(cash.low_date)}`
+            : tr('Nothing due drops the balance below where it is now.')}</p>
+        <p class="muted" style="margin:8px 0 0">${tr('now')} ${money(cash.now)}${cash.stale_days > 7
+          ? ` · <a href="#dashboard">${tr('the balance is old — update it')}</a>` : ''}</p>`}</section>
 
     <section class="card" style="margin-top:16px"><h3 style="margin-top:0">2 · ${tr('What needs you')}</h3>
     ${r.decide.length
@@ -4804,15 +4959,15 @@ async function viewReview(el) {
       ${r.open_maintenance && r.meters_pending ? ' · ' : ''}
       ${r.meters_pending ? `<a href="#properties">${tr('Readings still missing')}: ${r.meters_pending}</a>` : ''}</p>` : ''}</section>
 
-    <section class="card" style="margin-top:16px"><h3 style="margin-top:0">3 · ${tr('Does the money hold')}</h3>
-    ${cash.needs_balance
-      ? `<p class="muted" style="margin:0">${tr('Enter what is in the account on the dashboard and this answers itself.')}</p>`
-      : `<p class="revmoney ${cash.low < 0 ? 'neg' : ''}" style="margin:0">
-          ${cash.low < cash.now
-            ? `${tr('Lowest point:')} <b>${money(cash.low)}</b> ${tr('on')} ${fdate(cash.low_date)}`
-            : tr('Nothing due drops the balance below where it is now.')}</p>
-        <p class="muted" style="margin:8px 0 0">${tr('now')} ${money(cash.now)}${cash.stale_days > 7
-          ? ` · <a href="#dashboard">${tr('the balance is old — update it')}</a>` : ''}</p>`}</section>
+    <section class="card" style="margin-top:16px"><h3 style="margin-top:0">3 · ${tr('What changed')}</h3>
+    ${changes.length
+      ? `<ul class="revlist">${changes.map((c) => `<li>${changedLine(c)}</li>`).join('')}</ul>`
+      : `<p class="muted" style="margin:0">${tr('Nothing happened while you were away.')}</p>`}</section>
+
+    ${notices.length ? `<details class="card foldcard" style="margin-top:16px"><summary>${ro ? `Anunțuri de pe paginile urmărite (${notices.length})` : `Notices from watched pages (${notices.length})`}</summary>
+      <ul class="revlist" style="padding-top:12px">${notices.map((c) => `<li>${esc(c.label)}${c.entity ? ` <span class="muted">· ${esc(c.entity)}</span>` : ''}</li>`).join('')}</ul>
+      <p style="margin:8px 0 0"><a href="#watch">${ro ? 'Deschide paginile urmărite' : 'Open watched pages'}</a></p>
+    </details>` : ''}
 
     ${canWrite() ? `<div class="row" style="justify-content:center;margin-top:24px">
       <button class="btn" id="revdone" style="min-width:220px">${tr('Done for this week')}</button></div>` : ''}`;
@@ -5846,17 +6001,25 @@ async function viewAlerts(el) {
   NOTIF = data;
   const perm = 'Notification' in window ? Notification.permission : 'unsupported';
   const enabled = browserNotifOn();
+  // Real push reaches the phone with the site closed, so that is what this page offers. The
+  // in-tab pop-up is only the fallback for a browser that cannot do push: offering it here as
+  // "the" notifications made it look as if alerts needed a tab left open.
+  const canPush = 'serviceWorker' in navigator && 'PushManager' in window;
   el.innerHTML = `<div class="pagehead"><div><h1>Alerts</h1>
     <p>Generated automatically when a bill or deadline gets within 30, 14, 7 or 1 days — or goes overdue. Shared by the whole family; hiding one only affects you.</p></div>
     ${data.items.some((n) => !n.read) ? `<button class="btn ghost small" id="readall">Mark all as read</button>` : ''}</div>
-    <div class="card">
+    ${canPush ? `<div class="card">
+      <h3 style="margin:0">Notifications on this device</h3>
+      <p class="muted" style="margin:4px 0 12px">Get alerts (RCA, ITP, acte, birthdays…) as push notifications on this phone/computer even when the site is closed. Tip: on a phone, first use "Add to Home Screen" to install the app.</p>
+      <div class="row"><button class="btn small" id="pushbtn">…</button><button class="btn ghost small" id="pushtest" hidden>Send a test</button></div>
+    </div>` : `<div class="card">
       <div class="row" style="justify-content:space-between">
         <div><h3 style="margin:0">Browser notifications</h3>
         <p class="muted" style="margin:4px 0 0">While Family Hub is open in a tab, new alerts also pop up as system notifications.</p></div>
         ${perm === 'unsupported' ? `<span class="muted">Not supported by this browser</span>`
           : perm === 'denied' ? `<span class="muted">Blocked in browser settings</span>`
           : `<button class="btn ${enabled ? 'ghost' : ''} small" id="togglenotif">${enabled ? 'Turn off' : 'Turn on'}</button>`}
-      </div></div>
+      </div></div>`}
     <div class="card" style="margin-top:16px">
       ${data.items.length ? `<table class="alerts"><tbody>${data.items.map((n) => {
         // the item key carries the deadline (kind:ref:YYYY-MM-DD), so the row can carry the same
@@ -5886,6 +6049,7 @@ async function viewAlerts(el) {
   $('#readall')?.addEventListener('click', async () => {
     await api('/notifications/read', { method: 'POST', body: {} }); viewAlerts(el); pollNotifications();
   });
+  if (canPush) setupPushCard().catch(() => {});
   $('#togglenotif')?.addEventListener('click', async () => {
     if (enabled) { localStorage.setItem('fh_notif', '0'); }
     else {
@@ -5977,12 +6141,19 @@ async function viewSettings(el) {
       <p class="muted" style="margin:16px 0 8px">Language</p>
       <div class="row">${[['en', '🇬🇧 English'], ['ro', '🇷🇴 Română']].map(([lg, lb]) => `<button class="btn ${(ME.lang || 'en') === lg ? '' : 'ghost'} small" data-lang="${lg}">${lb}</button>`).join('')}</div>
     </div>
+    ${ME.role === 'admin' ? `<details class="card foldcard" style="margin-top:16px"><summary>${LANG === 'ro' ? 'Meniu' : 'Menu'}</summary><div style="padding-top:12px">
+      <p class="muted" style="margin-top:0">${LANG === 'ro' ? 'Ce pagini apar în meniu, pentru toată familia. O pagină scoasă rămâne în aplicație: o pui înapoi oricând de aici.' : 'Which pages show in the menu, for the whole family. A page left out stays in the app: put it back here any time.'}</p>
+      <div class="row" style="flex-wrap:wrap;gap:8px 16px">
+        ${NAV.filter(([k]) => NAV_HIDEABLE.includes(k)).map(([k, , l]) => `<label style="display:inline-flex;align-items:center;gap:8px;margin:0;font-size:14px;font-weight:500;color:var(--ink)"><input type="checkbox" data-navpage="${k}" ${navHidden().has(k) ? '' : 'checked'} style="width:auto"> ${tr(l)}</label>`).join('')}
+      </div>
+      <button class="btn small" id="navsave" style="margin-top:12px">${LANG === 'ro' ? 'Salvează meniul' : 'Save the menu'}</button>
+    </div></details>` : ''}
     <details class="card foldcard" style="margin-top:16px"><summary>Notifications on this device</summary><div style="padding-top:12px">
       <p class="muted" style="margin-top:0">Get alerts (RCA, ITP, acte, birthdays…) as push notifications on this phone/computer even when the site is closed. Tip: on a phone, first use "Add to Home Screen" to install the app.</p>
       <div class="row"><button class="btn small" id="pushbtn">…</button><button class="btn ghost small" id="pushtest" hidden>Send a test</button></div>
       <p class="muted" style="margin:16px 0 8px">Which alerts do you want?</p>
       <div class="row" style="flex-wrap:wrap;gap:8px 16px">
-        ${[['vehicles', 'Vehicles (RCA, ITP, rovinietă…)'], ['property', 'Property insurance'], ['tenant', 'Tenant & rent'], ['documents', 'Documents (acte)'], ['birthdays', 'Birthdays']]
+        ${[['vehicles', 'Vehicles (RCA, ITP, rovinietă…)'], ['property', 'Property insurance'], ['tenant', 'Tenant & rent'], ['documents', 'Documents (acte)'], ['birthdays', 'Birthdays'], ['bills', LANG === 'ro' ? 'Facturi cu notificare pornită' : 'Bills with an alert turned on']]
           .map(([g, lb]) => `<label style="display:inline-flex;align-items:center;gap:8px;margin:0;font-size:14px;font-weight:500;color:var(--ink)"><input type="checkbox" data-ngroup="${g}" ${String(ME.notif_muted || '').split(',').includes(g) ? '' : 'checked'} style="width:auto"> ${lb}</label>`).join('')}
       </div>
       <p class="muted" style="margin:16px 0 8px">Quiet hours (push notifications wait until morning)</p>
@@ -6035,6 +6206,16 @@ async function viewSettings(el) {
     <div class="card" style="margin-top:16px"><h3>${tr('Backup')}</h3>
       <p class="muted" style="margin-top:0">${tr('A compressed copy of the whole database, taken cleanly while the app keeps running. Scans and invoices are not in it — those live in the uploads folder.')}</p>
       <button class="btn small" id="dlbackup">${tr('Download backup')}</button></div>` : ''}`;
+  $('#navsave')?.addEventListener('click', async (e) => {
+    const hidden = [...el.querySelectorAll('[data-navpage]')].filter((c) => !c.checked).map((c) => c.dataset.navpage);
+    e.target.disabled = true;
+    try {
+      await api('/family', { method: 'PATCH', body: { nav_hidden: hidden } });
+      const me = await api('/me'); FAMILY = me.family;
+      toast(LANG === 'ro' ? 'Meniul e salvat' : 'Menu saved', 'success');
+      render();
+    } catch (err) { e.target.disabled = false; toast(err.message); }
+  });
   el.querySelectorAll('[data-theme]').forEach((b) => (b.onclick = async () => {
     try { const u = await api('/settings', { method: 'POST', body: { theme: b.dataset.theme } }); ME = { ...ME, ...u }; applyTheme(); render(); }
     catch (err) { toast(err.message); }

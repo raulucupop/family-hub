@@ -2,7 +2,8 @@
 const CACHE = 'fh-v2';
 // the shell is precached at install so the first offline visit already works,
 // and offline.html is the safety net when a page isn't in the cache at all
-const SHELL = ['/', '/app.js', '/styles.css', '/manifest.json', '/icon.svg', '/icon-192.png', '/offline.html'];
+// app.js is swapped for the built files when the server serves a build (see SW_JS in server.js)
+const SHELL = ['/', '/app.js', '/styles.css', '/fonts/public-sans-latin.woff2', '/fonts/bricolage-grotesque-latin.woff2', '/manifest.json', '/icon.svg', '/icon-192.png', '/offline.html'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));

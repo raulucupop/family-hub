@@ -7,7 +7,8 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "test": "node --test"
+    "test": "node --test",
+    "build": "node scripts/build.js"
   },
   "engines": {
     "node": ">=18"
@@ -25,5 +26,10 @@
   "license": "MIT",
   "allowScripts": {
     "better-sqlite3@12.11.1": true
+  },
+  "devDependencies": {
+    "acorn": "^8.19.0",
+    "acorn-walk": "^8.3.5",
+    "terser": "^5.51.2"
   }
 }

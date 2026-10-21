@@ -1,0 +1,82 @@
+{
+  "source": "f3ff29eed35beb054d6613a86df623deb76fe6189e9bc4b5049acc5aff1f4d22",
+  "core": "core.3fb09e0745.js",
+  "chunks": {
+    "shared": "shared.dc3d3f27d2.js",
+    "alerts": "alerts.6bec245819.js",
+    "bills": "bills.178a6f8cc8.js",
+    "vehicles": "vehicles.7c557e25bc.js",
+    "properties": "properties.3256ee09c8.js",
+    "property": "property.ead9a2f40b.js",
+    "tenants": "tenants.7e88eab141.js",
+    "acte": "acte.81690a5793.js",
+    "review": "review.cb767dfa31.js",
+    "garantii": "garantii.17ee0a7b1f.js",
+    "lists": "lists.3ed301af17.js",
+    "watch": "watch.46058320d4.js",
+    "chores": "chores.0ce518fb14.js",
+    "import": "import.442bb3bd60.js",
+    "search": "search.3f750ef820.js",
+    "family": "family.35ce6ccf73.js",
+    "settings": "settings.1759d38966.js"
+  },
+  "pages": {
+    "review": [
+      "review"
+    ],
+    "bills": [
+      "shared",
+      "bills"
+    ],
+    "search": [
+      "search"
+    ],
+    "vehicles": [
+      "shared",
+      "vehicles"
+    ],
+    "properties": [
+      "shared",
+      "properties"
+    ],
+    "tenants": [
+      "shared",
+      "tenants"
+    ],
+    "property": [
+      "property"
+    ],
+    "acte": [
+      "shared",
+      "acte"
+    ],
+    "garantii": [
+      "shared",
+      "garantii"
+    ],
+    "lists": [
+      "lists"
+    ],
+    "chores": [
+      "chores"
+    ],
+    "watch": [
+      "watch"
+    ],
+    "import": [
+      "import"
+    ],
+    "alerts": [
+      "shared",
+      "alerts"
+    ],
+    "family": [
+      "shared",
+      "family"
+    ],
+    "settings": [
+      "shared",
+      "settings"
+    ]
+  }
+}

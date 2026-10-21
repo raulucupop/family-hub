@@ -27,6 +27,14 @@ npm start          # http://localhost:3000
 
 First visit: choose **New family** to register. All data lives in `./data/` (SQLite DB + uploaded invoices).
 
+### After changing `public/app.js`
+
+```bash
+npm run build      # splits app.js by page and minifies it into public/dist
+```
+
+Commit `public/dist` together with `app.js`: the server never builds, it only serves what is in the repo. It serves the build only while `public/dist/manifest.json` says it was made from the `app.js` on disk, otherwise it falls back to `app.js` itself (and `npm test` fails until you rebuild). `FH_NO_BUILD=1` forces the readable `app.js` for debugging.
+
 ## Run with Docker
 
 ```bash
