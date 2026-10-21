@@ -169,6 +169,7 @@ setInterval(() => {
   const now = Date.now();
   for (const [k, r] of loginFails) if (now - r.first > LOGIN_WINDOW && !(r.until > now)) loginFails.delete(k);
 }, LOGIN_WINDOW).unref();
+const SESSION_RENEW_AFTER = 24 * 3600; // seconds: how old a token gets before a request renews it
 function auth(req, res, next) {
   const token = req.cookies[COOKIE];
   if (!token) return res.status(401).json({ error: 'Not signed in' });
@@ -186,6 +187,10 @@ function auth(req, res, next) {
     if (user.role === 'tenant' && !tenantAllowed) {
       return res.status(403).json({ error: 'Tenant accounts can only access their own charges' });
     }
+    // A session lasts 30 days from the last time it was used, not from the sign-in: once a day the
+    // token is handed back fresh. A fixed 30 days signed a household that opens the app every day
+    // out of it mid-use, the morning the month ran out.
+    if (Date.now() / 1000 - (payload.iat || 0) > SESSION_RENEW_AFTER) setAuthCookie(res, signToken(user));
     req.user = user;
     next();
   } catch {

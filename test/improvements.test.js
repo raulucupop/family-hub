@@ -13,6 +13,32 @@ const monthDay = (offset, day = 10) => {
 // the 1st of this month at the latest, so a test that writes "this month" never lands in the future
 const thisMonth = (day) => monthDay(0, Math.min(day, new Date().getUTCDate()));
 
+test('a session is renewed while it is used, so it lasts 30 days from the last visit, not from the sign-in', async (t) => {
+  const api = await startServer();
+  t.after(() => api.stop());
+  const jwt = require('jsonwebtoken');
+  const secret = require('node:fs').readFileSync(require('node:path').join(api.dir, '.jwt_secret'), 'utf8').trim();
+  const me = (await api.get('/api/me')).body.user;
+  const now = Math.floor(Date.now() / 1000);
+  const tokenAt = (iat) => jwt.sign({ uid: me.id, fid: me.family_id, role: me.role, tv: 0, iat }, secret, { expiresIn: '30d' });
+  const visit = (token) => fetch(`http://127.0.0.1:${api.port}/api/me`, { headers: { Cookie: `fh_token=${token}` } });
+
+  const fresh = await visit(tokenAt(now - 60));
+  assert.equal(fresh.status, 200);
+  assert.equal(fresh.headers.getSetCookie().length, 0, 'a token from today is left alone');
+
+  // signed in 29 days ago: one day short of being thrown out
+  const old = await visit(tokenAt(now - 29 * 86400));
+  assert.equal(old.status, 200);
+  const set = old.headers.getSetCookie().find((c) => c.startsWith('fh_token='));
+  assert.ok(set, 'an old token is handed back renewed');
+  assert.match(set, /HttpOnly/i);
+  const renewed = jwt.verify(set.split(';')[0].slice('fh_token='.length), secret);
+  assert.ok(renewed.iat >= now, 'issued now');
+  assert.ok(renewed.exp - renewed.iat >= 30 * 86400 - 5, 'good for another 30 days');
+  assert.equal(renewed.uid, me.id);
+});
+
 test('the 3-month average says how many of those months had the category at all', async (t) => {
   const api = await startServer();
   t.after(() => api.stop());
