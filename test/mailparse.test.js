@@ -47,6 +47,15 @@ test('a Retim invoice: known by its sender, with nothing in the body to read an 
   assert.equal(r.amount, null, 'no number is invented when the mail has none');
 });
 
+test('a Vodafone invoice is known by its sender', () => {
+  // only the sender is taken from the real thing; the body wording is not known yet, so this checks
+  // recognition and the generic amount rule, not Vodafone's own phrasing
+  const r = parse({ from: 'Vodafone Romania <factura@vodafone.ro>', subject: 'Factura', text: 'Total de plată: 64,50 lei' });
+  assert.equal(r.provider, 'vodafone');
+  assert.equal(r.category, 'mobile');
+  assert.equal(r.amount, 64.5);
+});
+
 test('the amount label decides, not the first number near "lei"', () => {
   // E.ON shows the invoice total AND what is left to pay; only the second one is owed now
   const r = parse({
