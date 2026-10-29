@@ -24,7 +24,9 @@ function freePort() {
   });
 }
 
-async function startServer(extraEnv = {}) {
+// `opts.loginAs`: an email already registered in the DATA_DIR passed in extraEnv, for a test that
+// restarts a server on the same database (only the first registration there is open to anyone)
+async function startServer(extraEnv = {}, opts = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fh-test-'));
   const port = await freePort();
   const proc = spawn(process.execPath, ['server.js'], {
@@ -76,8 +78,15 @@ async function startServer(extraEnv = {}) {
     cookie: () => cookie,
   };
 
+  if (opts.loginAs) {
+    const r = await client.post('/api/auth/login', { email: opts.loginAs, password: 'Parola12345' });
+    if (r.status !== 200) throw new Error(`login failed: ${r.status} ${r.text}`);
+    client.email = opts.loginAs;
+    return client;
+  }
+  client.email = `t${port}@test.ro`;
   const reg = await client.post('/api/auth/register', {
-    familyName: 'Test', name: 'Raul', email: `t${port}@test.ro`, password: 'Parola12345',
+    familyName: 'Test', name: 'Raul', email: client.email, password: 'Parola12345',
   });
   // a 409 here would mean we reached someone else's server: this database was created empty seconds
   // ago, so nothing in it can already hold that address

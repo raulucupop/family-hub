@@ -1458,43 +1458,55 @@ const familyCurrencyCode = (fid) => db.prepare('SELECT currency FROM families WH
 /* ---------- exchange rates (BNR) ----------
    Only the money game adds amounts across currencies, and only where leaving one out would be
    the bigger lie: €3.000 owed to a person is still owed, and a game that ignores it rewards the
-   wrong debt. The BNR reference rate is fetched at start and twice a day and kept in fx_rates, so
-   a restart, or a day BNR cannot be reached, uses the last rate it had. FX_RATES ("EUR:4.97,GBP:5.8")
-   fixes them instead, for the tests and for a server with no way out. */
-const FX_FIXED = Object.fromEntries(String(process.env.FX_RATES || '').split(',')
-  .map((p) => p.split(':')).filter(([c, r]) => c && Number(r) > 0).map(([c, r]) => [c.trim().toUpperCase(), Number(r)]));
-// lei for one unit of `code`, or null when there is no rate yet
-function fxRate(code) {
-  if (!code || code === 'RON') return 1;
-  if (FX_FIXED[code]) return FX_FIXED[code];
-  return db.prepare('SELECT rate FROM fx_rates WHERE code = ?').get(code)?.rate || null;
+   wrong debt. The BNR reference rate is fetched at start and then whenever lib/fx says it is due
+   (a new fixing published, twice a day, or every hour while there is none), and kept in fx_rates,
+   so a restart, or a day BNR cannot be reached, uses the last rate it had. FX_RATES
+   ("EUR:4.97,GBP:5.8") fixes them instead, for the tests and for a server with no way out;
+   FX_FALLBACK is used only while BNR has never answered, and says so wherever it is used. */
+const { parseBnr, fxDue, fxStale, parseRates } = require('./lib/fx');
+const FX_FIXED = parseRates(process.env.FX_RATES);
+const FX_FALLBACK = parseRates(process.env.FX_FALLBACK);
+// lei for one unit of `code`, with the BNR date it was published on and where it came from
+// ('ron', 'fixed', 'bnr' or 'fallback'); rate null when there is none to be had
+function fxQuote(code) {
+  if (!code || code === 'RON') return { rate: 1, date: null, source: 'ron' };
+  if (FX_FIXED[code]) return { rate: FX_FIXED[code], date: null, source: 'fixed' };
+  const row = db.prepare('SELECT rate, date FROM fx_rates WHERE code = ?').get(code);
+  if (row?.rate > 0) return { rate: row.rate, date: row.date, source: 'bnr' };
+  if (FX_FALLBACK[code]) return { rate: FX_FALLBACK[code], date: null, source: 'fallback' };
+  return { rate: null, date: null, source: null };
 }
-// `amount` in `from`, expressed in `to`; null rather than a guess when a rate is missing
-function fxConvert(amount, from, to) {
-  const a = fxRate(from), b = fxRate(to);
-  return a && b ? (Number(amount) * a) / b : null;
+/* one unit of `from` in `to`, null rather than a guess when a rate is missing. The date is the
+   older of the two fixings involved, and the source the weaker: a fallback anywhere makes it one. */
+function fxCross(from, to) {
+  const a = fxQuote(from), b = fxQuote(to);
+  if (!a.rate || !b.rate) return { rate: null, date: null, source: null, stale: false };
+  const date = [a.date, b.date].filter(Boolean).sort()[0] || null;
+  const source = [a, b].some((q) => q.source === 'fallback') ? 'fallback'
+    : [a, b].some((q) => q.source === 'bnr') ? 'bnr' : [a, b].some((q) => q.source === 'fixed') ? 'fixed' : 'ron';
+  return { rate: a.rate / b.rate, date, source, stale: source === 'bnr' && fxStale(date) };
 }
+const fxEnabled = () => !(Object.keys(FX_FIXED).length || (process.env.NODE_ENV === 'test' && !process.env.FX_URL));
 async function refreshFx() {
   // FX_URL points it at another feed of the same shape, which is how the parser is tested
-  if (Object.keys(FX_FIXED).length || (process.env.NODE_ENV === 'test' && !process.env.FX_URL)) return;
+  if (!fxEnabled()) return;
   try {
     // curs.bnr.ro: since the 2026 site redesign, www.bnr.ro/nbrfxrates.xml redirects to the home page
     const r = await fetch(process.env.FX_URL || 'https://curs.bnr.ro/nbrfxrates.xml', { signal: AbortSignal.timeout(15000) });
     if (!r.ok) throw new Error(`BNR answered ${r.status}`);
-    const xml = await r.text();
-    const date = (xml.match(/<Cube date="(\d{4}-\d{2}-\d{2})"/) || [])[1];
-    if (!date) throw new Error('no publication date in the BNR feed');
+    const { date, rates } = parseBnr(await r.text(), ['EUR', 'GBP']);
+    // a cached or lagging answer with an older fixing never replaces a newer one already kept
     const put = db.prepare(`INSERT INTO fx_rates (code, rate, date, fetched_at) VALUES (?, ?, ?, datetime('now'))
-      ON CONFLICT(code) DO UPDATE SET rate = excluded.rate, date = excluded.date, fetched_at = excluded.fetched_at`);
-    for (const code of ['EUR', 'GBP']) {
-      // a few currencies are quoted per 100 units; EUR and GBP are not, but the multiplier is honoured
-      const m = xml.match(new RegExp(`<Rate currency="${code}"(?: multiplier="(\\d+)")?>([\\d.]+)</Rate>`));
-      if (m && Number(m[2]) > 0) put.run(code, Number(m[2]) / (Number(m[1]) || 1), date);
-    }
+      ON CONFLICT(code) DO UPDATE SET rate = excluded.rate, date = excluded.date, fetched_at = excluded.fetched_at
+      WHERE excluded.date >= fx_rates.date`);
+    for (const [code, rate] of Object.entries(rates)) put.run(code, rate, date);
+    if (!Object.keys(rates).length) throw new Error(`no EUR or GBP rate in the BNR feed of ${date}`);
   } catch (err) { console.error('fx: BNR rates not refreshed:', err.message); }
 }
 setTimeout(refreshFx, process.env.FX_URL ? 0 : 5 * 1000).unref();
-setInterval(refreshFx, 12 * 3600 * 1000).unref();
+setInterval(() => {
+  if (fxEnabled() && fxDue(db.prepare('SELECT MAX(date) AS date, MAX(fetched_at) AS fetched_at FROM fx_rates').get())) refreshFx();
+}, Number(process.env.FX_TICK_MS) || 3600 * 1000).unref();
 const LOAN_SELECT = `
   SELECT l.*, u.name AS user_name,
          COALESCE((SELECT SUM(p.amount) FROM personal_loan_payments p WHERE p.loan_id = l.id), 0) AS repaid
@@ -4870,8 +4882,10 @@ function gameState(fid, now = new Date()) {
   // with no rate to be had it stays listed and is left out of the sums, never added at par
   const owedToPeople = db.prepare(`${LOAN_SELECT} WHERE l.family_id = ? AND l.direction = 'in'`).all(fid).map((r) => {
     const l = loanRow(r, cur);
-    const k = fxConvert(1, l.currency, cur);
-    return { ...l, rate: k, amount_home: k == null ? null : Number(l.amount) * k, balance_home: k == null ? null : Math.max(0, l.balance) * k,
+    const q = fxCross(l.currency, cur), k = q.rate;
+    // each debt rounded to bani before it is added, so the cards add up to the total under them
+    return { ...l, rate: k, rate_date: q.date, rate_source: q.source, rate_stale: q.stale,
+      amount_home: k == null ? null : round(Number(l.amount) * k), balance_home: k == null ? null : round(Math.max(0, l.balance) * k),
       back_now: backThisMonth[l.id] || 0 };
   });
   const loansIn = owedToPeople.filter((l) => l.rate != null);
@@ -4909,7 +4923,7 @@ function gameState(fid, now = new Date()) {
     }
     return {
       id: l.id, person: l.person, amount: round(Number(l.amount)), repaid: l.repaid, balance: l.balance,
-      currency: l.currency, rate: l.rate, balance_home: l.balance_home == null ? null : round(l.balance_home),
+      currency: l.currency, rate: l.rate, rate_date: l.rate_date, rate_source: l.rate_source, rate_stale: l.rate_stale, balance_home: l.balance_home,
       date: l.date, due_date: l.due_date || null, overdue: !!(l.due_date && l.due_date < todayIso), plan,
     };
   }).sort((a, b) => (a.due_date || '9999').localeCompare(b.due_date || '9999') || a.date.localeCompare(b.date));
