@@ -26,8 +26,8 @@ if ! git diff --quiet "$before" "$after" -- package-lock.json; then
   # cPanel's "Setup Node.js App" keeps node_modules in a virtualenv under ~/nodevenv, and npm is
   # only on PATH once it is activated. Outside cPanel (or when it already is), npm is used as is.
   if ! command -v npm >/dev/null 2>&1; then
-    activate=$(ls -d "$HOME/nodevenv/${PWD#"$HOME"/}"/*/bin/activate 2>/dev/null | sort -V | tail -n 1 || true)
-    if [ -z "$activate" ]; then
+    activate=$(printf '%s\n' "$HOME/nodevenv/${PWD#"$HOME"/}"/*/bin/activate | sort -V | tail -n 1)
+    if [ ! -f "$activate" ]; then
       echo "npm not found and no nodevenv for $PWD; activate the app's Node environment and re-run." >&2
       exit 1
     fi
