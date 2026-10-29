@@ -19,6 +19,7 @@ Tiparele sunt scrise pe emailurile reale ale furnizorilor, nu ghicite:
 | **E.ON** | `…@eon-romania.ro` | `Rest de plată: 57,22 lei` · `Număr factură:` · `Data scadentă:` |
 | **Orange** | `…@notifications.orange.ro` | `Valoarea totala de plata este: 230.82 lei` · `plati pana pe 21 August` |
 | **Hidroelectrica** | `…@hidroelectrica.ro` | `Total de plată` · `Data scadentă` |
+| **Vodafone** | `…@vodafone.ro` | tiparele generale (`Total de plată`, `Sumă de plată`); încă nescrise pe un email real |
 | **Digi** | `…@digi.ro`, `…@rcs-rds.ro` | idem |
 | oricare altul | — | ciorna apare cu subiectul și PDF-ul; suma o scrii tu |
 
@@ -109,7 +110,8 @@ etichetare, mutare, marcare și auto-reply; nu există *Forward*. Se face din Se
 require ["envelope"];
 if anyof (address :domain :contains "from" "eon-romania.ro",
           address :domain :contains "from" "orange.ro",
-          address :domain :contains "from" "hidroelectrica.ro")
+          address :domain :contains "from" "hidroelectrica.ro",
+          address :domain :contains "from" "vodafone.ro")
 {
   redirect "facturi@lafamiliapop.ro";
   keep;
