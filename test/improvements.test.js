@@ -186,3 +186,35 @@ test('each child has a cost: what is set on them, or carries their name, and the
   assert.equal(kids.Maria.fixed_total, Math.round((460 * 30.4375 / 30) * 100) / 100, 'every 30 days, brought to a month');
   assert.equal(kids.Mara.fixed_total, 336);
 });
+
+test('a child’s own words put the fee a parent logs on them — Montessori lands on Mara', async (t) => {
+  const api = await startServer();
+  t.after(() => api.stop());
+  const maria = (await api.post('/api/family/members', { name: 'Maria' })).body;
+  const mara = (await api.post('/api/family/members', { name: 'Mara' })).body;
+  assert.equal(mara.cost_words, '', 'no words to begin with');
+
+  const saved = await api.patch(`/api/family/members/${mara.id}`, { cost_words: ' Montessori , grădiniță,, montessori , after school ' });
+  assert.equal(saved.body.cost_words, 'Montessori, grădiniță, after school', 'trimmed, no blanks, no repeats');
+  const listed = (await api.get('/api/family/members')).body.find((m) => m.id === mara.id);
+  assert.equal(listed.cost_words, 'Montessori, grădiniță, after school');
+  const me = (await api.get('/api/me')).body.user;
+  assert.equal((await api.patch(`/api/family/members/${me.id}`, { cost_words: 'x' })).status, 400, 'only children have words');
+
+  // typed in by the parent who paid, never set on her
+  await api.post('/api/expenses', { category: 'Education', amount: 2400, date: thisMonth(3), note: 'Taxa MONTESSORI noiembrie' });
+  await api.post('/api/expenses', { category: 'Education', amount: 150, date: thisMonth(4), note: 'Gradinita - serbare' });
+  await api.post('/api/expenses', { category: 'Education', amount: 80, date: thisMonth(4), note: 'After-school luni' });
+  await api.post('/api/expenses', { category: 'Education', amount: 999, date: thisMonth(4), note: 'school books' });
+  await api.post('/api/expenses', { category: 'Education', amount: 70, date: thisMonth(4), note: 'Montessoriana' });
+  await api.post('/api/bills', { name: 'Montessori', category: 'other', amount: 2400, due_date: plusDays(10), recur_months: 1 });
+
+  const kids = Object.fromEntries((await api.get('/api/kids-costs')).body.map((k) => [k.name, k]));
+  assert.equal(kids.Mara.month, 2400 + 150 + 80, 'her words, any case or diacritics; a phrase needs all its words; whole words only');
+  assert.equal(kids.Maria.month, 0, 'Mara’s words are not Maria’s');
+  assert.equal(kids.Mara.fixed_total, 2400, 'a bill named after one of her words is hers too');
+
+  await api.patch(`/api/family/members/${mara.id}`, { cost_words: '' });
+  assert.equal((await api.get('/api/kids-costs')).body.find((k) => k.id === mara.id).month, 0, 'words cleared, the fee is the payer’s again');
+  assert.ok(maria.id);
+});

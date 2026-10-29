@@ -405,7 +405,7 @@ app.get('/api/me', auth, (req, res) => {
 
 // ---------- family ----------
 app.get('/api/family/members', auth, (req, res) => {
-  const members = db.prepare("SELECT id, name, email, role, avatar, created_at FROM users WHERE family_id = ? AND role != 'tenant' ORDER BY created_at").all(req.user.family_id);
+  const members = db.prepare("SELECT id, name, email, role, avatar, cost_words, created_at FROM users WHERE family_id = ? AND role != 'tenant' ORDER BY created_at").all(req.user.family_id);
   res.json(members);
 });
 // admin adds a child by name only — no email, no login; can still be linked to acte and expenses
@@ -413,12 +413,22 @@ app.post('/api/family/members', auth, adminOnly, (req, res) => {
   const name = str(req.body?.name);
   if (!name) return res.status(400).json({ error: 'Name is required' });
   const info = db.prepare("INSERT INTO users (family_id, name, role) VALUES (?,?,'child')").run(req.user.family_id, name);
-  res.json(db.prepare('SELECT id, name, email, role, created_at FROM users WHERE id = ?').get(info.lastInsertRowid));
+  res.json(db.prepare('SELECT id, name, email, role, cost_words, created_at FROM users WHERE id = ?').get(info.lastInsertRowid));
 });
 app.patch('/api/family/members/:id', auth, adminOnly, (req, res) => {
-  const { role } = req.body || {};
-  if (!['admin', 'adult', 'child'].includes(role)) return res.status(400).json({ error: 'Invalid role' });
+  const { role, cost_words } = req.body || {};
   const target = db.prepare('SELECT * FROM users WHERE id = ? AND family_id = ?').get(req.params.id, req.user.family_id);
+  if (role === undefined && cost_words !== undefined) {
+    // the words a child's expenses carry, kept tidy: trimmed, no blanks, no repeats
+    if (!target) return res.status(404).json({ error: 'Member not found' });
+    if (target.role !== 'child') return res.status(400).json({ error: 'Only children have cost words' });
+    const list = (Array.isArray(cost_words) ? cost_words : String(cost_words).split(','))
+      .map((w) => String(w).trim().replace(/\s+/g, ' ')).filter(Boolean).slice(0, 20);
+    const clean = list.filter((w, i) => list.findIndex((x) => x.toLowerCase() === w.toLowerCase()) === i).join(', ');
+    db.prepare('UPDATE users SET cost_words = ? WHERE id = ?').run(clean, target.id);
+    return res.json({ ok: true, cost_words: clean });
+  }
+  if (!['admin', 'adult', 'child'].includes(role)) return res.status(400).json({ error: 'Invalid role' });
   if (!target) return res.status(404).json({ error: 'Member not found' });
   if (target.id === req.user.id) return res.status(400).json({ error: "You can't change your own role" });
   if (target.role === 'tenant') return res.status(400).json({ error: 'Tenants are managed from their property' });
@@ -5028,10 +5038,12 @@ app.put('/api/essentials', auth, canWrite, (req, res) => {
 // A child's money is mostly paid by a parent: the kindergarten fee is logged by whoever paid it, the
 // therapy bill is "the family's". So an expense counts for a child when it is set on the child, or
 // when the child's name is a word in its note ("Bill: Celule Maria") — Maria and Mara stay apart,
-// because it is the whole word that has to match. Bills set on a child, or named after one, are the
-// fixed part, brought to their monthly cost.
+// because it is the whole word that has to match. A child can also carry words of their own
+// ("montessori, grădiniță"), so the fee a parent types in lands on them without picking them each
+// time; a phrase of several words needs all of them. Bills set on a child, or named after one, are
+// the fixed part, brought to their monthly cost.
 function kidsCosts(fid) {
-  const kids = db.prepare("SELECT id, name, avatar FROM users WHERE family_id = ? AND role = 'child' ORDER BY created_at").all(fid);
+  const kids = db.prepare("SELECT id, name, avatar, cost_words FROM users WHERE family_id = ? AND role = 'child' ORDER BY created_at").all(fid);
   if (!kids.length) return [];
   const words = (t) => String(t || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().match(/[a-z0-9]+/g) || [];
   const nameOf = (k) => words(k.name)[0] || '';
@@ -5043,7 +5055,12 @@ function kidsCosts(fid) {
   const r2 = (n) => Math.round(n * 100) / 100;
   return kids.map((k) => {
     const nm = nameOf(k);
-    const mine = (owner, text) => owner === k.id || (nm && words(text).includes(nm));
+    const phrases = [[nm], ...String(k.cost_words || '').split(',').map(words)].filter((p) => p.length && p[0]);
+    const mine = (owner, text) => {
+      if (owner === k.id) return true;
+      const ws = words(text);
+      return phrases.some((p) => p.every((w) => ws.includes(w)));
+    };
     const own = exps.filter((e) => mine(e.user_id, e.note));
     const sumIn = (m) => own.filter((e) => e.m === m).reduce((a, e) => a + e.amount, 0);
     const cats = {};
