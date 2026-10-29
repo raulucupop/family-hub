@@ -285,10 +285,13 @@ test('the BNR feed is read for euro and pound, honouring a multiplier', async (t
   // the same shape curs.bnr.ro serves, trimmed
   const xml = `<?xml version="1.0" encoding="utf-8"?><DataSet xmlns="http://www.bnr.ro/xsd"><Body><OrigCurrency>RON</OrigCurrency>
     <Cube date="2026-10-19"><Rate currency="EUR">5.3272</Rate><Rate currency="GBP" multiplier="1">6.3336</Rate><Rate currency="HUF" multiplier="100">1.4677</Rate></Cube></Body></DataSet>`;
-  const feed = require('node:http').createServer((req, res) => { res.writeHead(200, { 'Content-Type': 'text/xml' }); res.end(xml); });
+  const feed = require('node:http').createServer((req, res) => {
+    if (req.url !== '/nbrfxrates.xml') { res.writeHead(404); res.end(); return; }
+    res.writeHead(200, { 'Content-Type': 'text/xml' }); res.end(xml);
+  });
   await new Promise((r) => feed.listen(0, '127.0.0.1', r));
   const api = await startServer({ FX_URL: `http://127.0.0.1:${feed.address().port}/nbrfxrates.xml` });
-  t.after(() => Promise.all([api.stop(), new Promise((r) => feed.close(r))]));
+  t.after(() => Promise.all([api.stop(), new Promise((r) => { feed.close(r); feed.closeAllConnections(); })]));
   await api.post('/api/loans', { person: 'Eni', amount: 1000, currency: 'EUR', date: monthDay(-1), direction: 'in' });
   let g;
   for (let i = 0; i < 40; i++) {
@@ -298,6 +301,116 @@ test('the BNR feed is read for euro and pound, honouring a multiplier', async (t
   }
   assert.equal(g.debt.borrowed, 5327.2, '1 000 € at the published 5,3272');
   assert.equal(g.debt.people[0].rate, 5.3272);
+});
+
+// a stand-in for curs.bnr.ro whose answer the test changes as it goes: a fixing, or a status code
+async function fakeBnr(t, answer) {
+  const feed = require('node:http').createServer((req, res) => {
+    // only the feed's own path: anything else is a request meant for some other server
+    if (req.url !== '/nbrfxrates.xml') { res.writeHead(404); res.end(); return; }
+    const a = feed.answer;
+    if (typeof a === 'number') { res.writeHead(a); res.end(); return; }
+    res.writeHead(200, { 'Content-Type': 'text/xml' });
+    res.end(`<?xml version="1.0" encoding="utf-8"?><DataSet xmlns="http://www.bnr.ro/xsd"><Body><OrigCurrency>RON</OrigCurrency>
+      <Cube date="${a.date}"><Rate currency="EUR">${a.eur}</Rate></Cube></Body></DataSet>`);
+  });
+  feed.answer = answer;
+  await new Promise((r) => feed.listen(0, '127.0.0.1', r));
+  // the server keeps its connection to the feed alive; drop it, or close() waits on it forever
+  t.after(() => new Promise((r) => { feed.close(r); feed.closeAllConnections(); }));
+  feed.url = `http://127.0.0.1:${feed.address().port}/nbrfxrates.xml`;
+  return feed;
+}
+// the game, once `ready` says the server has caught up with the feed
+async function gameWhen(api, ready) {
+  let g;
+  for (let i = 0; i < 50; i++) {
+    g = (await api.get('/api/game')).body;
+    if (ready(g)) return g;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  return g;
+}
+
+test('BNR down at start: the debt waits, and is counted the hour BNR answers, not half a day later', async (t) => {
+  const feed = await fakeBnr(t, 503);
+  // an hour shrunk to a fifth of a second
+  const api = await startServer({ FX_URL: feed.url, FX_TICK_MS: '200' });
+  t.after(() => api.stop());
+  await api.post('/api/loans', { person: 'Eni', amount: 1000, currency: 'EUR', date: monthDay(-1), direction: 'in' });
+  await new Promise((r) => setTimeout(r, 500));
+  let g = (await api.get('/api/game')).body;
+  assert.equal(g.debt.borrowed, 0, 'a failed fetch leaves no rate behind, and adds nothing at par');
+  assert.equal(g.debt.people[0].balance_home, null);
+  assert.match(api.log(), /BNR answered 503/);
+
+  feed.answer = { date: today(), eur: '5.0812' };
+  g = await gameWhen(api, (x) => x.debt.borrowed > 0);
+  assert.equal(g.debt.borrowed, 5081.2);
+  assert.equal(g.debt.people[0].rate_source, 'bnr');
+  assert.equal(g.debt.people[0].rate_date, today());
+  assert.equal(g.debt.people[0].rate_stale, false);
+});
+
+test('a feed that answers with nonsense keeps the last good rate', async (t) => {
+  const feed = await fakeBnr(t, { date: today(), eur: '5.0812' });
+  const first = await startServer({ FX_URL: feed.url });
+  await first.post('/api/loans', { person: 'Eni', amount: 1000, currency: 'EUR', date: monthDay(-1), direction: 'in' });
+  assert.equal((await gameWhen(first, (x) => x.debt.borrowed > 0)).debt.borrowed, 5081.2);
+  await first.stop();
+
+  // the same database, restarted against a feed that has gone wrong in each way in turn
+  for (const answer of [{ date: '2026-01-05', eur: '4.9' }, { date: today(), eur: '0' }, 500]) {
+    feed.answer = answer;
+    const api = await startServer({ FX_URL: feed.url, DATA_DIR: first.dir }, { loginAs: first.email });
+    await new Promise((r) => setTimeout(r, 300));
+    const g = (await api.get('/api/game')).body;
+    await api.stop();
+    assert.equal(g.debt.borrowed, 5081.2, `${JSON.stringify(answer)}: an older fixing, a zero or an error never replaces the rate kept`);
+    assert.equal(g.debt.people[0].rate_date, today());
+  }
+});
+
+test('a rate BNR has not refreshed for over a week still counts, but says how old it is', async (t) => {
+  const feed = await fakeBnr(t, { date: '2026-01-05', eur: '5.0812' });
+  const api = await startServer({ FX_URL: feed.url });
+  t.after(() => api.stop());
+  await api.post('/api/loans', { person: 'Eni', amount: 1000, currency: 'EUR', date: monthDay(-1), direction: 'in' });
+  const g = await gameWhen(api, (x) => x.debt.borrowed > 0);
+  assert.equal(g.debt.borrowed, 5081.2, 'the last rate known is better than leaving €1 000 out');
+  assert.equal(g.debt.people[0].rate_date, '2026-01-05');
+  assert.equal(g.debt.people[0].rate_stale, true);
+});
+
+test('FX_FALLBACK stands in only while BNR has never answered, and says it is a fallback', async (t) => {
+  const none = await startServer({ FX_FALLBACK: 'EUR:5' }); // the test server never reaches BNR
+  t.after(() => none.stop());
+  await none.post('/api/loans', { person: 'Eni', amount: 1000, currency: 'EUR', date: monthDay(-1), direction: 'in' });
+  let g = (await none.get('/api/game')).body;
+  assert.equal(g.debt.borrowed, 5000);
+  assert.equal(g.debt.people[0].rate_source, 'fallback');
+  assert.equal(g.debt.people[0].rate_date, null);
+
+  const feed = await fakeBnr(t, { date: today(), eur: '5.0812' });
+  const api = await startServer({ FX_URL: feed.url, FX_FALLBACK: 'EUR:5' });
+  t.after(() => api.stop());
+  await api.post('/api/loans', { person: 'Eni', amount: 1000, currency: 'EUR', date: monthDay(-1), direction: 'in' });
+  g = await gameWhen(api, (x) => x.debt.people[0].rate_source === 'bnr');
+  assert.equal(g.debt.borrowed, 5081.2, 'BNR wins as soon as it has answered');
+});
+
+test('each debt is rounded to bani before it is added, so the cards add up to the total', async (t) => {
+  const api = await startServer({ FX_RATES: 'EUR:4.9773' });
+  t.after(() => api.stop());
+  for (const person of ['Eni', 'Coionii', 'Hans']) {
+    await api.post('/api/loans', { person, amount: 333.33, currency: 'EUR', date: monthDay(-1), direction: 'in' });
+  }
+  const g = (await api.get('/api/game')).body;
+  // 333,33 € at 4,9773 is 1 659,0834 lei: three cards of 1 659,08 add up to 4 977,24, and the
+  // total must say so, not the 4 977,25 the unrounded sum would round to
+  assert.deepEqual(g.debt.people.map((p) => p.balance_home), [1659.08, 1659.08, 1659.08]);
+  assert.equal(g.debt.loans_owed, 4977.24);
+  assert.equal(g.debt.borrowed, 4977.24);
 });
 
 test('each calculator moves only its own money, and people are paid only from the extra', () => {

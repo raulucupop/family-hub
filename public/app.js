@@ -2395,8 +2395,12 @@ function gamePeopleHtml(g) {
       : p.due_date ? (ro ? `țintă: ${fdate(p.due_date)}` : `target: ${fdate(p.due_date)}`)
       : (ro ? 'fără țintă' : 'no target');
     // a debt in another currency shows what it is in lei today, or says plainly that it cannot
+    // and which rate that is: an old fixing (BNR not reached for a week) or the fallback is said so
+    const rateNote = p.rate_source === 'fallback' ? (ro ? 'curs de rezervă, nu BNR' : 'fallback rate, not BNR')
+      : p.rate_stale ? (ro ? `curs BNR vechi, din ${fdate(p.rate_date)}` : `old BNR rate, from ${fdate(p.rate_date)}`)
+      : p.rate_date ? (ro ? `curs BNR din ${fdate(p.rate_date)}` : `BNR rate of ${fdate(p.rate_date)}`) : '';
     const home = p.currency === g.currency ? ''
-      : p.balance_home != null ? `<p class="game-person__home">≈ ${gameMoney(p.balance_home)}</p>`
+      : p.balance_home != null ? `<p class="game-person__home${p.rate_stale || p.rate_source === 'fallback' ? ' is-stale' : ''}">≈ ${gameMoney(p.balance_home)}${rateNote ? ` · ${rateNote}` : ''}</p>`
       : `<p class="game-person__home">${ro ? 'Fără curs BNR, nu intră în nivel.' : 'No BNR rate, not in the level.'}</p>`;
     // with a target: what each month has to carry to reach it, and how this one is doing
     const done = p.plan && p.plan.back_now >= p.plan.monthly - 0.005;
