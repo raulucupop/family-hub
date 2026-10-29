@@ -811,6 +811,9 @@ if (!userCols.includes('phone')) db.exec('ALTER TABLE users ADD COLUMN phone TEX
 if (!userCols.includes('notif_muted')) db.exec("ALTER TABLE users ADD COLUMN notif_muted TEXT NOT NULL DEFAULT ''");
 if (!userCols.includes('quiet_start')) db.exec('ALTER TABLE users ADD COLUMN quiet_start INTEGER');
 if (!userCols.includes('quiet_end')) db.exec('ALTER TABLE users ADD COLUMN quiet_end INTEGER');
+// words that make an expense a child's even when a parent logged it ("montessori, grădiniță"),
+// comma-separated; only read for children, by what-each-child-costs
+if (!userCols.includes('cost_words')) db.exec("ALTER TABLE users ADD COLUMN cost_words TEXT NOT NULL DEFAULT ''");
 
 // The tenancy itself, which the app tracked the money for but never the contract. All three carry
 // money: a lease runs out, notice has to be given a fixed number of days before that, and the

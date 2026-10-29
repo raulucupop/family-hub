@@ -592,7 +592,7 @@ const RO = {
   'Or email an invite': 'Sau trimite invitația pe email',
   "For kids without an email — they show up in the family and can have acte and expenses linked to them, but can't sign in.":
     'Pentru copii fără email — apar în familie și pot avea acte și cheltuieli legate de ei, dar nu se pot autentifica.',
-  'Invite sent to': 'Invitație trimisă către', 'Child added': 'Copil adăugat', 'Role updated': 'Rol actualizat',
+  'Invite sent to': 'Invitație trimisă către', 'Expenses with these words count for them': 'Cheltuielile cu aceste cuvinte se trec pe copil', 'Child added': 'Copil adăugat', 'Role updated': 'Rol actualizat',
   'Remove this member? Their account will be deleted.': 'Elimini acest membru? Contul lui va fi șters.',
   // settings
   'Your profile, theme and family pictures.': 'Profilul tău, tema și pozele familiei.',
@@ -2046,7 +2046,7 @@ function kidsCostHtml(kids) {
       ${k.categories.length ? `<p class="kidscost__cats">${k.categories.slice(0, 3).map((c) => `<span>${esc(tr(c.category))} <b class="amount">${money(c.total)}</b></span>`).join('')}</p>` : ''}
       ${k.fixed.length ? `<p class="muted kidscost__fixed">${ro ? 'Fixe pe lună' : 'Fixed a month'}: <b class="amount">${money(k.fixed_total)}</b> · ${k.fixed.map((f) => esc(f.name)).join(', ')}</p>` : ''}
     </div>`).join('')}</div>
-    <p class="muted" style="margin:12px 0 0;font-size:12px">${ro ? 'Se numără ce e trecut pe copil, sau are numele lui în notă. Grădinița plătită de tine intră dacă o treci pe copil (la cheltuială, „De cine”).' : 'Counted: what is set on the child, or has the child’s name in its note. A fee you paid counts once it is set on the child (the expense’s "By").'}</p>
+    <p class="muted" style="margin:12px 0 0;font-size:12px">${ro ? 'Se numără ce e trecut pe copil, sau are în notă numele lui ori unul din cuvintele lui (Familie → Membri, de ex. „montessori”).' : 'Counted: what is set on the child, or has the child’s name or one of their words in its note (Family → Members, e.g. "montessori").'}</p>
   </section>`;
 }
 function pctPill(now, before, sense) {
@@ -6085,7 +6085,9 @@ async function viewFamily(el) {
       <button class="btn">Add child</button></form></div>` : ''}
     <div class="card" style="margin-top:16px"><h3>Members</h3>
       <table><thead><tr><th>Name</th><th>Email</th><th>Role</th>${isAdmin ? '<th></th>' : ''}</tr></thead><tbody>
-      ${members.map((m) => `<tr><td><span class="row" style="gap:8px">${avatarHtml(m)}<span>${esc(m.name)}${m.id === ME.id ? ' <span class="muted">(you)</span>' : ''}</span></span></td><td>${m.email ? esc(m.email) : '<span class="muted">no login</span>'}</td>
+      ${members.map((m) => `<tr><td><span class="row" style="gap:8px">${avatarHtml(m)}<span>${esc(m.name)}${m.id === ME.id ? ' <span class="muted">(you)</span>' : ''}</span></span>
+          ${isAdmin && m.role === 'child' ? `<label style="margin-top:6px;font-size:12px">${tr('Expenses with these words count for them')}
+            <input data-words="${m.id}" value="${esc(m.cost_words || '')}" placeholder="montessori, grădiniță" style="font-size:14px"></label>` : ''}</td><td>${m.email ? esc(m.email) : '<span class="muted">no login</span>'}</td>
         <td>${isAdmin && m.id !== ME.id && m.email ? `<select data-role="${m.id}">${['admin', 'adult', 'child'].map((r) => `<option value="${r}" ${r === m.role ? 'selected' : ''}>${r}</option>`).join('')}</select>` : `<span class="badge role">${tr(m.role)}</span>`}</td>
         ${isAdmin ? `<td class="right">${m.id !== ME.id ? `<button class="btn danger small" data-del="${m.id}">Remove</button>` : ''}</td>` : ''}</tr>`).join('')}
       </tbody></table></div>
@@ -6115,6 +6117,10 @@ async function viewFamily(el) {
   el.querySelectorAll('[data-role]').forEach((s) => (s.onchange = async () => {
     try { await api('/family/members/' + s.dataset.role, { method: 'PATCH', body: { role: s.value } }); toast('Role updated'); }
     catch (err) { toast(err.message); viewFamily(el); }
+  }));
+  el.querySelectorAll('[data-words]').forEach((i) => (i.onchange = async () => {
+    try { i.value = (await api('/family/members/' + i.dataset.words, { method: 'PATCH', body: { cost_words: i.value } })).cost_words; toast('Saved'); }
+    catch (err) { toast(err.message); }
   }));
   el.querySelectorAll('[data-del]').forEach((b) => (b.onclick = async () => {
     if (!(await askDelete({ en: 'member', ro: 'membrul', name: rowName(b), verbEn: 'Remove', verbRo: 'Elimină', detailEn: 'Their account is deleted.', detailRo: 'Contul lui se șterge.' }))) return;
