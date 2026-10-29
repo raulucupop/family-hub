@@ -68,6 +68,25 @@ Anything that runs Node or Docker works. The only requirement is a **persistent 
 
 ⚠️ Not suitable for serverless platforms (Vercel/Netlify functions) as-is — SQLite and file uploads need a persistent filesystem.
 
+## Deploying (lafamiliapop.ro)
+
+The live site runs under cPanel's Node.js app (Passenger) from a clone in `~/repos/family-hub`. After merging to `main`, deploy with one command, either in the cPanel terminal or over SSH:
+
+```bash
+~/repos/family-hub/scripts/deploy.sh
+ssh <user>@lafamiliapop.ro repos/family-hub/scripts/deploy.sh
+```
+
+It fast-forwards to `origin/main`, runs `npm install --omit=dev` only when `package-lock.json` changed (activating the app's `~/nodevenv` if `npm` is not on the PATH), then touches `tmp/restart.txt` so Passenger restarts the app. A successful run ends with:
+
+```
+DEPLOY-OK 1a2b3c4 <commit subject>
+```
+
+If the pull is not a fast-forward or the install fails, the script stops before the restart and the old version keeps running. No `DEPLOY-OK` line means nothing was restarted.
+
+Pull requests and pushes to `main` run `npm test` on GitHub Actions (`.github/workflows/test.yml`).
+
 ## Configuration
 
 See `.env.example`. Key variables: `PORT`, `JWT_SECRET` (auto-generated and persisted if omitted), `DATA_DIR`, `INSECURE_COOKIES`.
