@@ -285,10 +285,13 @@ test('the BNR feed is read for euro and pound, honouring a multiplier', async (t
   // the same shape curs.bnr.ro serves, trimmed
   const xml = `<?xml version="1.0" encoding="utf-8"?><DataSet xmlns="http://www.bnr.ro/xsd"><Body><OrigCurrency>RON</OrigCurrency>
     <Cube date="2026-10-19"><Rate currency="EUR">5.3272</Rate><Rate currency="GBP" multiplier="1">6.3336</Rate><Rate currency="HUF" multiplier="100">1.4677</Rate></Cube></Body></DataSet>`;
-  const feed = require('node:http').createServer((req, res) => { res.writeHead(200, { 'Content-Type': 'text/xml' }); res.end(xml); });
+  const feed = require('node:http').createServer((req, res) => {
+    if (req.url !== '/nbrfxrates.xml') { res.writeHead(404); res.end(); return; }
+    res.writeHead(200, { 'Content-Type': 'text/xml' }); res.end(xml);
+  });
   await new Promise((r) => feed.listen(0, '127.0.0.1', r));
   const api = await startServer({ FX_URL: `http://127.0.0.1:${feed.address().port}/nbrfxrates.xml` });
-  t.after(() => Promise.all([api.stop(), new Promise((r) => feed.close(r))]));
+  t.after(() => Promise.all([api.stop(), new Promise((r) => { feed.close(r); feed.closeAllConnections(); })]));
   await api.post('/api/loans', { person: 'Eni', amount: 1000, currency: 'EUR', date: monthDay(-1), direction: 'in' });
   let g;
   for (let i = 0; i < 40; i++) {
@@ -303,6 +306,8 @@ test('the BNR feed is read for euro and pound, honouring a multiplier', async (t
 // a stand-in for curs.bnr.ro whose answer the test changes as it goes: a fixing, or a status code
 async function fakeBnr(t, answer) {
   const feed = require('node:http').createServer((req, res) => {
+    // only the feed's own path: anything else is a request meant for some other server
+    if (req.url !== '/nbrfxrates.xml') { res.writeHead(404); res.end(); return; }
     const a = feed.answer;
     if (typeof a === 'number') { res.writeHead(a); res.end(); return; }
     res.writeHead(200, { 'Content-Type': 'text/xml' });

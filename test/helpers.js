@@ -28,27 +28,31 @@ function freePort() {
 // restarts a server on the same database (only the first registration there is open to anyone)
 async function startServer(extraEnv = {}, opts = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fh-test-'));
-  const port = await freePort();
-  const proc = spawn(process.execPath, ['server.js'], {
-    cwd: ROOT,
-    env: { ...process.env, DATA_DIR: dir, PORT: String(port), SESSION_SECRET: 'test-secret', NODE_ENV: 'test', ...extraEnv },
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  let log = '';
-  proc.stdout.on('data', (d) => { log += d; });
-  proc.stderr.on('data', (d) => { log += d; });
+  let port, proc, log;
+  // The port is free when freePort() lets it go, but anything else listening on port 0 in these
+  // parallel files (a test's stand-in for BNR, say) can be handed it before the child binds. So
+  // the server counts as up only when it says so itself — an answer on the port could be somebody
+  // else's, and every request of the test would then go to a stranger — and a lost race is retried.
+  for (let attempt = 1; ; attempt++) {
+    port = await freePort();
+    proc = spawn(process.execPath, ['server.js'], {
+      cwd: ROOT,
+      env: { ...process.env, DATA_DIR: dir, PORT: String(port), SESSION_SECRET: 'test-secret', NODE_ENV: 'test', ...extraEnv },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    log = '';
+    proc.stdout.on('data', (d) => { log += d; });
+    proc.stderr.on('data', (d) => { log += d; });
 
-  const base = `http://127.0.0.1:${port}`;
-  const deadline = Date.now() + 15000;
-  for (;;) {
-    if (proc.exitCode != null) throw new Error(`server exited (${proc.exitCode}):\n${log}`);
-    try {
-      const r = await fetch(base + '/', { signal: AbortSignal.timeout(800) });
-      if (r.ok) break;
-    } catch { /* not up yet */ }
-    if (Date.now() > deadline) throw new Error(`server never came up on ${port}:\n${log}`);
-    await new Promise((r) => setTimeout(r, 120));
+    const deadline = Date.now() + 15000;
+    while (proc.exitCode == null && !log.includes(`running on http://localhost:${port}`)) {
+      if (Date.now() > deadline) throw new Error(`server never came up on ${port}:\n${log}`);
+      await new Promise((r) => setTimeout(r, 60));
+    }
+    if (proc.exitCode == null) break;
+    if (!/EADDRINUSE/.test(log) || attempt === 3) throw new Error(`server exited (${proc.exitCode}):\n${log}`);
   }
+  const base = `http://127.0.0.1:${port}`;
 
   let cookie = '';
   const call = async (method, url, body) => {
