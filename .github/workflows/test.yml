@@ -8,16 +8,13 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        node: [20, 22]
     steps:
       - uses: actions/checkout@v5
+      # 22, not 20: several tests open databases with the built-in node:sqlite.
       - uses: actions/setup-node@v5
         with:
-          node-version: ${{ matrix.node }}
+          node-version: 22
           cache: npm
       - run: npm ci
       - run: npm test
       - run: shellcheck scripts/deploy.sh
-        if: matrix.node == 22
