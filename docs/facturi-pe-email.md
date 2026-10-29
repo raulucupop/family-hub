@@ -18,8 +18,9 @@ Tiparele sunt scrise pe emailurile reale ale furnizorilor, nu ghicite:
 |---|---|---|
 | **E.ON** | `…@eon-romania.ro` | `Rest de plată: 57,22 lei` · `Număr factură:` · `Data scadentă:` |
 | **Orange** | `…@notifications.orange.ro` | `Valoarea totala de plata este: 230.82 lei` · `plati pana pe 21 August` |
-| **Hidroelectrica** | `…@hidroelectrica.ro` | `Total de plată` · `Data scadentă` |
-| **Vodafone** | `…@vodafone.ro` | tiparele generale (`Total de plată`, `Sumă de plată`); încă nescrise pe un email real |
+| **Hidroelectrica** | `crm@hidroelectrica.ro` | `Total de plată: 241,47 lei` · scadența e doar în PDF |
+| **Vodafone** | `MyVodafone.no-reply@vodafone.ro` | `Total de plata: (TVA inclus) 29.82 lei` · `De platit pana la: 2026-11-13` |
+| **Retim** | `facturare@retim.ro` | `VALOARE FACTURA 67,45 lei` · scadența e doar în PDF |
 | **Digi** | `…@digi.ro`, `…@rcs-rds.ro` | idem |
 | oricare altul | — | ciorna apare cu subiectul și PDF-ul; suma o scrii tu |
 
@@ -111,7 +112,7 @@ require ["envelope"];
 if anyof (address :domain :contains "from" "eon-romania.ro",
           address :domain :contains "from" "orange.ro",
           address :domain :contains "from" "hidroelectrica.ro",
-          address :domain :contains "from" "vodafone.ro")
+          address :is "from" "MyVodafone.no-reply@vodafone.ro")
 {
   redirect "facturi@lafamiliapop.ro";
   keep;

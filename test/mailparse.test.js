@@ -121,3 +121,48 @@ test('a mail with no money in it does not invent an amount', () => {
   assert.equal(r.amount, null, 'a blank the person fills in beats a number that is wrong');
   assert.equal(r.due_date, null);
 });
+
+test('a Vodafone invoice, as Vodafone writes it', () => {
+  // the HTML mail from MyVodafone, tags taken out: "(TVA inclus)" sits between label and number,
+  // and the dates are ISO, with the issue date printed just before the due date
+  const r = parse({
+    from: 'MyVodafone.no-reply@vodafone.ro',
+    subject: 'Factura ta Vodafone a fost emisa',
+    text: `Buna, Factura ta Vodafone a fost emisa. Total de plata: (TVA inclus) 29.82 lei Plateste acum
+      DATELE FACTURII Cod client: 100000001 Numar factura: VDF100000001 Data emiterii: 2026-10-14
+      De platit pana la: 2026-11-13 Am anexat si factura PDF`,
+  }, '2026-10-18T00:00:00Z');
+  assert.equal(r.provider, 'vodafone');
+  assert.equal(r.amount, 29.82);
+  assert.equal(r.due_date, '2026-11-13', 'the due date, not the issue date printed above it');
+  assert.equal(r.invoice_no, 'VDF100000001');
+});
+
+test('a Hidroelectrica invoice, as Hidroelectrica writes it', () => {
+  // the mail carries no due date — that one is only in the PDF
+  const r = parse({
+    from: 'Hidroelectrica <crm@hidroelectrica.ro>',
+    subject: 'Factura Hidroelectrica FX-00000000001 a fost generata',
+    text: `Stimate Client, Vă informăm că s-a emis factura pentru serviciile de furnizare energie electrică
+      de către S.P.E.E.H Hidroelectrica S.A. Factura cuprinde următoarele informații:
+      Cod client: 1000000000 Număr factură: FX-00000000001 Valoare factură curentă: 241,47 lei
+      Total de plată: 241,47 lei`,
+  }, '2026-10-16T00:00:00Z');
+  assert.equal(r.provider, 'hidroelectrica', 'known by the address inside the angle brackets');
+  assert.equal(r.amount, 241.47);
+  assert.equal(r.due_date, null);
+  assert.equal(r.invoice_no, 'FX-00000000001');
+});
+
+test('a Retim invoice with the amount in the body', () => {
+  // since 2026 the body says what the invoice is worth; the due date is still only in the PDF
+  const r = parse({
+    from: 'RETIM SA <facturare@retim.ro>',
+    subject: 'Informare emitere factura',
+    text: `INFORMARE emitere factura Stimate client, Va informam ca v-am emis o factura, pe care o regasiti
+      atasata acestui email. COD CLIENT 100000 NUMAR FACTURA 20000001 VALOARE FACTURA 67,45 lei Platiti factura`,
+  }, '2026-10-16T00:00:00Z');
+  assert.equal(r.provider, 'retim');
+  assert.equal(r.amount, 67.45);
+  assert.equal(r.invoice_no, '20000001');
+});

@@ -3140,7 +3140,7 @@ function parseMime(raw) {
     out.text = /html/i.test(ctype) ? htmlToText(decoded) : decoded;
     return out;
   }
-  const parts = body.split(new RegExp('--' + bnd[1].replace(/[.*+?^`${}()|[\\]\\\\]/g, '\\\\// ---------- the weekly two minutes ----------')));
+  const parts = body.split('--' + bnd[1]);
   let html = null;
   for (const part of parts) {
     const ps = part.search(/\r?\n\r?\n/);
