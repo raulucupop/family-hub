@@ -7,14 +7,14 @@ const assert = require('node:assert');
 const { startServer, today, plusDays } = require('./helpers');
 
 const CRLF = '\r\n';
-const mime = ({ from, subject, text, html, pdf }) => {
+const mime = ({ from, subject, text, html, pdf, boundary }) => {
   if (!html && !pdf) {
     return [
       `From: ${from}`, `Subject: ${subject}`,
       'Content-Type: text/plain; charset=utf-8', '', text,
     ].join(CRLF);
   }
-  const b = 'bnd42';
+  const b = boundary || 'bnd42';
   const parts = [
     [`From: ${from}`, `Subject: ${subject}`, `Content-Type: multipart/mixed; boundary="${b}"`, '', ''].join(CRLF),
   ];
@@ -173,4 +173,18 @@ test('drafts belong to one family', async (t) => {
   const inbound = new URL((await mine.post('/api/mail/token')).body.url).pathname;
   await postMail(mine, inbound, mime({ from: 'a@b.ro', subject: 'x', text: 'Total de plată: 10 lei' }));
   assert.deepEqual((await theirs.get('/api/mail-drafts')).body, []);
+});
+
+test('a boundary with the characters MIME allows in it is still split', async (t) => {
+  // RFC 2046 allows ( ) + ? . in a boundary. Read as a pattern, "(" made the split throw and the
+  // invoice never became a draft — while the pipe, by design, reported nothing to anyone
+  const api = await startServer();
+  t.after(() => api.stop());
+  const inbound = new URL((await api.post('/api/mail/token')).body.url).pathname;
+  const r = await postMail(api, inbound, mime({
+    from: 'Hidroelectrica <crm@hidroelectrica.ro>', subject: 'Factura Hidroelectrica',
+    html: '<p>Total de plată: 241,47 lei</p>', boundary: '=_(part)+1.x?',
+  }));
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.amount, 241.47);
 });
