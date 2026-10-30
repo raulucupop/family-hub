@@ -6139,9 +6139,53 @@ async function viewFamily(el) {
   });
 }
 
+/* ---------- settings: E.ON Myline ----------
+   Only shown when the server has an E.ON account configured. The password never passes through
+   here: the card can start a sync and hand over the one-time code E.ON sends, nothing else. */
+function eonCardHtml(st) {
+  const ro = LANG === 'ro';
+  const when = (iso) => (iso ? new Date(iso).toLocaleString(ro ? 'ro-RO' : 'en-GB', { dateStyle: 'medium', timeStyle: 'short' }) : '—');
+  const status = st.mfa
+    ? `<p style="margin:0 0 8px">${ro ? `E.ON a trimis un cod de verificare${st.mfa.recipient ? ` la <b>${esc(st.mfa.recipient)}</b>` : ''}. Scrie-l aici:` : `E.ON sent a verification code${st.mfa.recipient ? ` to <b>${esc(st.mfa.recipient)}</b>` : ''}. Enter it here:`}</p>
+      <form id="eonmfa" class="row" style="gap:8px"><input name="code" inputmode="numeric" autocomplete="one-time-code" style="width:140px" placeholder="123456" required>
+        <button class="btn small">${ro ? 'Confirmă' : 'Confirm'}</button></form>`
+    : st.last_error
+      ? `<p style="margin:0;color:var(--red)">${esc(st.last_error)}</p>`
+      : `<p style="margin:0">${st.unpaid
+        ? (ro ? `<b>${st.unpaid}</b> ${st.unpaid === 1 ? 'factură neachitată' : 'facturi neachitate'}, ${money(st.unpaid_amount)}` : `<b>${st.unpaid}</b> unpaid, ${money(st.unpaid_amount)}`)
+        : (ro ? 'Nicio factură neachitată.' : 'No unpaid invoices.')}</p>`;
+  return `<h3>E.ON Myline</h3>
+    <p class="muted" style="margin-top:0">${ro
+      ? `Facturile neachitate ale contului <b>${esc(st.account)}</b> apar singure în Facturi și se marchează plătite când E.ON vede plata. Verificare la fiecare 6 ore.`
+      : `Unpaid invoices on <b>${esc(st.account)}</b> appear in Bills on their own, and are marked paid once E.ON sees the payment. Checked every 6 hours.`}</p>
+    ${status}
+    <div class="row" style="gap:8px;align-items:center;margin-top:12px">
+      <button class="btn ghost small" id="eonsync">${ro ? 'Verifică acum' : 'Check now'}</button>
+      <span class="muted" style="font-size:13px">${ro ? 'Ultima verificare reușită' : 'Last successful check'}: ${when(st.last_ok_at)}</span></div>`;
+}
+function wireEonCard(card) {
+  const done = (r) => {
+    const res = r.result || {};
+    if (res.ok) toast(LANG === 'ro' ? `E.ON: ${res.unpaid} neachitate${res.created ? `, ${res.created} noi` : ''}${res.paid ? `, ${res.paid} plătite` : ''}` : `E.ON: ${res.unpaid} unpaid${res.created ? `, ${res.created} new` : ''}${res.paid ? `, ${res.paid} paid` : ''}`, 'success');
+    else if (res.error) toast(res.error);
+    card.innerHTML = eonCardHtml(r.state);
+    wireEonCard(card);
+  };
+  card.querySelector('#eonsync')?.addEventListener('click', async (e) => {
+    e.target.disabled = true;
+    try { done(await api('/eon/sync', { method: 'POST' })); } catch (err) { e.target.disabled = false; toast(err.message); }
+  });
+  card.querySelector('#eonmfa')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = e.target.querySelector('button'); btn.disabled = true;
+    try { done(await api('/eon/mfa', { method: 'POST', body: { code: e.target.code.value } })); } catch (err) { btn.disabled = false; toast(err.message); }
+  });
+}
+
 /* ---------- settings: profile picture, theme, name ---------- */
 async function viewSettings(el) {
-  const [members, haInfo, mailInfo] = await Promise.all([api('/family/members'), api('/ha/info').catch(() => ({ url: null })), api('/mail/info').catch(() => ({ url: null }))]);
+  const [members, haInfo, mailInfo, eonInfo] = await Promise.all([api('/family/members'), api('/ha/info').catch(() => ({ url: null })), api('/mail/info').catch(() => ({ url: null })),
+    ME.role === 'admin' ? api('/eon').catch(() => ({ configured: false })) : { configured: false }]);
   const kids = members.filter((m) => m.role === 'child');
   const canEditKids = ME.role === 'admin' || ME.role === 'adult';
   el.innerHTML = `<div class="pagehead"><div><h1>Settings</h1><p>Your profile, theme and family pictures.</p></div></div>
@@ -6205,6 +6249,7 @@ async function viewSettings(el) {
             <button class="btn ghost small" data-copy="${esc(mailInfo.url)}">${tr('Copy')}</button>
             <button class="btn ghost small" id="mailrotate">${tr('New address')}</button></div>`
         : `<button class="btn small" id="mailgen">${tr('Create the address')}</button>`}</div>
+    ${eonInfo.configured ? `<div class="card" style="margin-top:16px" id="eoncard">${eonCardHtml(eonInfo)}</div>` : ''}
     <div class="card" style="margin-top:16px"><h3>${tr('House dashboard')}</h3>
       <p class="muted" style="margin-top:0">${tr('A read-only address Home Assistant can read to show these numbers on a wall panel. It gives out figures only — no names, no notes, no addresses — and it cannot change anything here.')}</p>
       ${haInfo.url
@@ -6251,6 +6296,7 @@ async function viewSettings(el) {
     if (await confirmDestroy({ question: LANG === 'ro' ? 'Generezi o adresă nouă pentru Home Assistant?' : 'Generate a new Home Assistant address?', detail: LANG === 'ro' ? 'Adresa actuală nu mai merge; senzorul din Home Assistant trebuie actualizat.' : 'The current address stops working; the Home Assistant sensor must be updated.', verb: LANG === 'ro' ? 'Generează adresă nouă' : 'Generate new address' })) await haGen();
   });
   el.querySelectorAll('[data-copy]').forEach((b) => (b.onclick = () => copyText(b.dataset.copy)));
+  if (eonInfo.configured) wireEonCard($('#eoncard'));
   setupPushCard();
   $('#notifsave')?.addEventListener('click', async () => {
     // muted = groups left unchecked; quiet hours only count when both edges are set

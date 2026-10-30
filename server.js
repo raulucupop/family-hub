@@ -3263,6 +3263,161 @@ app.post('/api/mail-drafts/:id/reject', auth, canWrite, (req, res) => {
   res.json({ ok: true });
 });
 
+// ---------- E.ON Myline ----------
+// Unpaid E.ON invoices read straight from the supplier, instead of waiting for somebody to type
+// them in or forward the email. The account is the server's: EON_EMAIL and EON_PASSWORD live in the
+// environment (cPanel → Setup Node.js App), never in the database and never in a request, so
+// nothing a browser can send reads or changes them. It syncs into one family — EON_FAMILY_ID, or
+// the installation's only family.
+//
+// Unlike a forwarded email, what comes back here is E.ON's own answer over an authenticated
+// connection, so an invoice becomes a bill directly, without a draft. The sync only ever touches
+// bills it created (ext_ref 'eon:<number>'): a new invoice is added, a partly paid one has its
+// amount brought down, and one that has left E.ON's unpaid list is marked paid, with the payment
+// and the expense logged as if somebody had pressed Pay. A bill somebody already marked paid is
+// never reopened — E.ON can take a day or two to see a payment.
+const eon = require('./lib/eon-myline');
+const eonConfigured = () => !!(process.env.EON_EMAIL && process.env.EON_PASSWORD);
+// alert this many days ahead of the due date (and on the day, and once it slips)
+const EON_REMIND_DAYS = Math.min(30, Math.max(1, Number(process.env.EON_REMIND_DAYS) || 3));
+// off under test, so no test reaches out behind another test's back
+const EON_AUTO = process.env.EON_AUTO === '1' || (process.env.EON_AUTO !== '0' && process.env.NODE_ENV !== 'test');
+function eonFamilyId() {
+  const want = Number(process.env.EON_FAMILY_ID);
+  const row = want
+    ? db.prepare('SELECT id FROM families WHERE id = ?').get(want)
+    : db.prepare('SELECT id FROM families ORDER BY id LIMIT 1').get();
+  return row?.id ?? null;
+}
+function eonLink(fid) {
+  db.prepare('INSERT OR IGNORE INTO eon_links (family_id) VALUES (?)').run(fid);
+  return db.prepare('SELECT * FROM eon_links WHERE family_id = ?').get(fid);
+}
+const parseJson = (s) => { try { return s ? JSON.parse(s) : null; } catch { return null; } };
+// "raul@example.com" -> "r***@example.com": enough to recognise which account, no more
+const maskEmail = (e) => String(e || '').replace(/^(.)[^@]*(@.*)$/, '$1***$2');
+const eonBillName = (cat) => (cat === 'gas' ? 'E.ON gaz' : 'E.ON energie');
+
+function applyEonInvoices(fid, invoices) {
+  const today = new Date().toISOString().slice(0, 10);
+  const byRef = db.prepare('SELECT * FROM bills WHERE family_id = ? AND ext_ref = ?');
+  // the same invoice accepted earlier from a forwarded email: adopt it instead of adding it twice
+  const fromMail = db.prepare("SELECT * FROM bills WHERE family_id = ? AND ext_ref IS NULL AND provider = 'eon' AND notes = ?");
+  const out = { created: 0, updated: 0, paid: 0 };
+  db.transaction(() => {
+    const refs = new Set();
+    for (const inv of invoices) {
+      const ref = `eon:${inv.invoice_no}`;
+      refs.add(ref);
+      let bill = byRef.get(fid, ref);
+      if (!bill) {
+        bill = fromMail.get(fid, `Factura ${inv.invoice_no}`);
+        if (bill) db.prepare('UPDATE bills SET ext_ref = ? WHERE id = ?').run(ref, bill.id);
+      }
+      if (!bill) {
+        db.prepare(`INSERT INTO bills (family_id, name, provider, category, amount, due_date, notes, remind_days, ext_ref)
+          VALUES (?,?,?,?,?,?,?,?,?)`).run(fid, eonBillName(inv.category), 'eon', inv.category, inv.amount,
+          inv.due_date || today, `Factura ${inv.invoice_no} · cod încasare ${inv.account_contract}`, EON_REMIND_DAYS, ref);
+        out.created++;
+        continue;
+      }
+      if (bill.status !== 'unpaid') continue;
+      const due = inv.due_date || bill.due_date;
+      if (Number(bill.amount) !== inv.amount || bill.due_date !== due) {
+        db.prepare('UPDATE bills SET amount = ?, due_date = ? WHERE id = ?').run(inv.amount, due, bill.id);
+        out.updated++;
+      }
+    }
+    // gone from E.ON's unpaid list = paid there
+    for (const bill of db.prepare("SELECT * FROM bills WHERE family_id = ? AND ext_ref LIKE 'eon:%' AND status = 'unpaid'").all(fid)) {
+      if (refs.has(bill.ext_ref)) continue;
+      if (Number(bill.amount) > 0) {
+        db.prepare('INSERT INTO bill_payments (bill_id, family_id, amount, paid_at, paid_by) VALUES (?,?,?,?,?)')
+          .run(bill.id, fid, bill.amount, today, bill.owner_id);
+        logBillExpense(bill, bill.amount, bill.owner_id, today, `Bill (E.ON): ${bill.name}`);
+      }
+      db.prepare("UPDATE bills SET status = 'paid' WHERE id = ?").run(bill.id);
+      out.paid++;
+    }
+  })();
+  return out;
+}
+
+let eonRunning = null;
+// source 'manual' is a person pressing the button: it may start a fresh sign-in (and so make E.ON
+// send a new code). The timer never does while a code is still awaited — otherwise every six hours
+// would mail out another code nobody asked for.
+function runEonSync(source = 'timer') {
+  if (!eonConfigured()) return Promise.resolve({ skipped: 'EON_EMAIL / EON_PASSWORD not set' });
+  if (eonRunning) return eonRunning;
+  eonRunning = (async () => {
+    const fid = eonFamilyId();
+    if (!fid) return { skipped: 'no family' };
+    const link = eonLink(fid);
+    if (link.mfa && source !== 'manual') return { mfa: true, skipped: 'waiting for the E.ON code' };
+    const setRow = db.prepare('UPDATE eon_links SET session = ?, mfa = ? WHERE family_id = ?');
+    let mfa = null;
+    const c = eon.client({
+      email: process.env.EON_EMAIL,
+      password: process.env.EON_PASSWORD,
+      session: parseJson(link.session),
+      save: (s) => setRow.run(JSON.stringify(s), null, fid),
+      onMfa: (m) => { mfa = m; setRow.run(null, JSON.stringify(m), fid); },
+    });
+    const r = await eon.unpaidInvoices(c);
+    const now = new Date().toISOString();
+    if (r.mfa || mfa) {
+      db.prepare('UPDATE eon_links SET last_sync_at = ?, last_error = ? WHERE family_id = ?')
+        .run(now, 'E.ON cere codul de verificare', fid);
+      return { mfa: true };
+    }
+    if (r.error) {
+      db.prepare('UPDATE eon_links SET last_sync_at = ?, last_error = ? WHERE family_id = ?').run(now, r.error, fid);
+      console.error('eon sync:', r.error);
+      return { error: r.error };
+    }
+    const done = applyEonInvoices(fid, r.invoices);
+    db.prepare('UPDATE eon_links SET last_sync_at = ?, last_ok_at = ?, last_error = NULL, last_count = ?, mfa = NULL WHERE family_id = ?')
+      .run(now, now, r.invoices.length, fid);
+    generateNotifications(fid);
+    return { ok: true, unpaid: r.invoices.length, contracts: r.contracts, ...done };
+  })().finally(() => { eonRunning = null; });
+  return eonRunning;
+}
+
+// Settings card. Only the admin of the family the account syncs into ever sees it exists.
+function eonState(fid) {
+  if (!eonConfigured() || eonFamilyId() !== fid) return { configured: false };
+  const l = eonLink(fid);
+  const m = parseJson(l.mfa);
+  const unpaid = db.prepare("SELECT COUNT(*) n, COALESCE(SUM(amount),0) t FROM bills WHERE family_id = ? AND ext_ref LIKE 'eon:%' AND status = 'unpaid'").get(fid);
+  return {
+    configured: true,
+    account: maskEmail(process.env.EON_EMAIL),
+    last_sync_at: l.last_sync_at, last_ok_at: l.last_ok_at, last_error: l.last_error,
+    mfa: m ? { type: m.type, recipient: m.recipient } : null,
+    unpaid: unpaid.n, unpaid_amount: Math.round(unpaid.t * 100) / 100,
+  };
+}
+const eonGuard = (req, res, next) => (eonState(req.user.family_id).configured ? next() : res.status(404).json({ error: 'E.ON is not set up on this server' }));
+app.get('/api/eon', auth, adminOnly, (req, res) => res.json(eonState(req.user.family_id)));
+app.post('/api/eon/sync', auth, adminOnly, eonGuard, async (req, res) => {
+  const result = await runEonSync('manual');
+  res.json({ result, state: eonState(req.user.family_id) });
+});
+app.post('/api/eon/mfa', auth, adminOnly, eonGuard, async (req, res) => {
+  const code = String(req.body?.code || '').replace(/\s+/g, '');
+  if (!/^\d{4,8}$/.test(code)) return res.status(400).json({ error: 'Enter the code E.ON sent you' });
+  const fid = req.user.family_id;
+  const m = parseJson(eonLink(fid).mfa);
+  if (!m) return res.status(400).json({ error: 'E.ON is not waiting for a code — press Sync now' });
+  const r = await eon.completeMfa(m, code);
+  if (!r.session) return res.status(400).json({ error: r.error });
+  db.prepare('UPDATE eon_links SET session = ?, mfa = NULL, last_error = NULL WHERE family_id = ?').run(JSON.stringify(r.session), fid);
+  const result = await runEonSync('manual');
+  res.json({ result, state: eonState(fid) });
+});
+
 // ---------- the weekly two minutes ----------
 // This app has sixteen tabs. This is the one screen that makes the other fifteen optional: what
 // changed since you last looked, what only a person can decide, and whether the money holds.
@@ -4763,6 +4918,8 @@ async function emailReminderTick() {
   try { await runMonthlyReports(); } catch (err) { console.error('monthly report:', err.message); }
   // belt and braces: if the hourly /api/cron/watch was never wired up, at least check once a day
   try { await runWatchers('daily'); } catch (err) { console.error('page watch:', err.message); }
+  // unpaid E.ON invoices straight from Myline, when the server has an account configured
+  if (EON_AUTO) { try { await runEonSync('timer'); } catch (err) { console.error('eon sync:', err.message); } }
   // before the orphan sweep, so the PDFs it frees are collected in the same pass
   try { sweepMailDrafts(); } catch (err) { console.error('draft sweep:', err.message); }
   try { sweepOrphanUploads(); } catch (err) { console.error('orphan sweep:', err.message); }

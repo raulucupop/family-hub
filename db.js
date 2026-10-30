@@ -628,6 +628,18 @@ CREATE TABLE IF NOT EXISTS alert_snoozes (
   until TEXT NOT NULL,
   PRIMARY KEY (user_id, item_key)
 );
+-- The E.ON Myline link: one row per family that the server's EON_EMAIL account syncs into. Holds
+-- the session E.ON handed out (so a restart does not ask for a second-factor code again) and what
+-- the last sync did. The password itself never lands here — it stays in the environment.
+CREATE TABLE IF NOT EXISTS eon_links (
+  family_id INTEGER PRIMARY KEY REFERENCES families(id) ON DELETE CASCADE,
+  session TEXT,         -- JSON: flow, access/refresh token, expiry
+  mfa TEXT,             -- JSON: the pending second-factor request, while E.ON waits for a code
+  last_sync_at TEXT,
+  last_ok_at TEXT,
+  last_error TEXT,
+  last_count INTEGER
+);
 `);
 
 // ---- lightweight migrations for databases created before these columns existed ----
@@ -650,6 +662,10 @@ if (!billCols.includes('expense_category')) db.exec('ALTER TABLE bills ADD COLUM
 // a bill paid by hand that the family wants a phone buzz for: alert this many days before it is due
 // (and on the day, and if it slips). NULL = the bill stays in the ribbon and never notifies.
 if (!billCols.includes('remind_days')) db.exec('ALTER TABLE bills ADD COLUMN remind_days INTEGER');
+// where a bill came from when a person did not type it in: 'eon:<invoice number>' for one synced
+// from E.ON Myline. The sync finds its own bills by it, and only ever touches those.
+if (!billCols.includes('ext_ref')) db.exec('ALTER TABLE bills ADD COLUMN ext_ref TEXT');
+db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_bills_ext_ref ON bills(family_id, ext_ref) WHERE ext_ref IS NOT NULL');
 
 const vehCols = db.prepare('PRAGMA table_info(vehicles)').all().map((c) => c.name);
 if (!vehCols.includes('owner_id')) db.exec('ALTER TABLE vehicles ADD COLUMN owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL');
