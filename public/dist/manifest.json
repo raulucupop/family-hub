@@ -1,6 +1,6 @@
 {
-  "source": "ac128d093cbd25fe8c8426de3f23425d7b939a52ed08a5b6ff418e3932e6dc9d",
-  "core": "core.09804057c7.js",
+  "source": "743ae5101ecffe98aa45ad22700eb1324befb6a734ab86e619ae81df454d110f",
+  "core": "core.c6b887c1f7.js",
   "chunks": {
     "shared": "shared.dc3d3f27d2.js",
     "alerts": "alerts.6bec245819.js",
@@ -18,7 +18,8 @@
     "import": "import.442bb3bd60.js",
     "search": "search.3f750ef820.js",
     "family": "family.8173272025.js",
-    "settings": "settings.6a33705045.js"
+    "settings": "settings.6a33705045.js",
+    "home": "home.f900bee056.js"
   },
   "pages": {
     "review": [
@@ -77,6 +78,9 @@
     "settings": [
       "shared",
       "settings"
+    ],
+    "home": [
+      "home"
     ]
   }
 }

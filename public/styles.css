@@ -1703,3 +1703,28 @@ b, strong, th, optgroup, h1, h2, h3, h4, h5, h6 { font-weight: 600; }
   .game-road__band i, .game-badge.is-new .game-badge__mark { animation: none; }
   .game-chip { transition: none; }
 }
+
+/* ---------- house controls ---------- */
+.homearea { margin: 20px 0 8px; font-family: var(--display); }
+.homegrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+.hometile { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.hometile.is-on { border-color: var(--accent); background: var(--accent-soft); }
+.hometile.is-off { opacity: .55; }
+.hometile.is-busy { border-style: dashed; }
+.hometop { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.hometop b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.homestate { font-size: 13px; color: var(--ink-soft); white-space: nowrap; }
+.homeextra { font-size: 13px; }
+.homectl { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.homectl input[type="range"] { flex: 1 1 100%; accent-color: var(--accent); }
+.homesetp { display: inline-flex; align-items: center; gap: 6px; }
+.homedot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--red); margin-right: 6px; vertical-align: middle; }
+.homedot.ok { background: var(--ok); }
+.homesteps { padding-left: 20px; margin: 0 0 12px; }
+.homesteps li { margin-bottom: 10px; }
+.homeyaml { background: var(--paper); border: 1px solid var(--line); border-radius: 8px; padding: 10px; overflow-x: auto; font-family: var(--mono); font-size: 12px; margin: 8px 0; white-space: pre; }
+.hometabs { display: flex; gap: 6px; overflow-x: auto; margin: 4px 0 8px; padding-bottom: 4px; scrollbar-width: thin; }
+.hometabs button { flex: 0 0 auto; padding: 6px 14px; border-radius: 999px; border: 1px solid var(--line); background: var(--card); color: var(--ink-soft); font-weight: 600; }
+.hometabs button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.homegap { height: 12px; }
+.hometile.is-ro { gap: 4px; }

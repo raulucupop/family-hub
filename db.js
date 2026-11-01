@@ -800,6 +800,39 @@ if (!famCols.includes('cal_token')) db.exec('ALTER TABLE families ADD COLUMN cal
 // does not disturb the other
 if (!famCols.includes('ha_token')) db.exec('ALTER TABLE families ADD COLUMN ha_token TEXT');
 // the address invoices are forwarded to writes in by this token; see mail_drafts
+// Remote control of the house goes the same way as the feed: Home Assistant comes to us, by token,
+// and asks what to do. Nothing here can reach into the house, so no key to it is ever stored. The
+// row holds the token, the last list of controls the house chose to show, and two clocks: when the
+// house last asked (is it online?) and when somebody last looked at the page (does it want fresh
+// states?). See docs/home-assistant-control.md.
+db.exec(`CREATE TABLE IF NOT EXISTS home_link (
+  family_id INTEGER PRIMARY KEY REFERENCES families(id) ON DELETE CASCADE,
+  token TEXT NOT NULL UNIQUE,
+  snapshot_json TEXT,
+  snapshot_at INTEGER,
+  seen_at INTEGER,
+  view_at INTEGER,
+  req INTEGER NOT NULL DEFAULT 0,
+  req_at INTEGER
+)`);
+// added after the first version: the tabs and sections the house sends with its states (a copy of
+// a Home Assistant dashboard's structure), and the address of the full dashboard for the button
+const homeCols = db.prepare('PRAGMA table_info(home_link)').all().map((c) => c.name);
+if (!homeCols.includes('layout_json')) db.exec('ALTER TABLE home_link ADD COLUMN layout_json TEXT');
+if (!homeCols.includes('dash_url')) db.exec('ALTER TABLE home_link ADD COLUMN dash_url TEXT');
+// a button pressed on the site, waiting for the house to pick it up. Only an action name from a
+// fixed list and one number travel — never a Home Assistant service name — and the house checks
+// both again against its own list before doing anything.
+db.exec(`CREATE TABLE IF NOT EXISTS home_commands (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  family_id INTEGER NOT NULL REFERENCES families(id) ON DELETE CASCADE,
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  entity_id TEXT NOT NULL,
+  action TEXT NOT NULL,
+  value REAL,
+  created_at INTEGER NOT NULL,
+  sent_at INTEGER
+)`);
 if (!famCols.includes('mail_token')) db.exec('ALTER TABLE families ADD COLUMN mail_token TEXT');
 // pages the family does not use, left out of the menu for everybody (comma-separated page keys)
 if (!famCols.includes('nav_hidden')) db.exec("ALTER TABLE families ADD COLUMN nav_hidden TEXT NOT NULL DEFAULT ''");

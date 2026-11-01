@@ -3629,6 +3629,215 @@ app.get('/ha/:token.json', (req, res) => {
   res.json(haSummary(fam));
 });
 
+// ---------- remote control of the house (Home Assistant comes to us) ----------
+// The feed above is how the house reads the app. This is how the family presses a button in the
+// house from the app, without the app ever holding a key to the house:
+//   - Home Assistant polls GET /home/<token>/commands every few seconds and runs what it finds;
+//   - it posts the state of the controls it chose to show to POST /home/<token>/states;
+//   - the site only ever queues an action name from HOME_ACTIONS plus one number.
+// Which controls exist is decided in Home Assistant (a label), and the house checks every command
+// against that list again before running it. A leaked token can therefore press the buttons the
+// family put on the page, and nothing else — not read a sensor it was not given, not call a service.
+const HOME_ACTIONS = {
+  light: { turn_on: null, turn_off: null, brightness: [1, 100] },
+  switch: { turn_on: null, turn_off: null },
+  input_boolean: { turn_on: null, turn_off: null },
+  fan: { turn_on: null, turn_off: null },
+  humidifier: { turn_on: null, turn_off: null },
+  cover: { open: null, close: null, stop: null, position: [0, 100] },
+  climate: { turn_on: null, turn_off: null, temperature: [5, 35] },
+  lock: { lock: null, unlock: null },
+  vacuum: { start: null, dock: null },
+  script: { run: null },
+  scene: { run: null },
+  button: { press: null },
+};
+const HOME_ENTITY_RE = /^([a-z_]+)\.[a-z0-9_]{1,80}$/;
+const HOME_MAX_ENTITIES = 400;
+const HOME_COMMAND_TTL = 30 * 1000;   // a press the house has not picked up in 30s is dropped, not run late
+const HOME_ONLINE = 30 * 1000;        // the house polls every few seconds; quiet this long = offline
+const HOME_VIEW_FRESH = 60 * 1000;    // somebody looked at the page this recently: keep states fresh
+const HOME_REQ_VIEWING = 5 * 1000;    // ...asking for them at most this often
+const HOME_REQ_IDLE = 5 * 60 * 1000;  // nobody looking: once every five minutes is plenty
+const homeLink = (fid) => db.prepare('SELECT * FROM home_link WHERE family_id = ?').get(fid);
+const homeLinkByToken = (token) => (/^[0-9a-f]{40}$/.test(String(token)) ? db.prepare('SELECT * FROM home_link WHERE token = ?').get(token) : null);
+const clip = (v, n) => (v === undefined || v === null ? null : String(v).slice(0, n));
+const finiteOrNull = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : (typeof v === 'string' && v.trim() !== '' && Number.isFinite(Number(v)) ? Number(v) : null));
+// what the house sends, cut down to the fields the page draws — anything else is dropped. Any
+// domain can be shown; only `ctl` ones (the house's "Family Hub" label) can be pressed, and only
+// with the actions HOME_ACTIONS lists for their domain.
+function cleanHomeEntity(e) {
+  if (!e || typeof e !== 'object') return null;
+  const id = String(e.id || '');
+  const m = id.match(HOME_ENTITY_RE);
+  if (!m) return null;
+  return {
+    id,
+    domain: m[1],
+    name: clip(e.name, 60) || id,
+    state: clip(e.state, 60) ?? 'unknown',
+    area: clip(e.area, 40) || '',
+    unit: clip(e.unit, 12),
+    dc: clip(e.dc, 30),
+    title: clip(e.title, 80),
+    brightness: finiteOrNull(e.brightness),
+    temp: finiteOrNull(e.temp),
+    target: finiteOrNull(e.target),
+    position: finiteOrNull(e.position),
+    ctl: e.ctl === true && Object.keys(HOME_ACTIONS[m[1]] || {}).length > 0,
+    confirm: e.confirm === true,
+  };
+}
+// the dashboard's structure: tabs → sections (a heading) → entity ids, with an optional name
+function cleanHomeLayout(layout) {
+  if (!Array.isArray(layout)) return null;
+  const views = [];
+  for (const v of layout.slice(0, 20)) {
+    if (!v || typeof v !== 'object' || !Array.isArray(v.s)) continue;
+    const sections = [];
+    for (const sec of v.s.slice(0, 40)) {
+      if (!sec || !Array.isArray(sec.items)) continue;
+      const items = [];
+      for (const it of sec.items.slice(0, 80)) {
+        const e = String(it?.e || '');
+        if (HOME_ENTITY_RE.test(e)) items.push({ e, n: clip(it.n, 60) });
+      }
+      if (items.length) sections.push({ h: clip(sec.h, 80) || '', items });
+    }
+    if (sections.length) views.push({ t: clip(v.t, 40) || '—', s: sections });
+  }
+  return views.length ? views : null;
+}
+function homeSnapshot(link) {
+  try { return JSON.parse(link?.snapshot_json || '[]'); } catch { return []; }
+}
+
+// the house asks: anything to do? Each command is handed out once.
+app.get('/home/:token/commands', (req, res) => {
+  const link = homeLinkByToken(req.params.token);
+  if (!link) return res.status(404).json({ error: 'Not found' });
+  const now = Date.now();
+  db.prepare('DELETE FROM home_commands WHERE family_id = ? AND created_at < ?').run(link.family_id, now - 24 * 3600 * 1000);
+  const fresh = db.prepare('SELECT id, entity_id, action, value FROM home_commands WHERE family_id = ? AND sent_at IS NULL AND created_at >= ? ORDER BY id')
+    .all(link.family_id, now - HOME_COMMAND_TTL);
+  if (fresh.length) db.prepare(`UPDATE home_commands SET sent_at = ? WHERE id IN (${fresh.map(() => '?').join(',')})`).run(now, ...fresh.map((c) => c.id));
+  // `req` changes whenever the site wants the house to send its states again; the house reacts to
+  // the change, so a page left open gets live states and a closed one costs nothing
+  const age = link.snapshot_at ? now - link.snapshot_at : Infinity;
+  const since = link.req_at ? now - link.req_at : Infinity;
+  const viewing = link.view_at && now - link.view_at < HOME_VIEW_FRESH;
+  let reqNo = link.req;
+  if ((viewing && age > HOME_REQ_VIEWING && since > HOME_REQ_VIEWING) || (age > HOME_REQ_IDLE && since > HOME_REQ_IDLE)) {
+    reqNo += 1;
+    db.prepare('UPDATE home_link SET req = ?, req_at = ? WHERE family_id = ?').run(reqNo, now, link.family_id);
+  }
+  db.prepare('UPDATE home_link SET seen_at = ? WHERE family_id = ?').run(now, link.family_id);
+  const seq = db.prepare('SELECT COALESCE(MAX(id), 0) n FROM home_commands WHERE family_id = ?').get(link.family_id).n;
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ seq, req: reqNo, commands: fresh.map((c) => ({ id: c.id, entity_id: c.entity_id, action: c.action, value: c.value })) });
+});
+// the house tells us what its controls look like now
+app.post('/home/:token/states', (req, res) => {
+  const link = homeLinkByToken(req.params.token);
+  if (!link) return res.status(404).json({ error: 'Not found' });
+  const list = Array.isArray(req.body?.entities) ? req.body.entities : null;
+  if (!list) return res.status(400).json({ error: 'entities must be a list' });
+  const seen = new Set();
+  const clean = [];
+  for (const e of list.slice(0, HOME_MAX_ENTITIES)) {
+    const c = cleanHomeEntity(e);
+    if (c && !seen.has(c.id)) { seen.add(c.id); clean.push(c); }
+  }
+  const layout = cleanHomeLayout(req.body?.layout);
+  db.prepare('UPDATE home_link SET snapshot_json = ?, layout_json = ?, snapshot_at = ?, seen_at = ? WHERE family_id = ?')
+    .run(JSON.stringify(clean), layout ? JSON.stringify(layout) : null, Date.now(), Date.now(), link.family_id);
+  res.json({ ok: true, entities: clean.length });
+});
+
+// the page: what the house last said, and whether it is listening
+app.get('/api/home', auth, (req, res) => {
+  const link = homeLink(req.user.family_id);
+  if (!link) return res.json({ configured: false, entities: [] });
+  const now = Date.now();
+  db.prepare('UPDATE home_link SET view_at = ? WHERE family_id = ?').run(now, link.family_id);
+  const pending = db.prepare('SELECT entity_id FROM home_commands WHERE family_id = ? AND created_at >= ? AND (sent_at IS NULL OR sent_at >= ?)')
+    .all(link.family_id, now - HOME_COMMAND_TTL, link.snapshot_at || 0).map((r) => r.entity_id);
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({
+    configured: true,
+    online: !!link.seen_at && now - link.seen_at < HOME_ONLINE,
+    seen_at: link.seen_at ? new Date(link.seen_at).toISOString() : null,
+    updated_at: link.snapshot_at ? new Date(link.snapshot_at).toISOString() : null,
+    entities: homeSnapshot(link),
+    layout: link.layout_json ? JSON.parse(link.layout_json) : null,
+    dash_url: link.dash_url || null,
+    pending: [...new Set(pending)],
+  });
+});
+// a family member presses a button
+app.post('/api/home/command', auth, canWrite, (req, res) => {
+  const link = homeLink(req.user.family_id);
+  if (!link) return res.status(404).json({ error: 'Home control is not set up' });
+  const entityId = String(req.body?.entity_id || '');
+  const action = String(req.body?.action || '');
+  // only what the house itself put on the page can be pressed
+  const ent = homeSnapshot(link).find((e) => e.id === entityId);
+  if (!ent || !ent.ctl) return res.status(400).json({ error: 'Unknown control' });
+  const allowed = HOME_ACTIONS[ent.domain] || {};
+  if (!Object.prototype.hasOwnProperty.call(allowed, action)) return res.status(400).json({ error: 'That action is not allowed here' });
+  let value = null;
+  if (allowed[action]) {
+    const [lo, hi] = allowed[action];
+    value = Number(req.body?.value);
+    if (!Number.isFinite(value) || value < lo || value > hi) return res.status(400).json({ error: `Value must be between ${lo} and ${hi}` });
+    value = Math.round(value * 2) / 2;
+  }
+  const now = Date.now();
+  const recent = db.prepare('SELECT COUNT(*) n FROM home_commands WHERE family_id = ? AND created_at >= ?').get(link.family_id, now - 60000).n;
+  if (recent >= 60) return res.status(429).json({ error: 'Too many presses, wait a moment' });
+  // a newer press on the same control replaces one the house has not picked up yet
+  db.prepare('DELETE FROM home_commands WHERE family_id = ? AND entity_id = ? AND sent_at IS NULL').run(link.family_id, entityId);
+  const info = db.prepare('INSERT INTO home_commands (family_id, user_id, entity_id, action, value, created_at) VALUES (?,?,?,?,?,?)')
+    .run(link.family_id, req.user.id, entityId, action, value, now);
+  res.json({ id: Number(info.lastInsertRowid), online: !!link.seen_at && now - link.seen_at < HOME_ONLINE });
+});
+// setting it up: the address and the block to paste into Home Assistant. Admin only — it is the
+// one secret that lets someone press the house's buttons.
+function homeUrls(req, token) {
+  const base = `${req.protocol}://${req.get('host')}/home/${token}`;
+  return { commands_url: `${base}/commands`, states_url: `${base}/states` };
+}
+app.get('/api/home/setup', auth, adminOnly, (req, res) => {
+  const link = homeLink(req.user.family_id);
+  res.json(link ? { configured: true, ...homeUrls(req, link.token) } : { configured: false });
+});
+app.post('/api/home/token', auth, adminOnly, (req, res) => {
+  const token = crypto.randomBytes(20).toString('hex');
+  db.prepare(`INSERT INTO home_link (family_id, token) VALUES (?, ?)
+    ON CONFLICT(family_id) DO UPDATE SET token = excluded.token`).run(req.user.family_id, token);
+  // presses queued for the old address must not leak out through the new one
+  db.prepare('DELETE FROM home_commands WHERE family_id = ? AND sent_at IS NULL').run(req.user.family_id);
+  res.json({ configured: true, ...homeUrls(req, token) });
+});
+// the button to the full Home Assistant dashboard: just a link, opened in the house's own login
+app.put('/api/home/dashboard-url', auth, adminOnly, (req, res) => {
+  const link = homeLink(req.user.family_id);
+  if (!link) return res.status(404).json({ error: 'Home control is not set up' });
+  const raw = str(req.body?.url);
+  let url = null;
+  if (raw) {
+    try { const u = new URL(raw); if (u.protocol !== 'https:') throw new Error(); url = u.toString().slice(0, 300); }
+    catch { return res.status(400).json({ error: 'Use an https:// address' }); }
+  }
+  db.prepare('UPDATE home_link SET dash_url = ? WHERE family_id = ?').run(url, req.user.family_id);
+  res.json({ dash_url: url });
+});
+app.delete('/api/home', auth, adminOnly, (req, res) => {
+  db.prepare('DELETE FROM home_commands WHERE family_id = ?').run(req.user.family_id);
+  db.prepare('DELETE FROM home_link WHERE family_id = ?').run(req.user.family_id);
+  res.json({ ok: true });
+});
+
 // ---------- calendar (iCal feed + subscribe link) ----------
 app.get('/api/calendar/info', auth, (req, res) => {
   const fam = db.prepare('SELECT cal_token FROM families WHERE id = ?').get(req.user.family_id);
