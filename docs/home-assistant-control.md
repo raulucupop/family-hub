@@ -146,10 +146,7 @@ max: 10
 triggers:
   - trigger: state
     entity_id: sensor.family_hub_comenzi
-    to: ~
-conditions:
-  - condition: template
-    value_template: "{{ trigger.to_state.state not in ['unknown', 'unavailable'] }}"
+    not_to: [unknown, unavailable]
 actions:
   - variables:
       allowed: "{{ label_entities('family_hub') }}"
