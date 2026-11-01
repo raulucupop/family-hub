@@ -42,7 +42,7 @@ rest_command:
     url: "https://lafamiliapop.ro/home/<token>/states"
     method: post
     content_type: "application/json"
-    payload: "{{ payload }}"
+    payload: "{{ payload if payload is string else payload | to_json }}"
     timeout: 15
 ```
 

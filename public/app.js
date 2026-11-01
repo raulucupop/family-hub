@@ -6400,7 +6400,7 @@ rest_command:
     url: "${s.states_url}"
     method: post
     content_type: "application/json"
-    payload: "{{ payload }}"
+    payload: "{{ payload if payload is string else payload | to_json }}"
     timeout: 15
 `;
 }
