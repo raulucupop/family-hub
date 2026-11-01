@@ -4,6 +4,7 @@
    the same tabs, the same headings and the same entities in the same order.
 
      node scripts/ha-dashboard-layout.js dashboard.json > family-hub-script.yaml
+     node scripts/ha-dashboard-layout.js dashboard.json --skip Familie --skip Sistem > …   # leave tabs out
 
    dashboard.json is the dashboard's config: either the file Home Assistant keeps in
    config/.storage/lovelace.<dashboard_id>, or just its { "views": [...] }. Paste the output in
@@ -29,9 +30,11 @@ function entitiesOf(card, out) {
   if (card.card) entitiesOf(card.card, out);
 }
 
-function layoutOf(config) {
+function layoutOf(config, skip = []) {
   const views = [];
+  const skipped = new Set(skip.map((t) => t.toLowerCase()));
   for (const v of config.views || []) {
+    if (skipped.has(String(v.title || '').toLowerCase()) || skipped.has(String(v.path || '').toLowerCase())) continue;
     const sections = [];
     // a sections view: each section is a grid of cards, and a heading card starts a new group.
     // A classic view (cards, no sections) is read as one section.
@@ -100,11 +103,14 @@ ${indent(PAYLOAD, 8)}
 module.exports = { layoutOf, scriptYaml, PAYLOAD };
 
 if (require.main === module) {
-  const file = process.argv[2];
-  if (!file) { console.error('usage: node scripts/ha-dashboard-layout.js dashboard.json'); process.exit(1); }
+  const args = process.argv.slice(2);
+  const skip = [];
+  for (let i = args.indexOf('--skip'); i !== -1; i = args.indexOf('--skip')) skip.push(...args.splice(i, 2).slice(1));
+  const file = args[0];
+  if (!file) { console.error('usage: node scripts/ha-dashboard-layout.js dashboard.json [--skip <tab title or path>]…'); process.exit(1); }
   const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
   const config = raw.data?.config || raw.config || raw;
-  const layout = layoutOf(config);
+  const layout = layoutOf(config, skip);
   const n = new Set(layout.flatMap((v) => v.s.flatMap((s) => s.items.map((i) => i.e)))).size;
   console.error(`${layout.length} tabs, ${n} entities`);
   process.stdout.write(scriptYaml(layout));

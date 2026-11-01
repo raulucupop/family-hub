@@ -191,6 +191,8 @@ test('a dashboard becomes tabs, headed sections and entities, without the pictur
     { t: 'Acasă', s: [{ h: 'Lumini', items: [{ e: 'light.living', n: 'Lustră' }, { e: 'light.pod', n: null }] }] },
     { t: 'Clasic', s: [{ h: 'Stivă', items: [{ e: 'cover.jaluzea', n: null }] }] },
   ]);
+  assert.deepEqual(layoutOf({ views: [{ title: 'Familie', cards: [{ type: 'tile', entity: 'device_tracker.x' }] }, { title: 'Clasic', cards: [{ type: 'tile', entity: 'light.a' }] }] }, ['familie']).map((v) => v.t), ['Clasic'],
+    'a tab can be left out, so what it shows never leaves the house');
   const yaml = scriptYaml(layout);
   assert.match(yaml, /^alias: Family Hub - trimite stările/);
   assert.ok(yaml.includes('"light.pod"'), 'the layout is carried inside the script');
