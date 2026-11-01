@@ -1,6 +1,6 @@
 {
-  "source": "8eb7274093ab39d163a13a81276167eecf97cffb989916b56816d6c87866f555",
-  "core": "core.c5c5f64ffe.js",
+  "source": "404b9aa27ec2e37ab72c4e83417e9993e11e33bd517f00b0d4b5403a7a939cb7",
+  "core": "core.cc2f8000ae.js",
   "chunks": {
     "shared": "shared.dc3d3f27d2.js",
     "alerts": "alerts.6bec245819.js",
@@ -19,7 +19,7 @@
     "search": "search.3f750ef820.js",
     "family": "family.8173272025.js",
     "settings": "settings.6a33705045.js",
-    "home": "home.5033bb7b43.js"
+    "home": "home.d3baee3093.js"
   },
   "pages": {
     "review": [

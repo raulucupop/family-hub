@@ -3651,11 +3651,9 @@ const HOME_ACTIONS = {
   script: { run: null },
   scene: { run: null },
   button: { press: null },
-  sensor: {},
-  binary_sensor: {},
 };
 const HOME_ENTITY_RE = /^([a-z_]+)\.[a-z0-9_]{1,80}$/;
-const HOME_MAX_ENTITIES = 150;
+const HOME_MAX_ENTITIES = 400;
 const HOME_COMMAND_TTL = 30 * 1000;   // a press the house has not picked up in 30s is dropped, not run late
 const HOME_ONLINE = 30 * 1000;        // the house polls every few seconds; quiet this long = offline
 const HOME_VIEW_FRESH = 60 * 1000;    // somebody looked at the page this recently: keep states fresh
@@ -3665,25 +3663,50 @@ const homeLink = (fid) => db.prepare('SELECT * FROM home_link WHERE family_id = 
 const homeLinkByToken = (token) => (/^[0-9a-f]{40}$/.test(String(token)) ? db.prepare('SELECT * FROM home_link WHERE token = ?').get(token) : null);
 const clip = (v, n) => (v === undefined || v === null ? null : String(v).slice(0, n));
 const finiteOrNull = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : (typeof v === 'string' && v.trim() !== '' && Number.isFinite(Number(v)) ? Number(v) : null));
-// what the house sends, cut down to the fields the page draws — anything else is dropped
+// what the house sends, cut down to the fields the page draws — anything else is dropped. Any
+// domain can be shown; only `ctl` ones (the house's "Family Hub" label) can be pressed, and only
+// with the actions HOME_ACTIONS lists for their domain.
 function cleanHomeEntity(e) {
   if (!e || typeof e !== 'object') return null;
   const id = String(e.id || '');
   const m = id.match(HOME_ENTITY_RE);
-  if (!m || !HOME_ACTIONS[m[1]]) return null;
+  if (!m) return null;
   return {
     id,
     domain: m[1],
     name: clip(e.name, 60) || id,
-    state: clip(e.state, 40) ?? 'unknown',
+    state: clip(e.state, 60) ?? 'unknown',
     area: clip(e.area, 40) || '',
     unit: clip(e.unit, 12),
+    dc: clip(e.dc, 30),
+    title: clip(e.title, 80),
     brightness: finiteOrNull(e.brightness),
     temp: finiteOrNull(e.temp),
     target: finiteOrNull(e.target),
     position: finiteOrNull(e.position),
+    ctl: e.ctl === true && Object.keys(HOME_ACTIONS[m[1]] || {}).length > 0,
     confirm: e.confirm === true,
   };
+}
+// the dashboard's structure: tabs → sections (a heading) → entity ids, with an optional name
+function cleanHomeLayout(layout) {
+  if (!Array.isArray(layout)) return null;
+  const views = [];
+  for (const v of layout.slice(0, 20)) {
+    if (!v || typeof v !== 'object' || !Array.isArray(v.s)) continue;
+    const sections = [];
+    for (const sec of v.s.slice(0, 40)) {
+      if (!sec || !Array.isArray(sec.items)) continue;
+      const items = [];
+      for (const it of sec.items.slice(0, 80)) {
+        const e = String(it?.e || '');
+        if (HOME_ENTITY_RE.test(e)) items.push({ e, n: clip(it.n, 60) });
+      }
+      if (items.length) sections.push({ h: clip(sec.h, 80) || '', items });
+    }
+    if (sections.length) views.push({ t: clip(v.t, 40) || '—', s: sections });
+  }
+  return views.length ? views : null;
 }
 function homeSnapshot(link) {
   try { return JSON.parse(link?.snapshot_json || '[]'); } catch { return []; }
@@ -3725,8 +3748,9 @@ app.post('/home/:token/states', (req, res) => {
     const c = cleanHomeEntity(e);
     if (c && !seen.has(c.id)) { seen.add(c.id); clean.push(c); }
   }
-  db.prepare('UPDATE home_link SET snapshot_json = ?, snapshot_at = ?, seen_at = ? WHERE family_id = ?')
-    .run(JSON.stringify(clean), Date.now(), Date.now(), link.family_id);
+  const layout = cleanHomeLayout(req.body?.layout);
+  db.prepare('UPDATE home_link SET snapshot_json = ?, layout_json = ?, snapshot_at = ?, seen_at = ? WHERE family_id = ?')
+    .run(JSON.stringify(clean), layout ? JSON.stringify(layout) : null, Date.now(), Date.now(), link.family_id);
   res.json({ ok: true, entities: clean.length });
 });
 
@@ -3745,6 +3769,8 @@ app.get('/api/home', auth, (req, res) => {
     seen_at: link.seen_at ? new Date(link.seen_at).toISOString() : null,
     updated_at: link.snapshot_at ? new Date(link.snapshot_at).toISOString() : null,
     entities: homeSnapshot(link),
+    layout: link.layout_json ? JSON.parse(link.layout_json) : null,
+    dash_url: link.dash_url || null,
     pending: [...new Set(pending)],
   });
 });
@@ -3756,7 +3782,7 @@ app.post('/api/home/command', auth, canWrite, (req, res) => {
   const action = String(req.body?.action || '');
   // only what the house itself put on the page can be pressed
   const ent = homeSnapshot(link).find((e) => e.id === entityId);
-  if (!ent) return res.status(400).json({ error: 'Unknown control' });
+  if (!ent || !ent.ctl) return res.status(400).json({ error: 'Unknown control' });
   const allowed = HOME_ACTIONS[ent.domain] || {};
   if (!Object.prototype.hasOwnProperty.call(allowed, action)) return res.status(400).json({ error: 'That action is not allowed here' });
   let value = null;
@@ -3792,6 +3818,19 @@ app.post('/api/home/token', auth, adminOnly, (req, res) => {
   // presses queued for the old address must not leak out through the new one
   db.prepare('DELETE FROM home_commands WHERE family_id = ? AND sent_at IS NULL').run(req.user.family_id);
   res.json({ configured: true, ...homeUrls(req, token) });
+});
+// the button to the full Home Assistant dashboard: just a link, opened in the house's own login
+app.put('/api/home/dashboard-url', auth, adminOnly, (req, res) => {
+  const link = homeLink(req.user.family_id);
+  if (!link) return res.status(404).json({ error: 'Home control is not set up' });
+  const raw = str(req.body?.url);
+  let url = null;
+  if (raw) {
+    try { const u = new URL(raw); if (u.protocol !== 'https:') throw new Error(); url = u.toString().slice(0, 300); }
+    catch { return res.status(400).json({ error: 'Use an https:// address' }); }
+  }
+  db.prepare('UPDATE home_link SET dash_url = ? WHERE family_id = ?').run(url, req.user.family_id);
+  res.json({ dash_url: url });
 });
 app.delete('/api/home', auth, adminOnly, (req, res) => {
   db.prepare('DELETE FROM home_commands WHERE family_id = ?').run(req.user.family_id);

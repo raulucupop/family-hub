@@ -76,37 +76,63 @@ Ce poate face site-ul cu fiecare tip:
 
 ## 4. Scriptul care trimite stările
 
-Settings → Automations & scenes → Scripts → Add script → ⋮ → Edit in YAML:
+Settings → Automations & scenes → Scripts → Add script → ⋮ → Edit in YAML. Salvează-l cu ID-ul `family_hub_trimite_starile`.
+
+### Cu tab-urile unui dashboard (recomandat)
+
+Pagina poate arăta aceleași tab-uri, titluri de secțiuni și entități, în aceeași ordine, ca un dashboard din Home Assistant. Structura stă în scriptul din casă, deci o generezi din configurația dashboard-ului:
+
+```bash
+# config/.storage/lovelace.<id_dashboard> din Home Assistant (de ex. lovelace.dashboard_test)
+node scripts/ha-dashboard-layout.js lovelace.dashboard_test > script.yaml
+```
+
+Lipește conținutul lui `script.yaml` ca script. Rulează din nou comanda când schimbi dashboard-ul.
+
+Pe site ajung **stările tuturor entităților din dashboard** (doar afișare) plus ale celor cu eticheta `Family Hub`. Doar cele cu eticheta pot fi **comandate**. Cardurile care desenează ceva al lor (planul casei, fluxul de energie, grafice) și camerele nu se copiază: site-ul nu le poate desena, iar imaginile din casă nu trebuie să treacă prin hosting.
+
+### Fără dashboard
+
+Doar entitățile cu eticheta `Family Hub`, grupate pe camere:
 
 ```yaml
 alias: Family Hub - trimite stările
+description: Trimite către Family Hub starea entităților din dashboard și a celor cu eticheta Family Hub.
 mode: queued
 max: 3
+variables:
+  layout: []
 sequence:
   - action: rest_command.family_hub_states
     data:
       payload: >-
+        {% set ctl = label_entities('family_hub') %}
         {% set confirm = label_entities('family_hub_confirmare') %}
-        {% set ns = namespace(items=[]) %}
-        {% for e in label_entities('family_hub') | sort %}
+        {% set ns = namespace(ids=[], items=[]) %}
+        {% for v in layout | default([]) %}{% for sec in v.s %}{% for it in sec['items'] %}{% set ns.ids = ns.ids + [it.e] %}{% endfor %}{% endfor %}{% endfor %}
+        {% for e in (ns.ids + ctl) | unique | sort %}
         {% set s = states[e] %}
         {% if s is not none %}
         {% set a = s.attributes %}
+        {% set d = e.split('.')[0] %}
+        {% if d == 'weather' %}{% set t = a.temperature %}{% else %}{% set t = a.current_temperature %}{% endif %}
+        {% if d == 'climate' %}{% set g = a.temperature %}{% else %}{% set g = none %}{% endif %}
         {% set ns.items = ns.items + [{
           'id': e, 'name': s.name, 'state': s.state,
           'area': area_name(e) or '',
           'unit': a.unit_of_measurement | default(none),
+          'dc': a.device_class | default(none),
+          'title': a.media_title | default(none),
           'brightness': ((a.brightness / 2.55) | round(0)) if a.brightness is number else none,
-          'temp': a.current_temperature | default(none),
-          'target': a.temperature | default(none),
+          'temp': t | default(none),
+          'target': g | default(none),
           'position': a.current_position | default(none),
+          'ctl': e in ctl,
           'confirm': e in confirm }] %}
         {% endif %}
         {% endfor %}
-        {{ {'entities': ns.items} | to_json }}
+        {{ {'layout': layout | default([]), 'entities': ns.items} | to_json }}
 ```
-
-Salvează-l cu ID-ul `family_hub_trimite_starile`.
 
 ## 5. Automatizarea care execută comenzile
 

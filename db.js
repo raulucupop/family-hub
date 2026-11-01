@@ -815,6 +815,11 @@ db.exec(`CREATE TABLE IF NOT EXISTS home_link (
   req INTEGER NOT NULL DEFAULT 0,
   req_at INTEGER
 )`);
+// added after the first version: the tabs and sections the house sends with its states (a copy of
+// a Home Assistant dashboard's structure), and the address of the full dashboard for the button
+const homeCols = db.prepare('PRAGMA table_info(home_link)').all().map((c) => c.name);
+if (!homeCols.includes('layout_json')) db.exec('ALTER TABLE home_link ADD COLUMN layout_json TEXT');
+if (!homeCols.includes('dash_url')) db.exec('ALTER TABLE home_link ADD COLUMN dash_url TEXT');
 // a button pressed on the site, waiting for the house to pick it up. Only an action name from a
 // fixed list and one number travel — never a Home Assistant service name — and the house checks
 // both again against its own list before doing anything.

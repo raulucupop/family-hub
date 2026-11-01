@@ -6227,11 +6227,37 @@ async function viewHome(el) {
       docked: T('Docked', 'La bază'), cleaning: T('Cleaning', 'Curăță'), returning: T('Returning', 'Se întoarce'),
       idle: T('Idle', 'Inactiv'), paused: T('Paused', 'Pauză'), unavailable: T('Unavailable', 'Indisponibil'), unknown: '—',
     };
-    if (e.domain === 'sensor') return `${esc(e.state)}${e.unit ? ' ' + esc(e.unit) : ''}`;
+    if (['unavailable', 'unknown'].includes(e.state)) return esc(map[e.state]);
+    if (e.dc === 'timestamp' || /^\d{4}-\d{2}-\d{2}T/.test(e.state)) {
+      const d = new Date(e.state);
+      if (!isNaN(d)) return esc(d.toLocaleString(ro ? 'ro-RO' : 'en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }));
+    }
+    if (['sensor', 'input_number', 'number', 'counter'].includes(e.domain)) {
+      const n = Number(e.state);
+      const v = e.state !== '' && Number.isFinite(n) ? n.toLocaleString(ro ? 'ro-RO' : 'en-GB', { maximumFractionDigits: Math.abs(n) >= 100 ? 0 : 1 }) : e.state;
+      return `${esc(v)}${e.unit ? ' ' + esc(e.unit) : ''}`;
+    }
+    if (e.domain === 'binary_sensor') {
+      const pairs = { door: [T('Open', 'Deschis'), T('Closed', 'Închis')], window: [T('Open', 'Deschis'), T('Closed', 'Închis')], opening: [T('Open', 'Deschis'), T('Closed', 'Închis')],
+        motion: [T('Motion', 'Mișcare'), T('Clear', 'Liniște')], occupancy: [T('Occupied', 'Ocupat'), T('Clear', 'Liber')], problem: [T('Problem', 'Problemă'), 'OK'],
+        moisture: [T('Wet', 'Ud'), T('Dry', 'Uscat')], light: [T('Light', 'Lumină'), T('Dark', 'Întuneric')] };
+      const pr = pairs[e.dc] || [map.on, map.off];
+      return esc(e.state === 'on' ? pr[0] : pr[1]);
+    }
+    if (e.domain === 'device_tracker' || e.domain === 'person') return esc(e.state === 'home' ? T('Home', 'Acasă') : e.state === 'not_home' ? T('Away', 'Plecat') : e.state);
+    if (e.domain === 'sun') return esc(e.state === 'above_horizon' ? T('Up', 'Răsărit') : T('Down', 'Apus'));
+    if (e.domain === 'weather') {
+      const w = { sunny: T('Sunny', 'Senin'), 'clear-night': T('Clear', 'Senin'), cloudy: T('Cloudy', 'Înnorat'), partlycloudy: T('Partly cloudy', 'Parțial noros'),
+        rainy: T('Rain', 'Ploaie'), pouring: T('Heavy rain', 'Ploaie torențială'), snowy: T('Snow', 'Ninsoare'), fog: T('Fog', 'Ceață'), windy: T('Windy', 'Vânt'), lightning: T('Storm', 'Furtună') };
+      return esc(w[e.state] || e.state);
+    }
+    if (e.domain === 'todo') return esc(T(`${e.state} items`, `${e.state} elemente`));
+    if (e.domain === 'media_player') return esc({ playing: T('Playing', 'Redă'), paused: T('Paused', 'Pauză'), idle: T('Idle', 'Inactiv'), off: T('Off', 'Oprit'), on: T('On', 'Pornit') }[e.state] || e.state);
     return esc(map[e.state] ?? e.state);
   };
   const btn = (e, action, label, extra = '', val = null) => `<button class="btn small ${extra}" data-act="${action}" data-ent="${esc(e.id)}"${val != null ? ` data-val="${val}"` : ''} ${busy.has(e.id) || e.state === 'unavailable' || !canWrite() ? 'disabled' : ''}>${label}</button>`;
   const controls = (e) => {
+    if (!e.ctl) return '';
     const isOn = HOME_ON.has(e.state);
     switch (e.domain) {
       case 'light':
@@ -6263,10 +6289,12 @@ async function viewHome(el) {
     if (e.domain === 'climate' && e.temp != null) bits.push(`${T('now', 'acum')} ${e.temp}°`);
     if (e.domain === 'cover' && e.position != null) bits.push(`${Math.round(e.position)}%`);
     if (e.domain === 'light' && HOME_ON.has(e.state) && e.brightness != null) bits.push(`${Math.round(e.brightness)}%`);
+    if (e.domain === 'weather' && e.temp != null) bits.push(`${e.temp}°`);
+    if (e.domain === 'media_player' && e.title) bits.push(esc(e.title));
     return bits.join(' · ');
   };
-  const tile = (e) => `<div class="hometile${HOME_ON.has(e.state) ? ' is-on' : ''}${e.state === 'unavailable' ? ' is-off' : ''}${busy.has(e.id) ? ' is-busy' : ''}">
-      <div class="hometop"><b>${esc(e.name)}</b><span class="homestate">${busy.has(e.id) ? T('sending…', 'se trimite…') : stateLabel(e)}</span></div>
+  const tile = (e, name) => `<div class="hometile${e.ctl ? '' : ' is-ro'}${e.ctl && HOME_ON.has(e.state) ? ' is-on' : ''}${e.state === 'unavailable' ? ' is-off' : ''}${busy.has(e.id) ? ' is-busy' : ''}">
+      <div class="hometop"><b>${esc(name || e.name)}</b><span class="homestate">${busy.has(e.id) ? T('sending…', 'se trimite…') : stateLabel(e)}</span></div>
       ${extraLine(e) ? `<div class="muted homeextra">${extraLine(e)}</div>` : ''}
       ${controls(e) ? `<div class="homectl">${controls(e)}</div>` : ''}
     </div>`;
@@ -6289,6 +6317,13 @@ async function viewHome(el) {
       if (!areas.has(k)) areas.set(k, []);
       areas.get(k).push(e);
     }
+    const byId = new Map(ents.map((e) => [e.id, e]));
+    const layout = data.layout;
+    let tab = 0;
+    try { tab = Math.min(Number(localStorage.getItem('fh_home_tab') || 0), (layout?.length || 1) - 1); } catch { /* storage off */ }
+    const missing = (id, n) => ({ id, domain: id.split('.')[0], name: n || id, state: 'unknown' });
+    const layoutHtml = layout ? `<div class="hometabs" role="tablist">${layout.map((v, i) => `<button role="tab" aria-selected="${i === tab}" class="${i === tab ? 'active' : ''}" data-hometab="${i}">${esc(v.t)}</button>`).join('')}</div>
+      ${layout[tab].s.map((sec) => `${sec.h ? `<h3 class="homearea">${esc(sec.h)}</h3>` : '<div class="homegap"></div>'}<div class="homegrid">${sec.items.map((it) => tile(byId.get(it.e) || missing(it.e, it.n), it.n)).join('')}</div>`).join('')}` : '';
     const scrollY = window.scrollY;
     const focusSel = document.activeElement?.dataset?.range ? null : document.activeElement?.dataset?.ent;
     el.innerHTML = `<div class="pagehead"><div><h1>${T('Home', 'Casa')}</h1>
@@ -6296,13 +6331,14 @@ async function viewHome(el) {
         ${data.configured ? `<p class="muted" style="font-size:12px;margin-top:4px">
           <span class="homedot ${data.online ? 'ok' : ''}"></span>${data.online ? T('House online', 'Casa e conectată') : T('House offline', 'Casa nu răspunde')}
           · ${T('updated', 'actualizat')} ${ago(data.updated_at)}</p>` : ''}</div>
-        ${ME.role === 'admin' && data.configured ? `<button class="btn ghost small" id="homesetup">${T('Setup', 'Configurare')}</button>` : ''}</div>
+        <div class="row" style="gap:8px">${data.dash_url ? `<a class="btn ghost small" href="${esc(data.dash_url)}" target="_blank" rel="noopener noreferrer">${T('Full dashboard', 'Dashboard complet')}</a>` : ''}
+        ${ME.role === 'admin' && data.configured ? `<button class="btn ghost small" id="homesetup">${T('Setup', 'Configurare')}</button>` : ''}</div></div>
       ${!data.configured ? setupHtml() : ''}
       ${data.configured && !data.online ? `<div class="card warn" style="margin-bottom:16px">${T('Home Assistant has not checked in for a while. Buttons pressed now are dropped after 30 seconds, not run later.', 'Home Assistant nu a mai întrebat de ceva vreme. Ce apeși acum se anulează după 30 de secunde, nu se execută mai târziu.')}</div>` : ''}
       ${data.configured && !ents.length ? `<div class="card"><div class="empty"><b>${T('No controls yet', 'Încă nu sunt controale')}</b>
         ${T('In Home Assistant, put the “Family Hub” label on the devices that should appear here.', 'În Home Assistant, pune eticheta „Family Hub” pe dispozitivele care trebuie să apară aici.')}</div></div>` : ''}
-      ${[...areas].map(([area, list]) => `<h3 class="homearea">${esc(area)}</h3><div class="homegrid">${list.map(tile).join('')}</div>`).join('')}
-      <div id="homesetupbox">${setupOpen ? homeSetupCard(setupOpen, T) : ''}</div>`;
+      ${layout ? layoutHtml : [...areas].map(([area, list]) => `<h3 class="homearea">${esc(area)}</h3><div class="homegrid">${list.map((e) => tile(e)).join('')}</div>`).join('')}
+      <div id="homesetupbox">${setupOpen ? homeSetupCard({ ...setupOpen, dash_url: data.dash_url }, T) : ''}</div>`;
     window.scrollTo(0, scrollY);
     if (focusSel) el.querySelector(`[data-ent="${CSS.escape(focusSel)}"]`)?.focus();
     wire();
@@ -6325,6 +6361,10 @@ async function viewHome(el) {
   };
   const wire = () => {
     el.querySelectorAll('[data-act]').forEach((b) => (b.onclick = () => send(b.dataset.ent, b.dataset.act, b.dataset.val != null ? Number(b.dataset.val) : undefined)));
+    el.querySelectorAll('[data-hometab]').forEach((b) => (b.onclick = () => {
+      try { localStorage.setItem('fh_home_tab', b.dataset.hometab); } catch { /* storage off */ }
+      paint(); window.scrollTo(0, 0);
+    }));
     el.querySelectorAll('[data-range]').forEach((r) => (r.onchange = () => send(r.dataset.ent, r.dataset.range, Number(r.value))));
     $('#homegen')?.addEventListener('click', async () => {
       try { await api('/home/token', { method: 'POST' }); viewHome(el); } catch (err) { toast(err.message, 'error'); }
@@ -6374,12 +6414,21 @@ function homeSetupCard(s, T) {
       <li>${T('Add the script and the automation from the guide (docs/home-assistant-control.md), then restart Home Assistant.', 'Adaugă scriptul și automatizarea din ghid (docs/home-assistant-control.md), apoi repornește Home Assistant.')}</li>
       <li>${T('Put the “Family Hub” label on every entity (not the device) that should appear here. Add “Family Hub confirmare” to the ones that should ask first, like the gate.', 'Pune eticheta „Family Hub” pe fiecare entitate (nu pe dispozitiv) care trebuie să apară aici. Adaugă și „Family Hub confirmare” celor care trebuie să ceară confirmare, cum e poarta.')}</li>
     </ol>
+    <form id="homedashform" class="row" style="gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:12px">
+      <div style="flex:1 1 260px"><label for="homedash">${T('Full dashboard address (optional)', 'Adresa dashboard-ului complet (opțional)')}</label>
+        <input id="homedash" name="url" type="url" placeholder="https://….ui.nabu.casa/dashboard-test" value="${esc(s.dash_url || '')}"></div>
+      <button class="btn ghost small">${T('Save', 'Salvează')}</button></form>
     <div class="row" style="gap:8px;flex-wrap:wrap">
       <button class="btn ghost small" id="homerotate">${T('New address', 'Adresă nouă')}</button>
       <button class="btn ghost small danger" id="homeoff">${T('Disconnect', 'Deconectează')}</button></div></div>`;
 }
 function wireHomeSetup(box, el, T) {
   box.querySelector('[data-copy-yaml]')?.addEventListener('click', () => copyText(box.querySelector('.homeyaml').textContent));
+  box.querySelector('#homedashform')?.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    try { await api('/home/dashboard-url', { method: 'PUT', body: { url: ev.target.url.value } }); toast(T('Saved', 'Salvat'), 'success'); viewHome(el); }
+    catch (err) { toast(err.message, 'error'); }
+  });
   box.querySelector('#homerotate')?.addEventListener('click', async () => {
     if (!(await confirmDestroy({ question: T('Generate a new address?', 'Generezi o adresă nouă?'), detail: T('The current one stops working at once; Home Assistant needs the new block.', 'Cea actuală nu mai merge imediat; Home Assistant are nevoie de blocul nou.'), verb: T('New address', 'Adresă nouă') }))) return;
     try { await api('/home/token', { method: 'POST' }); toast(T('Address ready', 'Adresa e gata'), 'success'); viewHome(el); } catch (err) { toast(err.message, 'error'); }

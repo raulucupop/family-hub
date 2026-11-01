@@ -8,10 +8,11 @@ const { startServer } = require('./helpers');
 
 const path = (url) => new URL(url).pathname;
 const HOUSE = [
-  { id: 'light.living', name: 'Living', state: 'on', area: 'Living', brightness: 60 },
-  { id: 'cover.jaluzea_camera_1', name: 'Jaluzea Camera 1', state: 'closed', position: 0 },
-  { id: 'climate.ac_living', name: 'AC Living', state: 'off', temp: 21.5, target: 22 },
-  { id: 'switch.poarta', name: 'Poartă', state: 'off', confirm: true },
+  { id: 'light.living', name: 'Living', state: 'on', area: 'Living', brightness: 60, ctl: true },
+  { id: 'cover.jaluzea_camera_1', name: 'Jaluzea Camera 1', state: 'closed', position: 0, ctl: true },
+  { id: 'climate.ac_living', name: 'AC Living', state: 'off', temp: 21.5, target: 22, ctl: true },
+  { id: 'switch.poarta', name: 'Poartă', state: 'off', confirm: true, ctl: true },
+  { id: 'light.pod', name: 'Pod', state: 'off' }, // shown, but not labelled for control in the house
   { id: 'sensor.temperatura_afara', name: 'Afară', state: '7.4', unit: '°C' },
 ];
 
@@ -42,7 +43,7 @@ test('the page shows what the house sent, and nothing it did not', async (t) => 
     entities: [
       ...HOUSE,
       { id: 'light.living', name: 'duplicate', state: 'off' },
-      { id: 'shell_command.wipe', name: 'not a control', state: 'idle' },
+      { id: 'shell_command.wipe', name: 'not a control', state: 'idle', ctl: true },
       { id: 'light.x; drop', name: 'bad id', state: 'on' },
       { id: 'light.extra', name: 'x'.repeat(500), state: 'on', token: 'secret', attributes: { a: 1 } },
     ],
@@ -51,7 +52,8 @@ test('the page shows what the house sent, and nothing it did not', async (t) => 
   assert.equal(home.configured, true);
   assert.equal(home.online, true);
   const ids = home.entities.map((e) => e.id);
-  assert.deepEqual(ids, ['light.living', 'cover.jaluzea_camera_1', 'climate.ac_living', 'switch.poarta', 'sensor.temperatura_afara', 'light.extra']);
+  assert.deepEqual(ids, ['light.living', 'cover.jaluzea_camera_1', 'climate.ac_living', 'switch.poarta', 'light.pod', 'sensor.temperatura_afara', 'shell_command.wipe', 'light.extra']);
+  assert.equal(home.entities.find((e) => e.id === 'shell_command.wipe').ctl, false, 'a domain with no actions is never pressable, whatever the house says');
   assert.equal(home.entities[0].name, 'Living', 'the first copy of an id wins');
   const extra = home.entities.at(-1);
   assert.equal(extra.name.length, 60);
@@ -88,6 +90,7 @@ test('only allowed actions on controls the house sent', async (t) => {
     [{ entity_id: 'light.living', action: 'delete' }, 'an action outside the list'],
     [{ entity_id: 'light.living', action: '__proto__' }, 'an inherited key'],
     [{ entity_id: 'sensor.temperatura_afara', action: 'turn_on' }, 'a sensor is read-only'],
+    [{ entity_id: 'light.pod', action: 'turn_on' }, 'a light the house shows but did not label for control'],
     [{ entity_id: 'climate.ac_living', action: 'temperature', value: 80 }, 'a value out of range'],
     [{ entity_id: 'climate.ac_living', action: 'temperature', value: 'warm' }, 'a value that is not a number'],
     [{ entity_id: 'cover.jaluzea_camera_1', action: 'position' }, 'a missing value'],
@@ -140,4 +143,55 @@ test('still no Home Assistant credential stored here', async (t) => {
   const { api } = await linked(t);
   const text = JSON.stringify([(await api.get('/api/me')).body, (await api.get('/api/home')).body]);
   assert.ok(!/ha_url|ha_password|long_lived|hassio|nabu|bearer/i.test(text), 'the app must not hold a key to the house');
+});
+
+test('the dashboard structure comes with the states, cleaned', async (t) => {
+  const { api, setup } = await linked(t);
+  assert.equal((await api.get('/api/home')).body.layout, null, 'no layout sent: the page groups by area');
+  await api.post(path(setup.states_url), {
+    entities: HOUSE,
+    layout: [
+      { t: 'Acasă', p: 'x', s: [{ h: 'Lumini', items: [{ e: 'light.living', n: 'Lustră' }, { e: 'bad id' }, { e: 'light.pod', extra: 1 }] }, { h: 'gol', items: [] }] },
+      { t: 'Gol', s: [] },
+      'not a view',
+    ],
+  });
+  const { layout } = (await api.get('/api/home')).body;
+  assert.deepEqual(layout, [{ t: 'Acasă', s: [{ h: 'Lumini', items: [{ e: 'light.living', n: 'Lustră' }, { e: 'light.pod', n: null }] }] }]);
+});
+
+test('the full-dashboard button takes an https address only, from an admin', async (t) => {
+  const { api } = await linked(t);
+  assert.equal((await api.put('/api/home/dashboard-url', { url: 'javascript:alert(1)' })).status, 400);
+  assert.equal((await api.put('/api/home/dashboard-url', { url: 'http://x.ui.nabu.casa/dashboard-test' })).status, 400);
+  const ok = await api.put('/api/home/dashboard-url', { url: 'https://abc.ui.nabu.casa/dashboard-test/default_view' });
+  assert.equal(ok.status, 200);
+  assert.equal((await api.get('/api/home')).body.dash_url, 'https://abc.ui.nabu.casa/dashboard-test/default_view');
+  await api.put('/api/home/dashboard-url', { url: '' });
+  assert.equal((await api.get('/api/home')).body.dash_url, null);
+});
+
+test('a dashboard becomes tabs, headed sections and entities, without the pictures', () => {
+  const { layoutOf, scriptYaml } = require('../scripts/ha-dashboard-layout');
+  const layout = layoutOf({ views: [
+    { title: 'Acasă', type: 'sections', sections: [
+      { type: 'grid', cards: [
+        { type: 'heading', heading: 'Lumini' },
+        { type: 'tile', entity: 'light.living', name: 'Lustră' },
+        { type: 'entities', entities: ['light.pod', { entity: 'light.living' }, { entity: 'camera.fata' }] },
+        { type: 'custom:advanced-camera-card', entity: 'switch.should_not_appear' },
+        { type: 'heading', heading: 'Doar desen' },
+        { type: 'custom:aurora-plan-card' },
+      ] },
+    ] },
+    { title: 'Clasic', cards: [{ type: 'vertical-stack', title: 'Stivă', cards: [{ type: 'tile', entity: 'cover.jaluzea' }] }] },
+    { title: 'Gol', sections: [{ cards: [{ type: 'markdown', content: 'x' }] }] },
+  ] });
+  assert.deepEqual(layout, [
+    { t: 'Acasă', s: [{ h: 'Lumini', items: [{ e: 'light.living', n: 'Lustră' }, { e: 'light.pod', n: null }] }] },
+    { t: 'Clasic', s: [{ h: 'Stivă', items: [{ e: 'cover.jaluzea', n: null }] }] },
+  ]);
+  const yaml = scriptYaml(layout);
+  assert.match(yaml, /^alias: Family Hub - trimite stările/);
+  assert.ok(yaml.includes('"light.pod"'), 'the layout is carried inside the script');
 });

@@ -1723,3 +1723,8 @@ b, strong, th, optgroup, h1, h2, h3, h4, h5, h6 { font-weight: 600; }
 .homesteps { padding-left: 20px; margin: 0 0 12px; }
 .homesteps li { margin-bottom: 10px; }
 .homeyaml { background: var(--paper); border: 1px solid var(--line); border-radius: 8px; padding: 10px; overflow-x: auto; font-family: var(--mono); font-size: 12px; margin: 8px 0; white-space: pre; }
+.hometabs { display: flex; gap: 6px; overflow-x: auto; margin: 4px 0 8px; padding-bottom: 4px; scrollbar-width: thin; }
+.hometabs button { flex: 0 0 auto; padding: 6px 14px; border-radius: 999px; border: 1px solid var(--line); background: var(--card); color: var(--ink-soft); font-weight: 600; }
+.hometabs button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.homegap { height: 12px; }
+.hometile.is-ro { gap: 4px; }
