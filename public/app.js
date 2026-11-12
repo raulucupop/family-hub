@@ -2200,7 +2200,7 @@ function ribbonHtml(reminders) {
     return `<${T} class="stub ${remClass(r)}"${href ? ` href="${href}"` : ''}>
       <div class="days">${daysLabel(r.days_left)}</div>
       <div class="what">${esc(remLabel(r))}</div>
-      <div class="who">${esc(r.entity || '')} · ${fdate(r.date)}${r.amount ? ` · <span class="amount">${moneyIn(r.amount, r.currency)}</span>` : ''}</div>
+      <div class="who">${esc(r.entity || '')} · ${fdate(r.date)}${r.amount ? `<span class="amount">${moneyIn(r.amount, r.currency)}</span>` : ''}</div>
     </${T}>`;
   }).join('')}</div>
   ${more > 0 ? `<button class="btn ghost small ribbon-more" id="ribbonmore">${LANG === 'ro' ? `Vezi toate (${reminders.length})` : `Show all (${reminders.length})`}</button>` : ''}`;
@@ -3452,7 +3452,7 @@ async function moneyExpenses(body, f = {}) {
         <label class="srch"><span class="srch-l">${tr('Search')}</span><input id="qfilter" type="search" placeholder="Lidl, E.ON…" value="${esc(flt.q)}"></label>
       </div>
       ${subtotals}
-      ${rows.length ? `<table class="cards"><thead><tr><th>${tr('Date')}</th><th>${tr('Category')}</th><th>${tr('By')}</th><th>${tr('Note')}</th><th class="right">${tr('Amount')}</th><th></th></tr></thead><tbody>
+      ${rows.length ? `<table class="cards explist"><thead><tr><th>${tr('Date')}</th><th>${tr('Category')}</th><th>${tr('By')}</th><th>${tr('Note')}</th><th class="right">${tr('Amount')}</th><th></th></tr></thead><tbody>
         ${rows.map((e, i) => { const link = e.property_name ? `⌂ ${esc(e.property_name)}` : e.vehicle_name ? `⛟ ${esc(e.vehicle_name)}` : '';
           // a light header each time the date changes, with that day's total — the rows arrive in
           // date order, so this just breaks a long month into scannable days
@@ -3574,8 +3574,8 @@ async function moneyIncome(body, who = 'all') {
     <div class="card" style="margin-top:16px">
       <div class="row" style="justify-content:space-between"><h3 style="margin:0">Income history</h3>
         <div class="row">${whoFilter('wfilter', members, who)}<span class="amount"><b>${money(total)}</b></span></div></div>
-      ${rows.length ? `<table><thead><tr><th>Date</th><th>Source</th><th>By</th><th class="right">Amount</th><th></th></tr></thead><tbody>
-        ${rows.map((r) => `<tr><td>${fdate(r.date)}</td><td>${esc(r.source)}</td><td>${esc(mname[r.user_id] || '—')}</td><td class="right amount">${money(r.amount)}</td>
+      ${rows.length ? `<table class="cards"><thead><tr><th>Date</th><th>Source</th><th>By</th><th class="right">Amount</th><th></th></tr></thead><tbody>
+        ${rows.map((r) => `<tr><td data-label="${tr('Date')}">${fdate(r.date)}</td><td data-label="${tr('Source')}">${esc(r.source)}</td><td class="lowpri" data-label="${tr('By')}">${esc(mname[r.user_id] || '—')}</td><td class="right amount" data-label="${tr('Amount')}">${money(r.amount)}</td>
         <td class="right">${canWrite() ? `<button class="btn danger small" data-del="${r.id}">Delete</button>` : ''}</td></tr>`).join('')}
       </tbody></table>` : `<div class="empty"><b>${tr('No income recorded yet')}${who === 'all' ? '' : ` — ${esc(mname[who] || '')}`}</b>Log salaries and other income to see the monthly balance.</div>`}
     </div>`;
@@ -4070,7 +4070,7 @@ async function viewBills(el) {
       ${billFormFields(members, properties, vehicles)}
       <button class="btn">Add bill</button></form>`) : ''}
     <div class="card" style="margin-top:16px" id="billlist">
-      ${bills.length ? `<table class="cards"><thead><tr><th>Bill</th><th>Owner</th><th>Due</th><th class="right">Amount</th><th>Status</th><th>Invoice</th><th></th></tr></thead><tbody>
+      ${bills.length ? `<table class="cards billlist"><thead><tr><th>Bill</th><th>Owner</th><th>Due</th><th class="right">Amount</th><th>Status</th><th>Invoice</th><th></th></tr></thead><tbody>
       ${bills.map((b) => {
         const late = b.status === 'unpaid' && b.due_date < t;
         const dLeft = daysUntil(b.due_date);
@@ -4851,7 +4851,7 @@ async function viewActe(el) {
       <div><label>Scan (PDF or photo)</label><input name="file" type="file" accept=".pdf,image/*"></div>
       <button class="btn">Add document</button></form>`) : ''}
     <div class="card" style="margin-top:16px">
-      ${docs.length ? `<table><thead><tr><th>Document</th><th>Belongs to</th><th>Expires</th><th>Scan</th><th></th></tr></thead><tbody>
+      ${docs.length ? `<table class="cards actelist"><thead><tr><th>Document</th><th>Belongs to</th><th>Expires</th><th>Scan</th><th></th></tr></thead><tbody>
         ${docs.map((d) => {
           let exp = '<span class="muted">—</span>';
           if (d.expiry_date) {
@@ -4860,9 +4860,9 @@ async function viewActe(el) {
           }
           return `<tr>
             <td><b>${esc(d.name)}</b>${d.number ? ` <span class="muted">${esc(d.number)}</span>` : ''}${d.notes ? `<br><span class="muted">${esc(d.notes)}</span>` : ''}</td>
-            <td>${belongsTo(d)}</td>
-            <td>${exp}</td>
-            <td>${d.attachment ? `<a href="/api/documents/${d.id}/attachment" target="_blank">view</a>` : canWrite() ? `<label class="btn ghost small" style="display:inline-block">attach<input type="file" data-attach="${d.id}" accept=".pdf,image/*" hidden></label>` : '—'}</td>
+            <td class="lowpri" data-label="${tr('Belongs to')}">${belongsTo(d)}</td>
+            <td data-label="${tr('Expires')}">${exp}</td>
+            <td class="lowpri" data-label="${tr('Scan')}">${d.attachment ? `<a href="/api/documents/${d.id}/attachment" target="_blank">view</a>` : canWrite() ? `<label class="btn ghost small" style="display:inline-block">attach<input type="file" data-attach="${d.id}" accept=".pdf,image/*" hidden></label>` : '—'}</td>
             <td class="right">${canWrite() ? `<button class="btn danger small" data-del="${d.id}">Delete</button>` : ''}</td>
           </tr>`;
         }).join('')}</tbody></table>`
