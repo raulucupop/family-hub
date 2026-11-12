@@ -1430,11 +1430,6 @@ body { background: var(--sc-ground); }
   .pagehead { background: var(--sc-ground); }
 }
 
-/* pan: the deadlines become one row that travels sideways as the page scrolls */
-.sc-panstage { position: relative; }
-.sc-panstage > .sc-pan-inner { overflow: hidden; padding-bottom: 8px; }
-.sc-panstage .ribbon.is-rail { display: flex; flex-wrap: nowrap; gap: 12px; will-change: transform; }
-.sc-panstage .ribbon.is-rail > .stub { flex: 0 0 210px; }
 
 /* scrubbed fills: a bar's fill is driven by how far it has come into view */
 .bar i.sc-scrub { transform-origin: left; }
@@ -1808,3 +1803,40 @@ b, strong, th, optgroup, h1, h2, h3, h4, h5, h6 { font-weight: 600; }
   table.explist tr:not(.daysep):not([id]) > td:nth-child(3) { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   table.explist tr:not(.daysep):not([id]) > td:nth-child(3) .who { max-width: 100%; }
 }
+
+/* ---- round 2 ---------------------------------------------------------------------------------- */
+
+/* Deadlines on a desktop: every card is visible. The row used to slide sideways as the page
+   scrolled, so with eight deadlines three sat off the right edge until you happened to scroll. */
+
+/* Sub-pages (Proprietăți | Chiriași, Acte | Garanții): a quiet tab strip above the page title */
+.subnav { display: flex; gap: 4px; margin: 0 0 12px; padding: 4px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; width: max-content; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+.subnav::-webkit-scrollbar { display: none; }
+.subnav-a {
+  display: inline-flex; align-items: center; gap: 8px; padding: 8px 14px; border-radius: 9px;
+  color: var(--ink-soft); text-decoration: none; font-size: 14px; font-weight: 600; white-space: nowrap;
+}
+.subnav-a svg { width: 17px; height: 17px; flex: none; }
+.subnav-a:hover { color: var(--ink); background: var(--paper); }
+.subnav-a.is-on { background: var(--accent-soft); color: var(--accent); }
+@media (max-width: 860px) {
+  .subnav { width: 100%; }
+  .subnav-a { flex: 1; justify-content: center; min-height: 44px; }
+}
+
+/* the month chooser: ‹ [noiembrie 2026] › */
+.monthpick { display: inline-flex; align-items: center; gap: 4px; }
+.monthpick select { width: auto; min-width: 0; text-transform: capitalize; }
+.monthpick .iconbtn { min-width: 36px; padding-left: 8px; padding-right: 8px; font-size: 18px; line-height: 1; }
+@media (max-width: 860px) {
+  .filterrow .monthpick { grid-column: 1 / -1; width: 100%; }
+  .monthpick select { flex: 1; }
+  .monthpick .iconbtn { min-width: 44px; min-height: 44px; }
+}
+
+/* the + steps out of the way while a list is scrolled down */
+.fab { transition: transform 200ms ease, opacity 200ms ease; }
+.fab.is-tucked { transform: translateY(calc(100% + 90px)) !important; opacity: 0; pointer-events: none; }
+@media (prefers-reduced-motion: reduce) { .fab { transition: none; } }
+.filterrow .monthpick #mfilter { width: 170px; }
+@media (max-width: 860px) { .filterrow .monthpick #mfilter { width: auto; flex: 1; } }

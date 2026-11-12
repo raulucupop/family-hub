@@ -18,3 +18,23 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: shellcheck scripts/deploy.sh
+
+  # Every page, as a desktop and as a phone: no script errors, nothing wider than the screen.
+  # The screenshots are kept with the run, so a change to the look can be seen before it is merged.
+  ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run ui-check
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ui-shots
+          path: ui-shots/
+          retention-days: 14
