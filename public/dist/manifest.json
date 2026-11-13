@@ -1,24 +1,24 @@
 {
-  "source": "ac128d093cbd25fe8c8426de3f23425d7b939a52ed08a5b6ff418e3932e6dc9d",
-  "core": "core.09804057c7.js",
+  "source": "9573e608adf7fc24464b8448f6d541e8303d89246cc221b221e1a84a0c56ec09",
+  "core": "core.9d359200a2.js",
   "chunks": {
-    "shared": "shared.dc3d3f27d2.js",
+    "shared": "shared.0f22db7804.js",
     "alerts": "alerts.6bec245819.js",
-    "bills": "bills.178a6f8cc8.js",
+    "bills": "bills.2f9d9157b4.js",
     "vehicles": "vehicles.7c557e25bc.js",
-    "properties": "properties.3256ee09c8.js",
+    "properties": "properties.21ef08a48a.js",
     "property": "property.ead9a2f40b.js",
-    "tenants": "tenants.7e88eab141.js",
-    "acte": "acte.81690a5793.js",
+    "tenants": "tenants.6444cd310b.js",
+    "acte": "acte.6e4183c165.js",
     "review": "review.cb767dfa31.js",
-    "garantii": "garantii.17ee0a7b1f.js",
+    "garantii": "garantii.cdb010af7e.js",
     "lists": "lists.3ed301af17.js",
     "watch": "watch.46058320d4.js",
     "chores": "chores.0ce518fb14.js",
     "import": "import.442bb3bd60.js",
     "search": "search.3f750ef820.js",
     "family": "family.8173272025.js",
-    "settings": "settings.6a33705045.js"
+    "settings": "settings.78fd3e8fe9.js"
   },
   "pages": {
     "review": [
