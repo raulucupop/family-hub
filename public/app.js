@@ -1225,6 +1225,7 @@ function render() {
   sheet.querySelectorAll('[data-close], .sheetlink').forEach((x) => x.addEventListener('click', closeSheet));
   // floating +: one tap to log an expense from anywhere, without leaving the page you are on
   $('#fab')?.addEventListener('click', () => quickExpense(page));
+  tuckFabOnScroll();
   runView((el) => fn(el, arg), $('#page'), RENDER_SEQ);
   pollNotifications();
 }
@@ -1258,15 +1259,28 @@ const NAV = [
   [null, 'Money'],
   ['money', 'wallet', 'Budget & expenses'], ['bills', 'receipt', 'Bills'], ['import', 'upload', 'Bank import'],
   [null, 'nav:House'],
-  ['properties', 'home', 'Properties'], ['tenants', 'key', 'Tenants'], ['chores', 'chore', 'Chores'], ['watch', 'radar', 'Watched pages'],
+  ['properties', 'home', 'Properties'], ['chores', 'chore', 'Chores'], ['watch', 'radar', 'Watched pages'],
   [null, 'nav:Cars'],
   ['vehicles', 'car', 'Vehicles'],
   [null, 'nav:Papers'],
-  ['acte', 'file', 'Acte'], ['garantii', 'shield', 'Warranties'],
+  ['acte', 'file', 'Acte'],
   [null, 'nav:Family'],
   ['family', 'users', 'Family'], ['lists', 'checklist', 'Lists'], ['settings', 'gear', 'Settings'],
 ];
 // the group headings, and the pages a family can take out of its menu (Settings → Menu)
+// Pages that live inside another one rather than in the menu: eighteen links was a long list to
+// scan, and Tenants is about properties as Warranties are papers. They keep their own address and
+// open from a tab strip at the top of their parent (see subnav), which also lights up in the menu.
+const SUBPAGES = [['tenants', 'key', 'Tenants', 'properties'], ['garantii', 'shield', 'Warranties', 'acte']];
+const NAV_PARENT = { property: 'properties', ...Object.fromEntries(SUBPAGES.map(([k, , , parent]) => [k, parent])) };
+function subnav(active) {
+  const parent = NAV_PARENT[active] || active;
+  const kids = SUBPAGES.filter(([k, , , p]) => p === parent && !navHidden().has(k));
+  if (!kids.length) return '';
+  const own = NAV.find(([k]) => k === parent);
+  return `<nav class="subnav" aria-label="${tr(own[2])}">${[own, ...kids].map(([k, ic, l]) =>
+    `<a class="subnav-a ${k === active ? 'is-on' : ''}" href="#${k}" ${k === active ? 'aria-current="page"' : ''}>${icon(ic)}<span>${tr(l)}</span></a>`).join('')}</nav>`;
+}
 const NAV_GROUP = { 'nav:House': ['House', 'Casă'], 'nav:Cars': ['Cars', 'Mașini'], 'nav:Papers': ['Papers', 'Acte'], 'nav:Family': ['Family', 'Familie'] };
 const navGroupName = (k) => (NAV_GROUP[k] ? NAV_GROUP[k][LANG === 'ro' ? 1 : 0] : tr(k));
 const NAV_HIDEABLE = ['review', 'search', 'import', 'properties', 'tenants', 'vehicles', 'acte', 'garantii', 'chores', 'lists', 'watch'];
@@ -1290,7 +1304,8 @@ function navItems(active) {
 // which made the whole alerts feature invisible on a phone.
 const TABS = [['dashboard', 'grid', 'Dashboard'], ['money', 'wallet', 'Money'], ['bills', 'receipt', 'Bills'], ['alerts', 'bell', 'Alerts']];
 const badgeHtml = () => `<span class="notifbadge" ${NOTIF.unread ? '' : 'hidden'}>${NOTIF.unread}</span>`;
-function shell(active) {
+function shell(page) {
+  const active = NAV_PARENT[page] || page;
   const inTabs = (k) => TABS.some(([t]) => t === k);
   return `<div class="shell">
     <nav class="sidebar">
@@ -1331,6 +1346,58 @@ function shell(active) {
     </div>
   </div>`;
 }
+
+/* The + floats over the page on a phone, and sat on top of amounts and "Mark paid" buttons in
+   every list. It steps aside while you scroll down through a list and is back the moment you
+   scroll up (or reach the top), which is when you would reach for it. One listener for the page. */
+let fabTuckOn = false;
+function tuckFabOnScroll() {
+  if (fabTuckOn) return;
+  fabTuckOn = true;
+  let lastY = scrollY;
+  addEventListener('scroll', () => {
+    const fab = document.getElementById('fab');
+    const y = scrollY;
+    if (!fab || Math.abs(y - lastY) < 8) return;
+    fab.classList.toggle('is-tucked', y > lastY && y > 80);
+    lastY = y;
+  }, { passive: true });
+}
+
+/* A month chooser that speaks the page's language. <input type="month"> is drawn by the browser in
+   the phone's own locale, so a Romanian page said "November 2026" and cut it to "November 20".
+   Same value (YYYY-MM) and the same change event, so the code reading it does not change; the
+   arrows step one month either way. `withAll` adds an empty first choice for "every month". */
+function monthPicker(id, value, { withAll = false } = {}) {
+  const now = new Date();
+  const ym = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  const months = [];
+  for (let i = -36; i <= 12; i++) months.push(ym(new Date(now.getFullYear(), now.getMonth() + i, 1)));
+  if (value && !months.includes(value)) { months.push(value); months.sort(); }
+  const label = (m) => {
+    const [y, mo] = m.split('-').map(Number);
+    return new Date(y, mo - 1, 1).toLocaleDateString(LANG === 'ro' ? 'ro-RO' : 'en-GB', { month: 'long', year: 'numeric' });
+  };
+  return `<span class="monthpick">
+    <button type="button" class="btn ghost small iconbtn" data-mstep="-1" aria-label="${LANG === 'ro' ? 'Luna anterioară' : 'Previous month'}">‹</button>
+    <select id="${id}" aria-label="${LANG === 'ro' ? 'Luna' : 'Month'}">${withAll ? `<option value="" ${value ? '' : 'selected'}>${LANG === 'ro' ? 'Toate lunile' : 'All months'}</option>` : ''}${months.slice().reverse().map((m) => `<option value="${m}" ${m === value ? 'selected' : ''}>${label(m)}</option>`).join('')}</select>
+    <button type="button" class="btn ghost small iconbtn" data-mstep="1" aria-label="${LANG === 'ro' ? 'Luna următoare' : 'Next month'}">›</button>
+  </span>`;
+}
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-mstep]');
+  if (!b) return;
+  const sel = b.parentElement.querySelector('select');
+  const opts = [...sel.options].filter((o) => o.value);
+  // the list runs newest first, so "next month" is one option up
+  const i = opts.findIndex((o) => o.value === sel.value);
+  const now = new Date();
+  const cur = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const to = i < 0 ? opts.find((o) => o.value === cur) : opts[i - Number(b.dataset.mstep)];
+  if (!to || to.value === sel.value) return;
+  sel.value = to.value;
+  sel.dispatchEvent(new Event('change', { bubbles: true }));
+});
 
 /* The three fields an expense needs on the spot — how much, what for, a word about it — in a small
    sheet over whatever page is open. Everything else (who, which car or house, the date) takes its
@@ -2200,7 +2267,7 @@ function ribbonHtml(reminders) {
     return `<${T} class="stub ${remClass(r)}"${href ? ` href="${href}"` : ''}>
       <div class="days">${daysLabel(r.days_left)}</div>
       <div class="what">${esc(remLabel(r))}</div>
-      <div class="who">${esc(r.entity || '')} · ${fdate(r.date)}${r.amount ? ` · <span class="amount">${moneyIn(r.amount, r.currency)}</span>` : ''}</div>
+      <div class="who">${esc(r.entity || '')} · ${fdate(r.date)}${r.amount ? `<span class="amount">${moneyIn(r.amount, r.currency)}</span>` : ''}</div>
     </${T}>`;
   }).join('')}</div>
   ${more > 0 ? `<button class="btn ghost small ribbon-more" id="ribbonmore">${LANG === 'ro' ? `Vezi toate (${reminders.length})` : `Show all (${reminders.length})`}</button>` : ''}`;
@@ -2395,8 +2462,12 @@ function gamePeopleHtml(g) {
       : p.due_date ? (ro ? `țintă: ${fdate(p.due_date)}` : `target: ${fdate(p.due_date)}`)
       : (ro ? 'fără țintă' : 'no target');
     // a debt in another currency shows what it is in lei today, or says plainly that it cannot
+    // and which rate that is: an old fixing (BNR not reached for a week) or the fallback is said so
+    const rateNote = p.rate_source === 'fallback' ? (ro ? 'curs de rezervă, nu BNR' : 'fallback rate, not BNR')
+      : p.rate_stale ? (ro ? `curs BNR vechi, din ${fdate(p.rate_date)}` : `old BNR rate, from ${fdate(p.rate_date)}`)
+      : p.rate_date ? (ro ? `curs BNR din ${fdate(p.rate_date)}` : `BNR rate of ${fdate(p.rate_date)}`) : '';
     const home = p.currency === g.currency ? ''
-      : p.balance_home != null ? `<p class="game-person__home">≈ ${gameMoney(p.balance_home)}</p>`
+      : p.balance_home != null ? `<p class="game-person__home${p.rate_stale || p.rate_source === 'fallback' ? ' is-stale' : ''}">≈ ${gameMoney(p.balance_home)}${rateNote ? ` · ${rateNote}` : ''}</p>`
       : `<p class="game-person__home">${ro ? 'Fără curs BNR, nu intră în nivel.' : 'No BNR rate, not in the level.'}</p>`;
     // with a target: what each month has to carry to reach it, and how this one is doing
     const done = p.plan && p.plan.back_now >= p.plan.monthly - 0.005;
@@ -3443,12 +3514,12 @@ async function moneyExpenses(body, f = {}) {
       <div class="row filterrow">
         ${whoFilter('wfilter', members, flt.who)}
         <select id="cfilter"><option value="all" ${flt.cat === 'all' ? 'selected' : ''}>All categories</option>${CATEGORIES.map((c) => `<option value="${c}" ${flt.cat === c ? 'selected' : ''}>${c}</option>`).join('')}</select>
-        <input id="mfilter" type="month" value="${flt.month === 'all' ? '' : flt.month}">
+        ${monthPicker('mfilter', flt.month === 'all' ? '' : flt.month, { withAll: true })}
         <button class="btn ghost small" id="allmonths">${flt.month === 'all' ? '● All time' : 'All time'}</button>
         <label class="srch"><span class="srch-l">${tr('Search')}</span><input id="qfilter" type="search" placeholder="Lidl, E.ON…" value="${esc(flt.q)}"></label>
       </div>
       ${subtotals}
-      ${rows.length ? `<table class="cards"><thead><tr><th>${tr('Date')}</th><th>${tr('Category')}</th><th>${tr('By')}</th><th>${tr('Note')}</th><th class="right">${tr('Amount')}</th><th></th></tr></thead><tbody>
+      ${rows.length ? `<table class="cards explist"><thead><tr><th>${tr('Date')}</th><th>${tr('Category')}</th><th>${tr('By')}</th><th>${tr('Note')}</th><th class="right">${tr('Amount')}</th><th></th></tr></thead><tbody>
         ${rows.map((e, i) => { const link = e.property_name ? `⌂ ${esc(e.property_name)}` : e.vehicle_name ? `⛟ ${esc(e.vehicle_name)}` : '';
           // a light header each time the date changes, with that day's total — the rows arrive in
           // date order, so this just breaks a long month into scannable days
@@ -3468,7 +3539,7 @@ async function moneyExpenses(body, f = {}) {
           <tr id="exprow-${e.id}" hidden><td colspan="6"></td></tr>`; }).join('')}
       </tbody></table>` : `<div class="empty"><b>No matching expenses</b>Adjust the filters or add one above.<div style="margin-top:12px"><button type="button" class="btn small" id="fltclear">${LANG === 'ro' ? 'Șterge filtrele' : 'Clear all filters'}</button></div></div>`}
     </div>`;
-  $('#mfilter').onchange = (e) => reload({ month: e.target.value || thisMonth() });
+  $('#mfilter').onchange = (e) => reload({ month: e.target.value || 'all' });
   $('#fltclear')?.addEventListener('click', () => reload({ month: thisMonth(), who: 'all', cat: 'all', q: '' }));
   $('#allmonths').onclick = () => reload({ month: flt.month === 'all' ? thisMonth() : 'all' });
   $('#wfilter').onchange = (e) => reload({ who: e.target.value });
@@ -3570,8 +3641,8 @@ async function moneyIncome(body, who = 'all') {
     <div class="card" style="margin-top:16px">
       <div class="row" style="justify-content:space-between"><h3 style="margin:0">Income history</h3>
         <div class="row">${whoFilter('wfilter', members, who)}<span class="amount"><b>${money(total)}</b></span></div></div>
-      ${rows.length ? `<table><thead><tr><th>Date</th><th>Source</th><th>By</th><th class="right">Amount</th><th></th></tr></thead><tbody>
-        ${rows.map((r) => `<tr><td>${fdate(r.date)}</td><td>${esc(r.source)}</td><td>${esc(mname[r.user_id] || '—')}</td><td class="right amount">${money(r.amount)}</td>
+      ${rows.length ? `<table class="cards"><thead><tr><th>Date</th><th>Source</th><th>By</th><th class="right">Amount</th><th></th></tr></thead><tbody>
+        ${rows.map((r) => `<tr><td data-label="${tr('Date')}">${fdate(r.date)}</td><td data-label="${tr('Source')}">${esc(r.source)}</td><td class="lowpri" data-label="${tr('By')}">${esc(mname[r.user_id] || '—')}</td><td class="right amount" data-label="${tr('Amount')}">${money(r.amount)}</td>
         <td class="right">${canWrite() ? `<button class="btn danger small" data-del="${r.id}">Delete</button>` : ''}</td></tr>`).join('')}
       </tbody></table>` : `<div class="empty"><b>${tr('No income recorded yet')}${who === 'all' ? '' : ` — ${esc(mname[who] || '')}`}</b>Log salaries and other income to see the monthly balance.</div>`}
     </div>`;
@@ -3616,7 +3687,7 @@ async function moneyBudgets(body, month = thisMonth()) {
   const spentMap = Object.fromEntries(spent.map((s) => [s.category, s.spent]));
   body.innerHTML = `
     <div class="card"><div class="row" style="justify-content:space-between"><h3 style="margin:0">Monthly budgets</h3>
-      <input id="bmonth" type="month" value="${month}" style="width:160px"></div>
+      ${monthPicker('bmonth', month)}</div>
       <table><thead><tr><th>Category</th><th class="right">Budget</th><th class="right">Spent</th><th style="width:34%">Progress</th></tr></thead><tbody>
       ${CATEGORIES.map((c) => {
         const b = budgets.find((x) => x.category === c); const s = spentMap[c] || 0;
@@ -4066,7 +4137,7 @@ async function viewBills(el) {
       ${billFormFields(members, properties, vehicles)}
       <button class="btn">Add bill</button></form>`) : ''}
     <div class="card" style="margin-top:16px" id="billlist">
-      ${bills.length ? `<table class="cards"><thead><tr><th>Bill</th><th>Owner</th><th>Due</th><th class="right">Amount</th><th>Status</th><th>Invoice</th><th></th></tr></thead><tbody>
+      ${bills.length ? `<table class="cards billlist"><thead><tr><th>Bill</th><th>Owner</th><th>Due</th><th class="right">Amount</th><th>Status</th><th>Invoice</th><th></th></tr></thead><tbody>
       ${bills.map((b) => {
         const late = b.status === 'unpaid' && b.due_date < t;
         const dLeft = daysUntil(b.due_date);
@@ -4080,7 +4151,7 @@ async function viewBills(el) {
               ? ` <span class="badge ${daysClass(dLeft)}">${daysLabel(dLeft)}</span>`
               : ` <span class="muted">${daysLabel(dLeft)}</span>`) : ''}</td>
           <td class="right amount" data-label="${tr('Amount')}">${money(b.amount)}</td>
-          <td data-label="${tr('Status')}"><span class="badge ${late ? 'late' : b.status}">${tr(late ? 'overdue' : b.status)}</span></td>
+          <td data-label="${tr('Status')}"><span class="badge ${late ? 'late' : b.status}">${tr(b.status)}</span></td>
           <td class="lowpri" data-label="${tr('Invoice')}">${b.attachment ? `<a href="/api/bills/${b.id}/attachment" target="_blank">view</a>` : canWrite() ? `<label class="btn ghost small" style="display:inline-block">attach<input type="file" data-attach="${b.id}" accept=".pdf,image/*" hidden></label>` : '—'}</td>
           <td class="right"><span class="rowacts">${canWrite() ? `
             ${b.status === 'unpaid' ? `<button class="btn small" data-pay="${b.id}" data-amt="${b.amount ?? ''}">Mark paid</button>` : ''}
@@ -4195,7 +4266,7 @@ async function viewProperties(el) {
   const mname = Object.fromEntries(members.map((m) => [m.id, m.name]));
   const ownerOpts = [['', 'Whole family'], ...members.map((m) => [m.id, m.name])];
   const pSlots = [['', 'Not a specific deadline'], ...P_DEADLINES.map(([k, l]) => [k, l])];
-  el.innerHTML = `<div class="pagehead"><div><h1>Properties</h1><p>Insurance (PAD), property tax, mortgage and maintenance history for each home.</p></div></div>
+  el.innerHTML = `${subnav('properties')}<div class="pagehead"><div><h1>Properties</h1><p>Insurance (PAD), property tax, mortgage and maintenance history for each home.</p></div></div>
     ${canWrite() ? entityForm('propform', 'Add property', [
       ['name', 'Name', 'text', 'Apartment — Bucharest'], ['address', 'Address', 'text', ''],
       ['owner_id', 'Owner', 'select', ownerOpts],
@@ -4381,7 +4452,7 @@ async function viewTenants(el) {
   // a property belongs here once it's in play as a rental: it has tenants, a code waiting, or a rent set
   const rows = props.map((p, i) => ({ p, info: info[i] || { tenants: [] } }))
     .filter(({ p, info }) => (info.tenants && info.tenants.length) || info.invite_code || p.rent_amount);
-  el.innerHTML = `<div class="pagehead"><div><h1>Tenants</h1>
+  el.innerHTML = `${subnav('tenants')}<div class="pagehead"><div><h1>Tenants</h1>
     <p>Codes, rent, invoices, meter readings and maintenance for your rented properties — in one place.</p></div></div>
     ${rows.length ? '<div id="tenlist"></div>'
       : `<div class="card empty"><b>No rented properties yet</b>Set a rent amount or generate a tenant code on a property, and it shows up here.</div>`}`;
@@ -4835,7 +4906,7 @@ async function viewActe(el) {
   const soon = docs.filter((d) => d.expiry_date)
     .map((d) => ({ d, days: Math.ceil((new Date(d.expiry_date) - new Date(t)) / 86400000) }))
     .filter((x) => x.days <= 60).sort((a, b) => a.days - b.days);
-  el.innerHTML = `<div class="pagehead"><div><h1>Acte</h1><p>ID cards, passports, certificates, talon auto, contracts — linked to a person, vehicle or property, with expiry reminders and scans.</p></div></div>
+  el.innerHTML = `${subnav('acte')}<div class="pagehead"><div><h1>Acte</h1><p>ID cards, passports, certificates, talon auto, contracts — linked to a person, vehicle or property, with expiry reminders and scans.</p></div></div>
     ${soon.length ? `<div class="card" style="margin-bottom:16px"><h3 style="margin-top:0">${tr('Expiring soon')}</h3>
       <div class="dchips">${soon.map(({ d, days }) => `<span class="dchip ${daysClass(days)}">${esc(d.name)} <b>${daysLabel(days)}</b> <span class="dchip-d">${fdate(d.expiry_date)}</span></span>`).join('')}</div></div>` : ''}
     ${canWrite() ? addBox('Add document', `<form id="docform" class="formgrid">
@@ -4847,7 +4918,7 @@ async function viewActe(el) {
       <div><label>Scan (PDF or photo)</label><input name="file" type="file" accept=".pdf,image/*"></div>
       <button class="btn">Add document</button></form>`) : ''}
     <div class="card" style="margin-top:16px">
-      ${docs.length ? `<table><thead><tr><th>Document</th><th>Belongs to</th><th>Expires</th><th>Scan</th><th></th></tr></thead><tbody>
+      ${docs.length ? `<table class="cards actelist"><thead><tr><th>Document</th><th>Belongs to</th><th>Expires</th><th>Scan</th><th></th></tr></thead><tbody>
         ${docs.map((d) => {
           let exp = '<span class="muted">—</span>';
           if (d.expiry_date) {
@@ -4856,9 +4927,9 @@ async function viewActe(el) {
           }
           return `<tr>
             <td><b>${esc(d.name)}</b>${d.number ? ` <span class="muted">${esc(d.number)}</span>` : ''}${d.notes ? `<br><span class="muted">${esc(d.notes)}</span>` : ''}</td>
-            <td>${belongsTo(d)}</td>
-            <td>${exp}</td>
-            <td>${d.attachment ? `<a href="/api/documents/${d.id}/attachment" target="_blank">view</a>` : canWrite() ? `<label class="btn ghost small" style="display:inline-block">attach<input type="file" data-attach="${d.id}" accept=".pdf,image/*" hidden></label>` : '—'}</td>
+            <td class="lowpri" data-label="${tr('Belongs to')}">${belongsTo(d)}</td>
+            <td data-label="${tr('Expires')}">${exp}</td>
+            <td class="lowpri" data-label="${tr('Scan')}">${d.attachment ? `<a href="/api/documents/${d.id}/attachment" target="_blank">view</a>` : canWrite() ? `<label class="btn ghost small" style="display:inline-block">attach<input type="file" data-attach="${d.id}" accept=".pdf,image/*" hidden></label>` : '—'}</td>
             <td class="right">${canWrite() ? `<button class="btn danger small" data-del="${d.id}">Delete</button>` : ''}</td>
           </tr>`;
         }).join('')}</tbody></table>`
@@ -5117,7 +5188,7 @@ async function viewWarranties(el) {
   };
   const table = (list) => `<table class="cards"><thead><tr><th>${tr('Thing')}</th><th>${tr('Bought from')}</th><th>${tr('Bought')}</th><th>${tr('Cover ends')}</th><th>${tr('Receipt')}</th><th></th></tr></thead>
     <tbody>${list.map(row).join('')}</tbody></table>`;
-  el.innerHTML = `<div class="pagehead"><div><h1>${tr('Warranties')}</h1>
+  el.innerHTML = `${subnav('garantii')}<div class="pagehead"><div><h1>${tr('Warranties')}</h1>
       <p>${tr('Appliances, electronics, tools — what is still under cover, who you claim from, and the receipt that proves it.')}</p></div></div>
     ${soon.length ? `<div class="card" style="margin-bottom:16px"><h3 style="margin-top:0">${tr('Running out soon')}</h3>
       <div class="dchips">${soon.map((w) => { const d = daysTo(w.expires_at);
@@ -6135,9 +6206,53 @@ async function viewFamily(el) {
   });
 }
 
+/* ---------- settings: E.ON Myline ----------
+   Only shown when the server has an E.ON account configured. The password never passes through
+   here: the card can start a sync and hand over the one-time code E.ON sends, nothing else. */
+function eonCardHtml(st) {
+  const ro = LANG === 'ro';
+  const when = (iso) => (iso ? new Date(iso).toLocaleString(ro ? 'ro-RO' : 'en-GB', { dateStyle: 'medium', timeStyle: 'short' }) : '—');
+  const status = st.mfa
+    ? `<p style="margin:0 0 8px">${ro ? `E.ON a trimis un cod de verificare${st.mfa.recipient ? ` la <b>${esc(st.mfa.recipient)}</b>` : ''}. Scrie-l aici:` : `E.ON sent a verification code${st.mfa.recipient ? ` to <b>${esc(st.mfa.recipient)}</b>` : ''}. Enter it here:`}</p>
+      <form id="eonmfa" class="row" style="gap:8px"><input name="code" inputmode="numeric" autocomplete="one-time-code" style="width:140px" placeholder="123456" required>
+        <button class="btn small">${ro ? 'Confirmă' : 'Confirm'}</button></form>`
+    : st.last_error
+      ? `<p style="margin:0;color:var(--red)">${esc(st.last_error)}</p>`
+      : `<p style="margin:0">${st.unpaid
+        ? (ro ? `<b>${st.unpaid}</b> ${st.unpaid === 1 ? 'factură neachitată' : 'facturi neachitate'}, ${money(st.unpaid_amount)}` : `<b>${st.unpaid}</b> unpaid, ${money(st.unpaid_amount)}`)
+        : (ro ? 'Nicio factură neachitată.' : 'No unpaid invoices.')}</p>`;
+  return `<h3>E.ON Myline</h3>
+    <p class="muted" style="margin-top:0">${ro
+      ? `Facturile neachitate ale contului <b>${esc(st.account)}</b> apar singure în Facturi și se marchează plătite când E.ON vede plata. Verificare la fiecare 6 ore.`
+      : `Unpaid invoices on <b>${esc(st.account)}</b> appear in Bills on their own, and are marked paid once E.ON sees the payment. Checked every 6 hours.`}</p>
+    ${status}
+    <div class="row" style="gap:8px;align-items:center;margin-top:12px">
+      <button class="btn ghost small" id="eonsync">${ro ? 'Verifică acum' : 'Check now'}</button>
+      <span class="muted" style="font-size:13px">${ro ? 'Ultima verificare reușită' : 'Last successful check'}: ${when(st.last_ok_at)}</span></div>`;
+}
+function wireEonCard(card) {
+  const done = (r) => {
+    const res = r.result || {};
+    if (res.ok) toast(LANG === 'ro' ? `E.ON: ${res.unpaid} neachitate${res.created ? `, ${res.created} noi` : ''}${res.paid ? `, ${res.paid} plătite` : ''}` : `E.ON: ${res.unpaid} unpaid${res.created ? `, ${res.created} new` : ''}${res.paid ? `, ${res.paid} paid` : ''}`, 'success');
+    else if (res.error) toast(res.error);
+    card.innerHTML = eonCardHtml(r.state);
+    wireEonCard(card);
+  };
+  card.querySelector('#eonsync')?.addEventListener('click', async (e) => {
+    e.target.disabled = true;
+    try { done(await api('/eon/sync', { method: 'POST' })); } catch (err) { e.target.disabled = false; toast(err.message); }
+  });
+  card.querySelector('#eonmfa')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = e.target.querySelector('button'); btn.disabled = true;
+    try { done(await api('/eon/mfa', { method: 'POST', body: { code: e.target.code.value } })); } catch (err) { btn.disabled = false; toast(err.message); }
+  });
+}
+
 /* ---------- settings: profile picture, theme, name ---------- */
 async function viewSettings(el) {
-  const [members, haInfo, mailInfo] = await Promise.all([api('/family/members'), api('/ha/info').catch(() => ({ url: null })), api('/mail/info').catch(() => ({ url: null }))]);
+  const [members, haInfo, mailInfo, eonInfo] = await Promise.all([api('/family/members'), api('/ha/info').catch(() => ({ url: null })), api('/mail/info').catch(() => ({ url: null })),
+    ME.role === 'admin' ? api('/eon').catch(() => ({ configured: false })) : { configured: false }]);
   const kids = members.filter((m) => m.role === 'child');
   const canEditKids = ME.role === 'admin' || ME.role === 'adult';
   el.innerHTML = `<div class="pagehead"><div><h1>Settings</h1><p>Your profile, theme and family pictures.</p></div></div>
@@ -6150,7 +6265,7 @@ async function viewSettings(el) {
     ${ME.role === 'admin' ? `<details class="card foldcard" style="margin-top:16px"><summary>${LANG === 'ro' ? 'Meniu' : 'Menu'}</summary><div style="padding-top:12px">
       <p class="muted" style="margin-top:0">${LANG === 'ro' ? 'Ce pagini apar în meniu, pentru toată familia. O pagină scoasă rămâne în aplicație: o pui înapoi oricând de aici.' : 'Which pages show in the menu, for the whole family. A page left out stays in the app: put it back here any time.'}</p>
       <div class="row" style="flex-wrap:wrap;gap:8px 16px">
-        ${NAV.filter(([k]) => NAV_HIDEABLE.includes(k)).map(([k, , l]) => `<label style="display:inline-flex;align-items:center;gap:8px;margin:0;font-size:14px;font-weight:500;color:var(--ink)"><input type="checkbox" data-navpage="${k}" ${navHidden().has(k) ? '' : 'checked'} style="width:auto"> ${tr(l)}</label>`).join('')}
+        ${[...NAV, ...SUBPAGES].filter(([k]) => NAV_HIDEABLE.includes(k)).map(([k, , l]) => `<label style="display:inline-flex;align-items:center;gap:8px;margin:0;font-size:14px;font-weight:500;color:var(--ink)"><input type="checkbox" data-navpage="${k}" ${navHidden().has(k) ? '' : 'checked'} style="width:auto"> ${tr(l)}</label>`).join('')}
       </div>
       <button class="btn small" id="navsave" style="margin-top:12px">${LANG === 'ro' ? 'Salvează meniul' : 'Save the menu'}</button>
     </div></details>` : ''}
@@ -6201,6 +6316,7 @@ async function viewSettings(el) {
             <button class="btn ghost small" data-copy="${esc(mailInfo.url)}">${tr('Copy')}</button>
             <button class="btn ghost small" id="mailrotate">${tr('New address')}</button></div>`
         : `<button class="btn small" id="mailgen">${tr('Create the address')}</button>`}</div>
+    ${eonInfo.configured ? `<div class="card" style="margin-top:16px" id="eoncard">${eonCardHtml(eonInfo)}</div>` : ''}
     <div class="card" style="margin-top:16px"><h3>${tr('House dashboard')}</h3>
       <p class="muted" style="margin-top:0">${tr('A read-only address Home Assistant can read to show these numbers on a wall panel. It gives out figures only — no names, no notes, no addresses — and it cannot change anything here.')}</p>
       ${haInfo.url
@@ -6247,6 +6363,7 @@ async function viewSettings(el) {
     if (await confirmDestroy({ question: LANG === 'ro' ? 'Generezi o adresă nouă pentru Home Assistant?' : 'Generate a new Home Assistant address?', detail: LANG === 'ro' ? 'Adresa actuală nu mai merge; senzorul din Home Assistant trebuie actualizat.' : 'The current address stops working; the Home Assistant sensor must be updated.', verb: LANG === 'ro' ? 'Generează adresă nouă' : 'Generate new address' })) await haGen();
   });
   el.querySelectorAll('[data-copy]').forEach((b) => (b.onclick = () => copyText(b.dataset.copy)));
+  if (eonInfo.configured) wireEonCard($('#eoncard'));
   setupPushCard();
   $('#notifsave')?.addEventListener('click', async () => {
     // muted = groups left unchecked; quiet hours only count when both edges are set
@@ -6842,18 +6959,6 @@ const SC = (() => {
       `<span class="${['is-past', 'is-today', 'warn', 'late'].filter((c) => d.classList.contains(c)).join(' ')}"></span>`).join('');
     head.firstElementChild.appendChild(mini);
   }
-  function panStage(page) {
-    const ribbon = page.querySelector('#ch-next .ribbon');
-    if (!ribbon || ribbon.closest('.sc-panstage') || !desktop() || reduce()) return;
-    const section = ribbon.parentElement;
-    if (ribbon.children.length < 5) return; // a short row has nowhere to travel
-    const inner = document.createElement('div');
-    inner.className = 'sc-pan-inner';
-    while (section.firstChild) inner.appendChild(section.firstChild);
-    section.appendChild(inner);
-    section.classList.add('sc-panstage');
-    ribbon.classList.add('is-rail');
-  }
   function presence(page) {
     if (!fine() || reduce()) return;
     page.querySelectorAll('.stub:not(.sc-tilt)').forEach((s) => {
@@ -6898,7 +7003,6 @@ const SC = (() => {
     if (!page) return;
     page.querySelectorAll('.chapter__title').forEach(kinetic);
     miniStrip(page);
-    panStage(page);
     presence(page);
     magnet();
     page.querySelectorAll('.bar i:not(.sc-scrub)').forEach((i) => { if (!reduce()) i.classList.add('sc-scrub'); });
@@ -6909,7 +7013,6 @@ const SC = (() => {
       // only the outermost block moves; a card inside a section rides with it
       const outer = el.parentElement && el.parentElement.closest(BLOCK);
       if (outer && page.contains(outer)) continue;
-      if (el.closest('.sc-panstage')) continue; // the pan stage is sticky; a transform on it would unstick it
       watch(el);
     }
     // A hidden tab never delivers intersection callbacks, and nothing may stay invisible because
@@ -6968,21 +7071,6 @@ const SC = (() => {
         root.style.setProperty('--sc-ground', `rgb(${c.join(',')})`);
       }
     } else root.style.removeProperty('--sc-ground');
-
-    // pan: the rail travels its whole overflow during the first stretch of scroll, from the top of
-    // the page until it has passed under the header. Not pinned: a short stage held in a tall
-    // viewport leaves a blank band under it for the whole hold, which reads as the page breaking.
-    const stage = document.querySelector('#page .sc-panstage');
-    if (stage) {
-      const rail = stage.querySelector('.ribbon.is-rail');
-      const inner = stage.firstElementChild;
-      const travel = Math.max(0, rail.scrollWidth - inner.clientWidth);
-      if (!stage.dataset.y0) stage.dataset.y0 = String(Math.round(rail.getBoundingClientRect().bottom + se.scrollTop));
-      const headH = parseFloat(getComputedStyle(root).getPropertyValue('--sc-head')) || 0;
-      const range = Math.max(200, Number(stage.dataset.y0) - headH + 160);
-      const p = travel ? Math.min(1, Math.max(0, se.scrollTop / range)) : 0;
-      rail.style.transform = `translate3d(${(-travel * p).toFixed(1)}px,0,0)`;
-    }
 
     // scrub: a bar is empty as it enters at the bottom and full by the time it is two-thirds up
     for (const i of document.querySelectorAll('#page .bar i.sc-scrub')) {

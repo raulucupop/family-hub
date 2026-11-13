@@ -9,6 +9,9 @@ services:
       # - JWT_SECRET=change-me-to-a-long-random-string
       # If you run WITHOUT HTTPS on a home server / LAN, uncomment so login cookies work:
       # - INSECURE_COOKIES=1
+      # Euro debts in the money game use the BNR rate. If the server cannot reach curs.bnr.ro, this
+      # rate counts them until BNR first answers (shown as a fallback on the card):
+      # - FX_FALLBACK=EUR:5.08
     volumes:
       - familyhub-data:/data
     restart: unless-stopped
