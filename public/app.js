@@ -498,8 +498,8 @@ const RO = {
   'No rent set yet — set it here and the monthly rent charge generates itself.': 'Nicio chirie setată încă — seteaz-o aici și chiria lunară se generează singură.',
   'Rent': 'Chirie',
   'Tenant code:': 'Cod chiriaș:', 'No tenant code yet.': 'Niciun cod de chiriaș încă.', 'Generate code': 'Generează cod',
-  'Your tenant registers with it on the sign-in screen →': 'Chiriașul se înregistrează cu el pe ecranul de autentificare →',
-  'tab. They only see the charges below — nothing else.': 'tab. Vede doar costurile de mai jos — nimic altceva.',
+  'Your tenant registers with it on the sign-in screen →': 'Chiriașul se înregistrează cu el pe ecranul de autentificare → fila',
+  'tab. They only see the charges below — nothing else.': '. Vede doar costurile de mai jos — nimic altceva.',
   'Tenants': 'Chiriași', 'No tenant has joined yet.': 'Niciun chiriaș nu s-a alăturat încă.',
   'Codes, rent, invoices, meter readings and maintenance for your rented properties — in one place.': 'Coduri, chirie, facturi, citiri contoare și reparații pentru proprietățile închiriate — într-un singur loc.',
   'No rented properties yet': 'Nicio proprietate închiriată încă',
@@ -609,6 +609,9 @@ const RO = {
   'Push notifications off on this device': 'Notificările push sunt oprite pe acest dispozitiv',
   'Push notifications on — alerts will reach this device': 'Notificări push pornite — alertele vor ajunge pe acest dispozitiv',
   'Test sent — check your notifications': 'Test trimis — verifică notificările', 'Picture updated': 'Poză actualizată',
+  // example text inside empty fields
+  'Salary, freelance…': 'Salariu, PFA…', 'Electricity — apartment': 'Curent — apartament', 'Electricity — June': 'Curent — iunie',
+  'person@email.com': 'nume@email.com',
 };
 // pattern rules for text that embeds a name/number and can't be a fixed dictionary key
 // order matters: the first match wins, so the more specific patterns come first
@@ -634,6 +637,9 @@ function applyLang() {
 }
 // tr(): translate a string when building templates in JS (for text assembled with interpolation)
 const tr = (s) => (LANG === 'ro' && RO[s]) || s;
+// "per month" after an amount: 'mo' in the dictionary is the plural ("10/60 luni"), which made
+// "26,99 RON/luni" out of a monthly cost
+const perMo = () => (LANG === 'ro' ? 'lună' : 'mo');
 // confirm/prompt shadow the natives so static messages get translated too
 const nativeConfirm = window.confirm.bind(window), nativePrompt = window.prompt.bind(window);
 const confirm = (m) => nativeConfirm(tr(m));
@@ -1598,7 +1604,7 @@ function tenantDashboardView(el, data) {
           <b style="text-transform:capitalize">${esc(tr(m.utility))}</b><span class="muted">${tr('requested')} ${fdate(m.requested_at?.slice(0, 10))}</span>
           <input data-mval="${m.id}" inputmode="decimal" placeholder="meter value" style="max-width:140px">
           <button class="btn small" data-msend="${m.id}">Send reading</button>
-          <label class="btn ghost small" style="display:inline-block">Upload photo<input type="file" data-mphoto="${m.id}" accept="image/*" hidden></label>
+          <label class="btn ghost small">Upload photo<input type="file" data-mphoto="${m.id}" accept="image/*" hidden></label>
         </div>`).join('')}
       ${doneMeters.map((m) => `<p class="muted" style="margin:4px 0">✓ <span style="text-transform:capitalize">${esc(tr(m.utility))}</span>: ${m.reading ? esc(m.reading) : tr('photo sent')} · ${fdate(m.provided_at)}</p>`).join('')}
     </section>` : ''}`;
@@ -1711,7 +1717,7 @@ function tenantAccountView(el, data) {
     <div class="card"><h3 style="margin-top:0">${tr('Your profile')}</h3>
       <div class="row" style="gap:16px;align-items:center">${avatarHtml(ME, 'avatar-lg')}
         <span class="row">
-          <label class="btn ghost small" style="display:inline-block">Upload picture<input type="file" id="tavatar" accept="image/*" hidden></label>
+          <label class="btn ghost small">Upload picture<input type="file" id="tavatar" accept="image/*" hidden></label>
           ${ME.avatar ? `<button class="btn danger small" id="tavadel">Remove</button>` : ''}
         </span></div>
       <form id="tprofile" class="formgrid" style="margin-top:12px;max-width:560px">
@@ -1984,7 +1990,7 @@ async function viewDashboard(el) {
     ${gapsHtml(gaps)}
     ${goalsHtml(savings.goals)}` : ''}
     ${budgets.budgets.length ? `<section class="card" style="margin-top:16px">
-      <h3>${tr('Budget vs actual')} · ${budgets.month}</h3>
+      <h3>${tr('Budget vs actual')} · ${monthLabel(budgets.month, { short: false })}</h3>
       ${budgets.budgets.map((b) => {
         const s = spentMap[b.category] || 0; const pct = Math.min(100, (s / b.amount) * 100 || 0);
         const truePct = b.amount > 0 ? Math.round((s / b.amount) * 100) : 0;
@@ -2012,7 +2018,7 @@ async function viewDashboard(el) {
           <div class="chartbox"><canvas id="netChart"></canvas></div>
         </section>
         ${!budgets.budgets.length && canWrite() && suggest?.categories?.length ? `<section class="card" style="margin-top:16px">
-          <h3>${tr('Budget vs actual')} · ${budgets.month}</h3>
+          <h3>${tr('Budget vs actual')} · ${monthLabel(budgets.month, { short: false })}</h3>
           <p class="muted" style="margin-top:0">No budgets set for this month yet.</p>
           <button class="btn small" id="budgetkick">${tr('Set from my 3-month average')}</button>
           <span class="muted" style="margin-left:8px">${tr('You can fine-tune them afterwards.')}</span>
@@ -2267,7 +2273,7 @@ function ribbonHtml(reminders) {
     return `<${T} class="stub ${remClass(r)}"${href ? ` href="${href}"` : ''}>
       <div class="days">${daysLabel(r.days_left)}</div>
       <div class="what">${esc(remLabel(r))}</div>
-      <div class="who">${esc(r.entity || '')} · ${fdate(r.date)}${r.amount ? `<span class="amount">${moneyIn(r.amount, r.currency)}</span>` : ''}</div>
+      <div class="who">${esc(tr(r.entity || ''))} · ${fdate(r.date)}${r.amount ? `<span class="amount">${moneyIn(r.amount, r.currency)}</span>` : ''}</div>
     </${T}>`;
   }).join('')}</div>
   ${more > 0 ? `<button class="btn ghost small ribbon-more" id="ribbonmore">${LANG === 'ro' ? `Vezi toate (${reminders.length})` : `Show all (${reminders.length})`}</button>` : ''}`;
@@ -3328,7 +3334,7 @@ async function moneyYear(body) {
             ${hasPrevMonths && perMonthPrev[i] > 0 ? `<span class="yb-prev" style="bottom:${(perMonthPrev[i] / peak) * 100}%"></span>` : ''}
             <div class="yb-fill${isNow ? ' now' : ''}" style="height:${(perMonth[i] / peak) * 100}%"></div>
           </div>
-          <div class="yb-label">${monthLabel(m)}</div>
+          <div class="yb-label">${((l) => `${esc(l.slice(0, 1))}<span class="yb-rest">${esc(l.slice(1))}</span>`)(monthLabel(m))}</div>
         </button>`;
       }).join('')}</div>
       <p class="muted yb-readout" id="ybReadout" aria-live="polite"></p>
@@ -3362,12 +3368,12 @@ async function moneyYear(body) {
       </tbody></table></section>` : ''}
 
     ${biggest.length ? `<section class="card" style="margin-top:16px"><h3 style="margin-top:0">${tr('Biggest expenses')} · ${yr}</h3>
-      <table class="cards"><thead><tr><th>${tr('Date')}</th><th>${tr('Category')}</th><th>${tr('Note')}</th><th class="right">${tr('Amount')}</th></tr></thead><tbody>
+      <table class="rowlist"><thead><tr><th>${tr('Date')}</th><th>${tr('Category')}</th><th>${tr('Note')}</th><th class="right">${tr('Amount')}</th></tr></thead><tbody>
       ${biggest.map((e) => `<tr>
-        <td data-label="${tr('Date')}">${fdate(e.date)}</td>
-        <td data-label="${tr('Category')}"><span class="catcell"><span class="catdot" style="--cat:${catColor(e.category)}"></span>${esc(tr(e.category))}</span></td>
-        <td data-label="${tr('Note')}">${esc(e.note || '')}</td>
-        <td class="right amount" data-label="${tr('Amount')}">${money(e.amount)}</td></tr>`).join('')}
+        <td class="c-sub">${fdate(e.date)}</td>
+        <td class="c-main"><span class="catcell"><span class="catdot" style="--cat:${catColor(e.category)}"></span>${esc(tr(e.category))}</span></td>
+        <td class="c-sub">${esc(e.note || '')}</td>
+        <td class="right amount c-amt">${money(e.amount)}</td></tr>`).join('')}
       </tbody></table></section>` : ''}`;
 
   // Tap (or focus) a bar to read its month — the readout is a real element rather than a native
@@ -3491,10 +3497,10 @@ async function moneyExpenses(body, f = {}) {
       </div></form></div>`) : ''}
     <details class="card addbox" style="margin-top:16px"><summary><span class="plus" aria-hidden="true">+</span> Recurring expenses</summary><div class="addbody">
       <p class="muted" style="margin-top:0">Fixed monthly costs that aren't bills — logged automatically every month on the chosen day.</p>
-      ${recurring.length ? `<table><tbody>${recurring.map((r) => `<tr style="${r.active ? '' : 'opacity:.55'}">
-        <td><b>${esc(r.note || tr(r.category))}</b> <span class="muted">· ${tr(r.category)} · ${esc(r.user_name || tr('whole family'))} · ${tr('day')} ${r.day}${r.on_card ? ' · ' + tr('on card') : ''}${r.property_name ? ` · ⌂ ${esc(r.property_name)}` : ''}${r.vehicle_name ? ` · ⛟ ${esc(r.vehicle_name)}` : ''}</span>${r.active ? '' : ' <span class="badge role">paused</span>'}</td>
-        <td class="right amount">${money(r.amount)}<span class="muted">/${tr('mo')}</span></td>
-        <td class="right">${canWrite() ? `<span class="rowacts"><button class="btn ghost small" data-rxtog="${r.id}">${r.active ? 'Pause' : 'Resume'}</button>
+      ${recurring.length ? `<table class="rowlist"><tbody>${recurring.map((r) => `<tr style="${r.active ? '' : 'opacity:.55'}">
+        <td class="c-main"><b>${esc(r.note || tr(r.category))}</b> <span class="muted">· ${tr(r.category)} · ${esc(r.user_name || tr('whole family'))} · ${tr('day')} ${r.day}${r.on_card ? ' · ' + tr('on card') : ''}${r.property_name ? ` · ⌂ ${esc(r.property_name)}` : ''}${r.vehicle_name ? ` · ⛟ ${esc(r.vehicle_name)}` : ''}</span>${r.active ? '' : ' <span class="badge role">paused</span>'}</td>
+        <td class="right amount c-amt">${money(r.amount)}<span class="muted">/${perMo()}</span></td>
+        <td class="right c-act">${canWrite() ? `<span class="rowacts"><button class="btn ghost small" data-rxtog="${r.id}">${r.active ? 'Pause' : 'Resume'}</button>
           <button class="btn danger small iconbtn" data-rxdel="${r.id}" data-name="${esc(r.note || tr(r.category))}" aria-label="${tr('Delete')}" data-tip="${tr('Delete')}">✕</button></span>` : ''}</td></tr>`).join('')}</tbody></table>` : ''}
       ${canWrite() ? `<form id="recxform" class="formgrid" style="margin-top:12px">
         <div><label>Category</label><select name="category">${CATEGORIES.map((c) => `<option value="${c}">${c}</option>`).join('')}</select></div>
@@ -3618,18 +3624,18 @@ async function moneyIncome(body, who = 'all') {
     ${offers.length ? `<div class="card incsuggest" style="margin-top:16px">
       <h3 style="margin-top:0">${ro ? 'Par venituri lunare' : 'These look monthly'}</h3>
       <p class="muted" style="margin-top:0">${ro ? 'Le-ați scris de mână în fiecare lună. Făcute recurente, se trec singure în ziua lor.' : 'You typed these in by hand every month. Made recurring, they log themselves on their day.'}</p>
-      <table><tbody>${offers.map((o, i) => `<tr>
-        <td><b>${esc(o.source)}</b> <span class="muted">· ${esc(o.user_name || '')} · ${ro ? 'ziua' : 'day'} ${o.day}${o.varies ? (ro ? ' · suma a variat, o poți corecta lunar' : ' · the amount varied, adjust it when it does') : ''}</span></td>
-        <td class="right amount">${money(o.amount)}<span class="muted">/${ro ? 'lună' : 'mo'}</span></td>
-        <td class="right" style="white-space:nowrap"><button class="btn small" data-incmake="${i}">${ro ? 'Fă-l recurent' : 'Make it recurring'}</button>
+      <table class="rowlist"><tbody>${offers.map((o, i) => `<tr>
+        <td class="c-main"><b>${esc(o.source)}</b> <span class="muted">· ${esc(o.user_name || '')} · ${ro ? 'ziua' : 'day'} ${o.day}${o.varies ? (ro ? ' · suma a variat, o poți corecta lunar' : ' · the amount varied, adjust it when it does') : ''}</span></td>
+        <td class="right amount c-amt">${money(o.amount)}<span class="muted">/${ro ? 'lună' : 'mo'}</span></td>
+        <td class="right c-act" style="white-space:nowrap"><button class="btn small" data-incmake="${i}">${ro ? 'Fă-l recurent' : 'Make it recurring'}</button>
           <button class="btn ghost small" data-incskip="${i}">${ro ? 'Nu e lunar' : 'Not monthly'}</button></td></tr>`).join('')}</tbody></table>
     </div>` : ''}
     <div class="card" style="margin-top:16px"><h3>Recurring income (salaries)</h3>
       <p class="muted" style="margin-top:0">Logged automatically every month on the chosen day — no manual entry needed.</p>
-      ${recurring.length ? `<table><tbody>${recurring.map((r) => `<tr style="${r.active ? '' : 'opacity:.55'}">
-        <td><b>${esc(r.source)}</b> <span class="muted">· ${esc(r.user_name || '')} · ${tr('day')} ${r.day}</span>${r.active ? '' : ' <span class="badge role">paused</span>'}</td>
-        <td class="right amount">${money(r.amount)}<span class="muted">/mo</span></td>
-        <td class="right">${canWrite() ? `<button class="btn ghost small" data-rtog="${r.id}">${r.active ? 'Pause' : 'Resume'}</button>
+      ${recurring.length ? `<table class="rowlist"><tbody>${recurring.map((r) => `<tr style="${r.active ? '' : 'opacity:.55'}">
+        <td class="c-main"><b>${esc(r.source)}</b> <span class="muted">· ${esc(r.user_name || '')} · ${tr('day')} ${r.day}</span>${r.active ? '' : ' <span class="badge role">paused</span>'}</td>
+        <td class="right amount c-amt">${money(r.amount)}<span class="muted">/${perMo()}</span></td>
+        <td class="right c-act">${canWrite() ? `<button class="btn ghost small" data-rtog="${r.id}">${r.active ? 'Pause' : 'Resume'}</button>
           <button class="btn danger small iconbtn" data-rdel="${r.id}" data-name="${esc(r.source)}" aria-label="${tr('Delete')}" data-tip="${tr('Delete')}">✕</button>` : ''}</td></tr>`).join('')}</tbody></table>` : ''}
       ${canWrite() ? `<form id="recform" class="formgrid" style="margin-top:12px">
         <div><label>Source</label><input name="source" placeholder="Salariu Raul" required></div>
@@ -3641,9 +3647,9 @@ async function moneyIncome(body, who = 'all') {
     <div class="card" style="margin-top:16px">
       <div class="row" style="justify-content:space-between"><h3 style="margin:0">Income history</h3>
         <div class="row">${whoFilter('wfilter', members, who)}<span class="amount"><b>${money(total)}</b></span></div></div>
-      ${rows.length ? `<table class="cards"><thead><tr><th>Date</th><th>Source</th><th>By</th><th class="right">Amount</th><th></th></tr></thead><tbody>
-        ${rows.map((r) => `<tr><td data-label="${tr('Date')}">${fdate(r.date)}</td><td data-label="${tr('Source')}">${esc(r.source)}</td><td class="lowpri" data-label="${tr('By')}">${esc(mname[r.user_id] || '—')}</td><td class="right amount" data-label="${tr('Amount')}">${money(r.amount)}</td>
-        <td class="right">${canWrite() ? `<button class="btn danger small" data-del="${r.id}">Delete</button>` : ''}</td></tr>`).join('')}
+      ${rows.length ? `<table class="rowlist"><thead><tr><th>Date</th><th>Source</th><th>By</th><th class="right">Amount</th><th></th></tr></thead><tbody>
+        ${rows.map((r) => `<tr><td class="c-sub">${fdate(r.date)}</td><td class="c-main">${esc(r.source)}</td><td class="c-sub">${esc(mname[r.user_id] || '—')}</td><td class="right amount c-amt">${money(r.amount)}</td>
+        <td class="right c-act">${canWrite() ? `<button class="btn danger small iconbtn" data-del="${r.id}" data-name="${esc(r.source)}" aria-label="${tr('Delete')}" data-tip="${tr('Delete')}">✕</button>` : ''}</td></tr>`).join('')}
       </tbody></table>` : `<div class="empty"><b>${tr('No income recorded yet')}${who === 'all' ? '' : ` — ${esc(mname[who] || '')}`}</b>Log salaries and other income to see the monthly balance.</div>`}
     </div>`;
   $('#wfilter').onchange = (e) => moneyIncome(body, e.target.value);
@@ -3688,7 +3694,7 @@ async function moneyBudgets(body, month = thisMonth()) {
   body.innerHTML = `
     <div class="card"><div class="row" style="justify-content:space-between"><h3 style="margin:0">Monthly budgets</h3>
       ${monthPicker('bmonth', month)}</div>
-      <table><thead><tr><th>Category</th><th class="right">Budget</th><th class="right">Spent</th><th style="width:34%">Progress</th></tr></thead><tbody>
+      <table class="budlist"><thead><tr><th>Category</th><th class="right">Budget</th><th class="right">Spent</th><th style="width:34%">Progress</th></tr></thead><tbody>
       ${CATEGORIES.map((c) => {
         const b = budgets.find((x) => x.category === c); const s = spentMap[c] || 0;
         const pct = b ? Math.min(100, (s / b.amount) * 100) : 0;
@@ -3776,10 +3782,10 @@ async function moneySavings(body) {
       <div><label>Note</label><input name="note" placeholder="optional"></div>
       <button class="btn">Save</button></form></div>` : ''}
     <div class="card" style="margin-top:16px"><h3>History</h3>
-      ${data.entries.length ? `<table><thead><tr><th>Date</th><th>By</th><th>Goal</th><th>Note</th><th class="right">Amount</th><th></th></tr></thead><tbody>
-        ${data.entries.map((r) => `<tr><td>${fdate(r.date)}</td><td>${esc(r.user_name || '—')}</td><td>${esc(r.goal_title || '—')}</td><td>${esc(r.note || '')}</td>
-          <td class="right amount" style="color:${r.kind === 'deposit' ? '#2f6b5a' : 'var(--red)'}">${r.kind === 'deposit' ? '+' : '−'}${money(r.amount)}</td>
-          <td class="right">${canWrite() ? `<button class="btn danger small" data-del="${r.id}">✕</button>` : ''}</td></tr>`).join('')}
+      ${data.entries.length ? `<table class="rowlist"><thead><tr><th>Date</th><th>By</th><th>Goal</th><th>Note</th><th class="right">Amount</th><th></th></tr></thead><tbody>
+        ${data.entries.map((r) => `<tr><td class="c-main">${fdate(r.date)}</td><td class="c-sub">${esc(r.user_name || '—')}</td><td class="c-sub${r.goal_title ? '' : ' c-none'}">${esc(r.goal_title || '—')}</td><td class="c-sub">${esc(r.note || '')}</td>
+          <td class="right amount c-amt" style="color:${r.kind === 'deposit' ? 'var(--accent)' : 'var(--red)'}">${r.kind === 'deposit' ? '+' : '−'}${money(r.amount)}</td>
+          <td class="right c-act">${canWrite() ? `<button class="btn danger small iconbtn" data-del="${r.id}" aria-label="${tr('Delete')}" data-tip="${tr('Delete')}">✕</button>` : ''}</td></tr>`).join('')}
       </tbody></table>` : `<div class="empty"><b>No savings entries yet</b>Deposit funds above to start the family economy account.</div>`}
     </div>`;
   $('#goalform')?.addEventListener('submit', async (e) => {
@@ -3876,7 +3882,7 @@ function creditCard(c, members, properties, refresh) {
   const pctOf = (n) => Math.min(100, Math.max(0, (n / term) * 100));
   const donePct = pctOf(monthsDone), schedPct = pctOf(elapsed), advPct = pctOf(savedMo);
   const done = left <= 0;
-  wrap.innerHTML = `<summary><span><b>${esc(c.name)}</b> <span class="muted">${[c.lender, c.user_name || 'Whole family', c.property_name, `${money(c.monthly_total)}/mo`, `${monthsDone}/${term} ${tr('mo')}`].filter(Boolean).map(esc).join(' · ')}</span>
+  wrap.innerHTML = `<summary><span><b>${esc(c.name)}</b> <span class="muted">${[c.lender, c.user_name || tr('Whole family'), c.property_name, `${money(c.monthly_total)}/${perMo()}`, `${monthsDone}/${term} ${tr('mo')}`].filter(Boolean).map(esc).join(' · ')}</span>
       ${saved ? `<span class="badge paid">${tr('saved')} ${money(c.interest_saved)}</span>` : ''}</span>
     ${canWrite() ? `<span class="row"><button class="btn ghost small" data-edit>Edit</button><button class="btn danger small" data-del>Delete</button></span>` : ''}</summary>
     <div class="body">
@@ -4137,7 +4143,7 @@ async function viewBills(el) {
       ${billFormFields(members, properties, vehicles)}
       <button class="btn">Add bill</button></form>`) : ''}
     <div class="card" style="margin-top:16px" id="billlist">
-      ${bills.length ? `<table class="cards billlist"><thead><tr><th>Bill</th><th>Owner</th><th>Due</th><th class="right">Amount</th><th>Status</th><th>Invoice</th><th></th></tr></thead><tbody>
+      ${bills.length ? `<table class="cards billlist"><thead><tr><th>Bill</th><th>Owner</th><th>Due</th><th class="right">Amount</th><th>Status</th><th>${LANG === 'ro' ? 'Document' : 'Invoice'}</th><th></th></tr></thead><tbody>
       ${bills.map((b) => {
         const late = b.status === 'unpaid' && b.due_date < t;
         const dLeft = daysUntil(b.due_date);
@@ -4152,7 +4158,7 @@ async function viewBills(el) {
               : ` <span class="muted">${daysLabel(dLeft)}</span>`) : ''}</td>
           <td class="right amount" data-label="${tr('Amount')}">${money(b.amount)}</td>
           <td data-label="${tr('Status')}"><span class="badge ${late ? 'late' : b.status}">${tr(b.status)}</span></td>
-          <td class="lowpri" data-label="${tr('Invoice')}">${b.attachment ? `<a href="/api/bills/${b.id}/attachment" target="_blank">view</a>` : canWrite() ? `<label class="btn ghost small" style="display:inline-block">attach<input type="file" data-attach="${b.id}" accept=".pdf,image/*" hidden></label>` : '—'}</td>
+          <td class="lowpri" data-label="${tr('Invoice')}">${b.attachment ? `<a href="/api/bills/${b.id}/attachment" target="_blank">view</a>` : canWrite() ? `<label class="btn ghost small">attach<input type="file" data-attach="${b.id}" accept=".pdf,image/*" hidden></label>` : '—'}</td>
           <td class="right"><span class="rowacts">${canWrite() ? `
             ${b.status === 'unpaid' ? `<button class="btn small" data-pay="${b.id}" data-amt="${b.amount ?? ''}">Mark paid</button>` : ''}
             ${rowMenu([
@@ -4495,7 +4501,7 @@ async function renderEntityDocs(box, kind, item, slots, refresh) {
         if (d.expiry_date) { const days = Math.ceil((new Date(d.expiry_date) - new Date(t)) / 86400000); exp = `<span class="${days < 0 ? 'badge late' : days <= 14 ? 'badge unpaid' : ''}">${fdate(d.expiry_date)}</span>`; }
         return `<tr><td><b>${esc(d.name)}</b>${d.number ? ` <span class="muted">${esc(d.number)}</span>` : ''}</td>
           <td>${d.slot ? esc(slotLabel || d.slot) : '<span class="muted">—</span>'}</td><td>${exp}</td>
-          <td>${d.attachment ? `<a href="/api/documents/${d.id}/attachment" target="_blank">view</a>` : canWrite() ? `<label class="btn ghost small" style="display:inline-block">attach<input type="file" data-docattach="${d.id}" accept=".pdf,image/*" hidden></label>` : '—'}</td>
+          <td>${d.attachment ? `<a href="/api/documents/${d.id}/attachment" target="_blank">view</a>` : canWrite() ? `<label class="btn ghost small">attach<input type="file" data-docattach="${d.id}" accept=".pdf,image/*" hidden></label>` : '—'}</td>
           <td class="right">${canWrite() ? `<button class="btn danger small" data-docdel="${d.id}">✕</button>` : ''}</td></tr>`;
       }).join('')}</tbody></table>` : '<p class="muted">No documents yet.</p>'}`;
   box.querySelector('[data-docform]')?.addEventListener('submit', async (e) => {
@@ -4592,6 +4598,7 @@ async function renderTenantBox(box, p) {
         <button class="btn small" data-tremind>${tr('Send reminder')}</button>
         <span class="muted">${tr('Waiting on the tenant:')} ${bits.join(' · ')}</span></p>`;
     })()}
+    <h3 style="margin-top:16px">${LANG === 'ro' ? 'Costuri trimise chiriașului' : 'Charges shared with the tenant'}</h3>
     ${canWrite() ? `<form data-chform class="formgrid">
       <div><label>Type</label><select name="type"><option value="invoice">Invoice</option><option value="rent">Rent (extra)</option></select></div>
       <div><label>Title</label><input name="title" placeholder="Electricity — June" required></div>
@@ -4606,7 +4613,7 @@ async function renderTenantBox(box, p) {
           <td>${fdate(c.due_date)}${late ? ' <span class="badge late">overdue</span>' : ''}</td>
           <td><b>${esc(c.title)}</b>${c.type === 'rent' ? ' <span class="muted">· rent</span>' : ''}</td>
           <td class="right amount">${moneyIn(c.amount, chargeCur(c))}</td>
-          <td>${c.attachment ? `<a href="/api/properties/${p.id}/charges/${c.id}/attachment" target="_blank">view</a>` : canWrite() ? `<label class="btn ghost small" style="display:inline-block">attach<input type="file" data-chattach="${c.id}" accept=".pdf,image/*" hidden></label>` : '—'}</td>
+          <td>${c.attachment ? `<a href="/api/properties/${p.id}/charges/${c.id}/attachment" target="_blank">view</a>` : canWrite() ? `<label class="btn ghost small">attach<input type="file" data-chattach="${c.id}" accept=".pdf,image/*" hidden></label>` : '—'}</td>
           <td>${c.status === 'paid' ? `<span class="badge paid">${tr('paid')}${c.confirmed_at ? ' ' + fdate(c.confirmed_at) : ''}</span>`
             : c.status === 'pending' ? `<span class="badge role">${tr('pending — tenant marked paid')} ${c.marked_paid_at ? fdate(c.marked_paid_at) : ''}</span>`
             : `<span class="badge unpaid">unpaid</span>`}</td>
@@ -4929,7 +4936,7 @@ async function viewActe(el) {
             <td><b>${esc(d.name)}</b>${d.number ? ` <span class="muted">${esc(d.number)}</span>` : ''}${d.notes ? `<br><span class="muted">${esc(d.notes)}</span>` : ''}</td>
             <td class="lowpri" data-label="${tr('Belongs to')}">${belongsTo(d)}</td>
             <td data-label="${tr('Expires')}">${exp}</td>
-            <td class="lowpri" data-label="${tr('Scan')}">${d.attachment ? `<a href="/api/documents/${d.id}/attachment" target="_blank">view</a>` : canWrite() ? `<label class="btn ghost small" style="display:inline-block">attach<input type="file" data-attach="${d.id}" accept=".pdf,image/*" hidden></label>` : '—'}</td>
+            <td class="lowpri" data-label="${tr('Scan')}">${d.attachment ? `<a href="/api/documents/${d.id}/attachment" target="_blank">view</a>` : canWrite() ? `<label class="btn ghost small">attach<input type="file" data-attach="${d.id}" accept=".pdf,image/*" hidden></label>` : '—'}</td>
             <td class="right">${canWrite() ? `<button class="btn danger small" data-del="${d.id}">Delete</button>` : ''}</td>
           </tr>`;
         }).join('')}</tbody></table>`
@@ -5178,15 +5185,15 @@ async function viewWarranties(el) {
     const days = daysTo(w.expires_at);
     const dead = days < 0;
     return `<tr${dead ? ' style="opacity:.6"' : ''}>
-      <td><b>${esc(w.name)}</b>${w.serial ? ` <span class="muted">${esc(w.serial)}</span>` : ''}${w.note ? `<br><span class="muted">${esc(w.note)}</span>` : ''}</td>
-      <td>${w.seller ? esc(w.seller) : '<span class="muted">—</span>'}${owner(w) ? `<br><span class="muted">${esc(owner(w))}</span>` : ''}</td>
-      <td>${w.purchased_at ? fdate(w.purchased_at) : '<span class="muted">—</span>'}${w.price != null ? `<br><span class="muted">${money(w.price)}</span>` : ''}</td>
-      <td><span class="${dead ? 'badge late' : days <= 30 ? 'badge unpaid' : ''}">${fdate(w.expires_at)}${dead ? '' : ` · ${daysLabel(days)}`}</span></td>
-      <td>${w.attachment ? `<a href="/api/warranties/${w.id}/attachment" target="_blank">${tr('receipt')}</a>`
-        : canWrite() ? `<label class="btn ghost small" style="display:inline-block">${tr('attach')}<input type="file" data-attach="${w.id}" accept=".pdf,image/*" hidden></label>` : '—'}</td>
-      <td class="right">${canWrite() ? `<button class="btn danger small" data-del="${w.id}">✕</button>` : ''}</td></tr>`;
+      <td class="c-main"><b>${esc(w.name)}</b>${w.serial ? ` <span class="muted">${esc(w.serial)}</span>` : ''}${w.note ? `<br><span class="muted">${esc(w.note)}</span>` : ''}</td>
+      <td class="c-sub${w.seller || owner(w) ? '' : ' c-none'}">${w.seller ? esc(w.seller) : '<span class="muted">—</span>'}${owner(w) ? `<br><span class="muted">${esc(owner(w))}</span>` : ''}</td>
+      <td class="c-sub${w.purchased_at || w.price != null ? '' : ' c-none'}">${w.purchased_at ? fdate(w.purchased_at) : '<span class="muted">—</span>'}${w.price != null ? `<br><span class="muted">${money(w.price)}</span>` : ''}</td>
+      <td class="c-foot"><span class="${dead ? 'badge late' : days <= 30 ? 'badge unpaid' : ''}">${fdate(w.expires_at)}${dead ? '' : ` · ${daysLabel(days)}`}</span></td>
+      <td class="c-foot">${w.attachment ? `<a href="/api/warranties/${w.id}/attachment" target="_blank">${tr('receipt')}</a>`
+        : canWrite() ? `<label class="btn ghost small">${tr('attach')}<input type="file" data-attach="${w.id}" accept=".pdf,image/*" hidden></label>` : '—'}</td>
+      <td class="right c-act">${canWrite() ? `<button class="btn danger small iconbtn" data-del="${w.id}" aria-label="${tr('Delete')}" data-tip="${tr('Delete')}">✕</button>` : ''}</td></tr>`;
   };
-  const table = (list) => `<table class="cards"><thead><tr><th>${tr('Thing')}</th><th>${tr('Bought from')}</th><th>${tr('Bought')}</th><th>${tr('Cover ends')}</th><th>${tr('Receipt')}</th><th></th></tr></thead>
+  const table = (list) => `<table class="rowlist"><thead><tr><th>${tr('Thing')}</th><th>${tr('Bought from')}</th><th>${tr('Bought')}</th><th>${tr('Cover ends')}</th><th>${tr('Receipt')}</th><th></th></tr></thead>
     <tbody>${list.map(row).join('')}</tbody></table>`;
   el.innerHTML = `${subnav('garantii')}<div class="pagehead"><div><h1>${tr('Warranties')}</h1>
       <p>${tr('Appliances, electronics, tools — what is still under cover, who you claim from, and the receipt that proves it.')}</p></div></div>
@@ -5843,13 +5850,13 @@ async function viewLists(el, tab = 'buy') {
         <div><label>Note</label><input name="note" placeholder="optional"></div>
         <button class="btn">Add</button></form>` : ''}
       ${tab === 'baptism' ? guestList(rows) : rows.length ? `<p class="muted" style="margin:12px 0 4px">${openCount} ${tr('open')} · ${rows.length - openCount} ${tr('done')}</p>
-      <table><tbody>
+      <table class="rowlist"><tbody>
         ${rows.map((i) => `<tr style="${i.done ? 'opacity:.55' : ''}">
-          <td style="width:30px">${canWrite() ? `<input type="checkbox" data-tog="${i.id}" ${i.done ? 'checked' : ''} style="width:auto">` : (i.done ? '✓' : '')}</td>
-          <td><b style="${i.done ? 'text-decoration:line-through' : ''}">${esc(i.title)}</b>${i.note ? `<br><span class="muted">${esc(i.note)}</span>` : ''}</td>
-          <td class="muted">${esc(i.user_name || '')}</td>
-          <td class="right amount">${i.amount ? money(i.amount) : ''}</td>
-          <td class="right">${canWrite() ? `<button class="btn danger small" data-del="${i.id}">✕</button>` : ''}</td></tr>`).join('')}
+          <td class="c-lead" style="width:30px">${canWrite() ? `<input type="checkbox" data-tog="${i.id}" ${i.done ? 'checked' : ''} style="width:auto" aria-label="${esc(i.title)}">` : (i.done ? '✓' : '')}</td>
+          <td class="c-main"><b style="${i.done ? 'text-decoration:line-through' : ''}">${esc(i.title)}</b>${i.note ? `<br><span class="muted">${esc(i.note)}</span>` : ''}</td>
+          <td class="muted c-sub">${esc(i.user_name || '')}</td>
+          <td class="right amount c-amt">${i.amount ? money(i.amount) : ''}</td>
+          <td class="right c-act">${canWrite() ? `<button class="btn danger small iconbtn" data-del="${i.id}" aria-label="${tr('Delete')}" data-tip="${tr('Delete')}">✕</button>` : ''}</td></tr>`).join('')}
       </tbody></table>` : `<div class="empty" style="margin-top:12px"><b>Nothing here yet</b>Add the first item above.</div>`}
     </div>`}`;
   el.querySelectorAll('.tabs button[data-t]').forEach((b) => (b.onclick = () => viewLists(el, b.dataset.t)));
@@ -6102,7 +6109,7 @@ async function viewAlerts(el) {
             <button class="btn ghost tiny" data-snooze="${esc(n.item)}">Snooze 7 days</button>
             <button class="btn ghost tiny" data-handled="${esc(n.item)}">Handled</button>
           </div>` : ''}</td>
-        <td class="right muted" style="white-space:nowrap">${new Date(n.created_at + 'Z').toLocaleDateString('ro-RO')}</td></tr>`;
+        <td class="right muted" style="white-space:nowrap">${fdate(new Date(n.created_at + 'Z').toLocaleDateString('sv-SE'))}</td></tr>`;
       }).join('')}
       </tbody></table>` : `<div class="empty"><b>No alerts yet</b>They appear here as your bills and deadlines get close.</div>`}
     </div>`;
@@ -6155,7 +6162,7 @@ async function viewFamily(el) {
       <form id="childform" class="formgrid"><div><label>Name</label><input name="name" required></div>
       <button class="btn">Add child</button></form></div>` : ''}
     <div class="card" style="margin-top:16px"><h3>Members</h3>
-      <table><thead><tr><th>Name</th><th>Email</th><th>Role</th>${isAdmin ? '<th></th>' : ''}</tr></thead><tbody>
+      <table class="memberlist"><thead><tr><th>Name</th><th>Email</th><th>Role</th>${isAdmin ? '<th></th>' : ''}</tr></thead><tbody>
       ${members.map((m) => `<tr><td><span class="row" style="gap:8px">${avatarHtml(m)}<span>${esc(m.name)}${m.id === ME.id ? ' <span class="muted">(you)</span>' : ''}</span></span>
           ${isAdmin && m.role === 'child' ? `<label style="margin-top:6px;font-size:12px">${tr('Expenses with these words count for them')}
             <input data-words="${m.id}" value="${esc(m.cost_words || '')}" placeholder="montessori, grădiniță" style="font-size:14px"></label>` : ''}</td><td>${m.email ? esc(m.email) : '<span class="muted">no login</span>'}</td>
@@ -6260,7 +6267,7 @@ async function viewSettings(el) {
       <p class="muted" style="margin-top:0">Choose how Family Hub looks on this account.</p>
       <div class="row">${['light', 'dark', 'system'].map((tm) => `<button class="btn ${(ME.theme || 'light') === tm ? '' : 'ghost'} small" data-theme="${tm}">${THEME_LABELS[tm]}</button>`).join('')}</div>
       <p class="muted" style="margin:16px 0 8px">Language</p>
-      <div class="row">${[['en', '🇬🇧 English'], ['ro', '🇷🇴 Română']].map(([lg, lb]) => `<button class="btn ${(ME.lang || 'en') === lg ? '' : 'ghost'} small" data-lang="${lg}">${lb}</button>`).join('')}</div>
+      <div class="row">${[['en', '🇬🇧 English'], ['ro', '🇷🇴 Română']].map(([lg, lb]) => `<button class="btn ${LANG === lg ? '' : 'ghost'} small" data-lang="${lg}">${lb}</button>`).join('')}</div>
     </div>
     ${ME.role === 'admin' ? `<details class="card foldcard" style="margin-top:16px"><summary>${LANG === 'ro' ? 'Meniu' : 'Menu'}</summary><div style="padding-top:12px">
       <p class="muted" style="margin-top:0">${LANG === 'ro' ? 'Ce pagini apar în meniu, pentru toată familia. O pagină scoasă rămâne în aplicație: o pui înapoi oricând de aici.' : 'Which pages show in the menu, for the whole family. A page left out stays in the app: put it back here any time.'}</p>
@@ -6289,7 +6296,7 @@ async function viewSettings(el) {
     <div class="card" style="margin-top:16px"><h3>Your profile</h3>
       <div class="row" style="gap:16px;align-items:center">${avatarHtml(ME, 'avatar-lg')}
         <div class="row">
-          ${ME.role !== 'child' ? `<label class="btn ghost small" style="display:inline-block">Upload picture<input type="file" data-avatar="${ME.id}" data-self accept="image/*" hidden></label>` : ''}
+          ${ME.role !== 'child' ? `<label class="btn ghost small">Upload picture<input type="file" data-avatar="${ME.id}" data-self accept="image/*" hidden></label>` : ''}
           ${ME.avatar ? `<button class="btn danger small" data-avadel="${ME.id}" data-self>Remove</button>` : ''}
         </div></div>
       ${ME.role !== 'child' ? `<form id="nameform" class="formgrid" style="margin-top:12px;max-width:560px">
@@ -6306,7 +6313,7 @@ async function viewSettings(el) {
       <div class="row" style="gap:24px;flex-wrap:wrap">${kids.map((k) => `<div style="text-align:center">${avatarHtml(k, 'avatar-lg')}
         <div style="margin-top:8px"><b>${esc(k.name)}</b></div>
         <div class="row" style="justify-content:center;margin-top:4px">
-          <label class="btn ghost small" style="display:inline-block">Upload<input type="file" data-avatar="${k.id}" accept="image/*" hidden></label>
+          <label class="btn ghost small">Upload<input type="file" data-avatar="${k.id}" accept="image/*" hidden></label>
           ${k.avatar ? `<button class="btn danger small" data-avadel="${k.id}">✕</button>` : ''}</div></div>`).join('')}</div></div>` : ''}
     ${ME.role === 'admin' ? `<div class="card" style="margin-top:16px"><h3>${tr('Invoices by email')}</h3>
       <p class="muted" style="margin-top:0">${tr('Forward an invoice to this address and it lands in Bills as a draft, with the amount read out of it. Nothing is counted until you accept it.')}</p>
