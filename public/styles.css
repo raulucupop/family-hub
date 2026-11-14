@@ -1840,3 +1840,214 @@ b, strong, th, optgroup, h1, h2, h3, h4, h5, h6 { font-weight: 600; }
 @media (prefers-reduced-motion: reduce) { .fab { transition: none; } }
 .filterrow .monthpick #mfilter { width: 170px; }
 @media (max-width: 860px) { .filterrow .monthpick #mfilter { width: auto; flex: 1; } }
+
+/* ===================================================================================================
+   Refinement pass, November 2026 — the upgrade above fixed what was broken; this evens out what was
+   merely uneven. Found the same way (every page, phone and desktop, light and dark), with a family
+   in the database big enough to fill the tables. One block, each rule with its reason.
+   =================================================================================================== */
+
+/* ---- controls share one height ----
+   On a desktop a field was 34px, a select 36, a button 32 and a "small" button anything from 24 to
+   32 depending on whether it was a <button>, an <a> or a <label>. In a form row that showed as a
+   squat pill sitting lower than the fields beside it, and labels at two different heights. A button
+   is a flex box now, so its height no longer depends on the element it is made from. */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; line-height: 1.2; text-align: center; text-decoration: none; }
+.iconbtn { display: inline-grid; }
+label.btn { margin: 0; }
+@media (min-width: 861px) {
+  input:not([type=checkbox]):not([type=radio]):not([type=file]):not([type=range]), select { min-height: 36px; }
+  .btn { min-height: 36px; }
+  .btn.small { min-height: 30px; }
+  .btn.tiny { min-height: 0; }
+  /* next to fields, a button is as tall as the fields */
+  .formgrid .btn, .formgrid .btn.small, form.row .btn { min-height: 36px; }
+  /* the expense filters: the search field carries a label above it, so the row lines up on the
+     fields' bottom edge instead of floating the labelled one 9px lower than the rest */
+  .filterrow { align-items: flex-end; }
+  .filterrow .btn.small { min-height: 36px; }
+  .filterrow #cfilter { width: 172px; } /* "Toate categoriile" was cut at 150px */
+}
+
+/* ---- page rhythm ----
+   Cards carry their own 16px top margin inline, and the ones that did not (a folding "Adaugă…"
+   card after another card) sat 2px under their neighbour. Every card after something gets the gap. */
+:is(#page, #moneybody) > * + .card { margin-top: 16px; }
+
+/* ---- disclosure rows ----
+   "Ce îl mișcă (11)", "Vezi defalcarea", "Celelalte 4 insigne": on a phone these lost the
+   browser's triangle (the 44px rule makes every summary a flex row) and read as plain sentences
+   nobody would think to tap. They draw their own chevron now, the same on every screen. The three
+   card-style disclosures (addbox, foldcard, entity) already have their own mark. */
+details:not(.addbox):not(.foldcard):not(.entity) > summary { list-style: none; display: flex; align-items: center; gap: 8px; cursor: pointer; }
+details:not(.addbox):not(.foldcard):not(.entity) > summary::-webkit-details-marker { display: none; }
+details:not(.addbox):not(.foldcard):not(.entity) > summary::before {
+  content: ""; flex: none; width: 6px; height: 6px; margin: 0 3px 0 2px;
+  border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg); transition: transform 150ms var(--ease-out);
+}
+details[open]:not(.addbox):not(.foldcard):not(.entity) > summary::before { transform: rotate(45deg) translate(-1px, -1px); }
+
+@media (max-width: 860px) {
+  /* ---- expenses: the name beside the category was squeezed to "Ra…" by the amount ----
+     The category takes the whole first line; who paid and the note share the second:
+         ● Alimente                 412,50 RON  ⋯
+         (R) Raul  Lidl                                                                          */
+  table.explist tr:not(.daysep):not([id]) > td:nth-child(2) { grid-column: 1 / 3; }
+  table.explist tr:not(.daysep):not([id]) > td:nth-child(3) { grid-row: 2; grid-column: 1; align-self: start; overflow: visible; }
+  table.explist tr:not(.daysep):not([id]) > td:nth-child(4) { grid-row: 2; grid-column: 2 / 4; }
+  table.explist tr:not(.daysep):not([id]) > td:nth-child(5) { grid-row: 1; align-self: start; }
+
+  /* the search field kept its 180px desktop width inside a half-width grid cell and ran out of
+     the card's right edge */
+  .filterrow .srch { min-width: 0; }
+  .filterrow #qfilter { width: 100%; }
+
+  /* the tile's label reserves 64px for the percentage pill, which a phone does not show: "DATORAT
+     AZI" broke onto two lines for the sake of a pill that was not there */
+  .kpi .label { padding-right: 0; }
+}
+
+/* ---- lists on a phone: one compact row each, nothing cut off ----
+   Income history was a five-line card per salary; savings history, the family's members, the
+   budget table and the shopping lists were plain tables that ran out of the right edge with the
+   amount or the delete button out of sight. They share one layout now (table.rowlist): what it is
+   on the left, the amount and the action on the right, the details on a quieter second line.
+       Salariu                        9.500,00 RON  ✕
+       04/11/2026 · Raul                                                                         */
+@media (max-width: 860px) {
+  table.rowlist { display: block; overflow: visible; }
+  table.rowlist thead { display: none; }
+  table.rowlist tbody { display: block; }
+  table.rowlist tr {
+    display: flex; flex-wrap: wrap; align-items: center; column-gap: 10px; row-gap: 2px;
+    padding: 10px 10px 10px 12px; margin-bottom: 8px; border: 1px solid var(--line); border-radius: 10px;
+  }
+  table.rowlist tr:last-child { margin-bottom: 0; }
+  table.rowlist tbody tr:hover { background: var(--card); }
+  table.rowlist td { display: block; width: auto; min-width: 0; padding: 0; border: 0; text-align: left; }
+  table.rowlist td:empty, table.rowlist td.c-none { display: none; }
+  table.rowlist .c-lead { order: 0; flex: none; width: auto !important; display: flex; align-items: center; }
+  table.rowlist .c-main { order: 1; flex: 1 1 72px; font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
+  table.rowlist .c-main .muted { font-weight: 400; }
+  table.rowlist .c-amt { order: 2; margin-left: auto; font-size: 16px; font-weight: 600; white-space: nowrap; text-align: right; }
+  table.rowlist .c-amt .muted { font-weight: 400; font-size: 12px; }
+  table.rowlist .c-act { order: 3; margin-left: auto; display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+  table.rowlist .c-act .btn.small:not(.iconbtn) { min-height: 36px; }
+  table.rowlist .c-act .iconbtn { width: 36px; height: 36px; }
+  /* the button is taller than a line of text; it must not set the height of the row's first line */
+  table.rowlist .c-act { margin-top: -5px; margin-bottom: -5px; }
+  /* the line break between the headline and the details, and between the details and the footer */
+  table.rowlist tr::after { content: ""; order: 4; flex-basis: 100%; height: 0; }
+  table.rowlist tr::before { content: ""; order: 6; flex-basis: 100%; height: 0; }
+  table.rowlist .c-sub { order: 5; font-size: 13px; font-weight: 400; color: var(--ink-soft); overflow-wrap: anywhere; }
+  table.rowlist .c-sub:not(.c-none):not(:empty) ~ .c-sub:not(.c-none):not(:empty)::before { content: "·"; margin: 0 6px 0 -4px; }
+  /* a two-line cell on a desktop ("Altex<br>Raul") is one run of words here */
+  table.rowlist .c-sub br { display: none; }
+  table.rowlist .c-sub br + *::before { content: "·"; margin: 0 6px; }
+  table.rowlist .c-foot { order: 7; margin-top: 6px; font-size: 14px; }
+  table.rowlist .c-foot ~ .c-foot { margin-left: auto; }
+  /* a row that starts with a tick box: the details line starts under the title, not under the box */
+  table.rowlist .c-lead:not(:empty) ~ .c-sub { margin-left: 30px; }
+
+  /* budgets: the bar was the column that fell off the screen
+         Alimente                    [   1800 ]
+         13.541,80 RON               ▓▓▓▓▓▓▓▓▓ 752%                                              */
+  table.budlist { display: block; overflow: visible; }
+  table.budlist thead { display: none; }
+  table.budlist tbody { display: block; }
+  table.budlist tr { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 132px); align-items: center; column-gap: 12px; row-gap: 4px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+  table.budlist tr:last-child { border-bottom: 0; }
+  table.budlist tbody tr:hover { background: transparent; }
+  table.budlist td { display: block; padding: 0; border: 0; min-width: 0; }
+  table.budlist td:nth-child(1) { font-weight: 600; font-size: 15px; }
+  table.budlist td:nth-child(2) input { width: 100% !important; }
+  table.budlist td:nth-child(3) { text-align: left; font-size: 14px; color: var(--ink-soft); }
+  table.budlist td:nth-child(4) { font-size: 12px; }
+  table.budlist td:nth-child(4) .bar { margin-top: 0; }
+
+  /* members: name and role on the first line, the address and "Elimină" on the second, and the
+     child's cost words on a full-width line of their own instead of a 60px field */
+  table.memberlist { display: block; overflow: visible; }
+  table.memberlist thead { display: none; }
+  table.memberlist tbody { display: block; }
+  table.memberlist tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: 12px; row-gap: 6px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+  table.memberlist tr:last-child { border-bottom: 0; padding-bottom: 0; }
+  table.memberlist tbody tr:hover { background: transparent; }
+  table.memberlist td { display: block; padding: 0; border: 0; min-width: 0; }
+  table.memberlist td:nth-child(1) { display: contents; }
+  table.memberlist td:nth-child(1) > .row { grid-row: 1; grid-column: 1; flex-wrap: nowrap; min-width: 0; font-weight: 600; }
+  table.memberlist td:nth-child(1) > label { grid-row: 3; grid-column: 1 / -1; margin: 0 !important; }
+  table.memberlist td:nth-child(2) { grid-row: 2; grid-column: 1; font-size: 14px; color: var(--ink-soft); overflow-wrap: anywhere; }
+  table.memberlist td:nth-child(3) { grid-row: 1; grid-column: 2; justify-self: end; }
+  table.memberlist td:nth-child(4) { grid-row: 2; grid-column: 2; justify-self: end; }
+  table.memberlist td:nth-child(4) .btn { min-height: 36px; }
+
+  /* vehicles and properties: "Skoda Octavia CJ 12 POP · Proprietar: toată" / "familia" broke in
+     the middle of a phrase. The name has the first line, the plate and the owner the second. */
+  details.entity > summary { align-items: flex-start; }
+  details.entity > summary > span:first-child { min-width: 0; }
+  details.entity > summary > span:first-child > .muted { display: block; margin-top: 4px; }
+
+  /* twelve month names do not fit under twelve bars 26px wide: IAN.FEB.MAR. ran into each other.
+     The initial is enough under a bar; the full name is in the readout when a bar is tapped. */
+  .yearbar .yb-rest { display: none; }
+}
+
+/* ---- file fields ----
+   The browser's grey "Choose File" button was the one control on a page that did not belong to the
+   app, and its 44px box sat taller than the fields beside it. The button inside is drawn like the
+   app's own secondary button; what it says is still the browser's, in the browser's language. */
+input[type=file] { padding: 4px 8px 4px 4px; font-size: 13px; color: var(--ink-soft); cursor: pointer; }
+input[type=file]::file-selector-button {
+  font: 600 13px/1.2 var(--body); color: var(--accent); background: transparent; cursor: pointer;
+  border: 1px solid var(--accent); border-radius: 7px; padding: 5px 10px; margin-right: 10px;
+}
+input[type=file]:hover::file-selector-button { background: var(--accent-soft); }
+@media (max-width: 860px) {
+  input[type=file] { padding: 5px 8px 5px 5px; font-size: 14px; }
+  input[type=file]::file-selector-button { font-size: 14px; padding: 8px 12px; }
+}
+
+@media (max-width: 860px) {
+  /* the two filter selects kept fixed desktop widths inside their half-width cells: unnoticed at
+     390px, where the cell happens to be that wide, a visible gap on a tablet held upright. And
+     "Toate categoriile" needs 12px more than the cell had, so the select gives up some padding. */
+  .filterrow > #wfilter { width: 100% !important; }
+  .filterrow > #cfilter { width: 100%; }
+  .filterrow > select { padding-left: 10px; padding-right: 2px; }
+}
+/* a tablet held upright has the phone layout, but twice the width: forms take two columns there
+   instead of one field per 780px line */
+@media (min-width: 600px) and (max-width: 860px) {
+  .formgrid { grid-template-columns: 1fr 1fr; gap: 12px; }
+}
+
+/* ---- dark theme: what is written on the green ----
+   In the dark theme the accent is a light mint, and white on it measures 2.5:1 — "Salvează" on a
+   button, the current page in the menu and the + were the hardest things on the screen to read.
+   The newer parts of the app (the calculators' chips, the badges) already write on it in the dark
+   ground colour; the buttons now do the same (6.7:1). */
+:root[data-theme="dark"] .btn:not(.ghost):not(.danger):not(.sent),
+:root[data-theme="dark"] .navlink.active,
+:root[data-theme="dark"] .fab { color: #10201b; }
+
+/* On a wide screen the bill's "…" dropped under "Marchează plătit" — the cell was sized by the
+   browser for the wrapped pair, so every row was a line taller than its text. There is room for
+   both side by side. */
+@media (min-width: 1100px) {
+  table.billlist .rowacts { flex-wrap: nowrap; align-items: center; }
+  table.billlist .rowacts .btn { white-space: nowrap; }
+}
+/* An expense row is as tall as its "…" button, and its text hung from the top of that: the date,
+   the category and the amount sat 6px above the button they belong with. One line, one axis. */
+@media (min-width: 861px) {
+  table.explist tr:not(.daysep) > td, table.rowlist td { vertical-align: middle; }
+}
+
+/* A hovered button lifts by a pixel, which makes it its own layer — and its tooltip, drawn inside
+   that layer, slid under the sticky day header above it ("…iuni" peeking out from behind "AZI").
+   The hovered control now sits above the header; and once its menu is open the tooltip has said
+   what it had to say. */
+[data-tip]:not(.fab):hover, [data-tip]:not(.fab):focus-visible { z-index: 3; }
+.rowmenu-btn[aria-expanded="true"]::before { content: none; }

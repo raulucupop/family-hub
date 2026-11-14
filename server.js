@@ -4166,7 +4166,10 @@ function alertText(lang, p) {
     };
   }
   const label = mailLabel(lang, p.label);
-  const tail = `${p.entity ? `${p.entity} — ` : ''}`;
+  // 'Family' is the stand-in owner of a paper that belongs to nobody in particular; in a Romanian
+  // alert it read "Family — scadent 14/12/2026"
+  const entity = ro && p.entity === 'Family' ? 'Familie' : p.entity;
+  const tail = `${entity ? `${entity} — ` : ''}`;
   const amount = p.amount ? `, ${p.amount}` : '';
   const when = mailDate(p.date);
   if (p.days < 0) {

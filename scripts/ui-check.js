@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 /* Opens every page of the app, as a desktop and as a phone, on a throwaway database with a
    realistic family in it, and fails if any page throws a script error or is wider than the screen
-   (the classic sign of a layout broken on a phone). Screenshots go to ./ui-shots so a pull request
-   can be looked at, not just read.
+   (the classic sign of a layout broken on a phone) — or if, on the phone, something inside the
+   page has to be dragged sideways to be read (a table that kept its desktop columns: the page
+   itself stays the right width, so the first check never saw those). Screenshots go to ./ui-shots
+   so a pull request can be looked at, not just read.
 
      npm run ui-check            # needs a Chromium for Playwright: npx playwright install chromium
 
@@ -17,7 +19,8 @@ const { chromium } = require('playwright');
 
 const ROOT = path.join(__dirname, '..');
 const OUT = path.join(ROOT, 'ui-shots');
-const PAGES = ['dashboard', 'review', 'search', 'alerts', 'money', 'bills', 'import', 'properties', 'tenants',
+const PAGES = ['dashboard', 'review', 'search', 'alerts', 'money', 'money/income', 'money/budgets', 'money/credits',
+  'money/savings', 'money/debt', 'money/year', 'bills', 'import', 'properties', 'tenants',
   'chores', 'watch', 'vehicles', 'acte', 'garantii', 'family', 'lists', 'settings'];
 const SIZES = { desktop: { width: 1366, height: 768 }, phone: { width: 390, height: 844 } };
 const EMAIL = 'ui-check@example.ro', PASSWORD = 'ui-check-1234';
@@ -51,7 +54,40 @@ async function seed(base) {
   await call('POST', '/api/documents', { name: 'Carte de identitate', number: 'CJ123456', expiry_date: day(30) });
   await call('POST', '/api/chores', { title: 'Udat florile', cadence: 'daily' });
   await call('POST', '/api/lists', { list: 'grocery', title: 'Lapte' });
+  // the tabs under Buget și cheltuieli and the lists with amounts: each has a table of its own,
+  // and an empty table cannot show that it does not fit on a phone
+  await call('POST', '/api/family/members', { name: 'Alexandra-Ioana' });
+  await call('POST', '/api/incomes', { source: 'Chirie apartament', amount: 2200, date: day(-6) });
+  await call('POST', '/api/budgets', { category: 'Groceries', month: day(0).slice(0, 7), amount: 1800 });
+  await call('POST', '/api/lists', { list: 'buy', title: 'Canapea nouă', amount: 4200, note: 'pentru sufragerie' });
+  await call('POST', '/api/credits', { name: 'Credit ipotecar', lender: 'Banca Transilvania', principal: 320000, interest_rate: 6.4, term_months: 300, start_date: day(-700) });
+  await call('POST', '/api/savings', { kind: 'deposit', amount: 1500, date: day(-5), note: 'bonus de la firmă' });
+  await call('POST', '/api/loans', { person: 'Andrei', amount: 2000, date: day(-60), due_date: day(20), direction: 'owed' });
+  await call('POST', '/api/recurring-expenses', { category: 'Subscriptions', note: 'Spotify', amount: 26.99, day: 20 });
+  await call('POST', '/api/recurring-incomes', { source: 'Salariu', amount: 9500, day: 10 });
+  await call('POST', '/api/warranties', { name: 'Frigider Samsung', seller: 'eMAG', purchased_at: day(-200), months: 24, price: 3299 });
 }
+
+// Blocks fade in as they are scrolled to, so a full-page screenshot taken from the top showed
+// everything below the first screen as blank paper. Walk down the page first, then come back.
+const scrollThrough = (page) => page.evaluate(async () => {
+  const step = innerHeight * 0.7;
+  for (let y = 0; y < document.documentElement.scrollHeight; y += step) { scrollTo(0, y); await new Promise((r) => setTimeout(r, 100)); }
+  scrollTo(0, 0);
+  await new Promise((r) => setTimeout(r, 300));
+});
+
+// What, inside the page, scrolls sideways. The strips of tabs are meant to; nothing else is.
+const sideways = (page) => page.evaluate(() => {
+  const out = [];
+  for (const e of document.querySelectorAll('#page *')) {
+    if (!e.offsetParent || e.closest('.tabs, .subnav')) continue;
+    if (e.scrollWidth > e.clientWidth + 1 && /auto|scroll/.test(getComputedStyle(e).overflowX)) {
+      out.push(`${e.tagName.toLowerCase()}${e.className ? '.' + String(e.className).trim().split(/\s+/).join('.') : ''} (${e.scrollWidth - e.clientWidth}px hidden)`);
+    }
+  }
+  return out;
+});
 
 (async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fh-ui-'));
@@ -91,7 +127,9 @@ async function seed(base) {
         await page.waitForTimeout(400);
         const over = await page.evaluate(() => document.documentElement.scrollWidth - innerWidth);
         if (over > 1) problems.push(`${size} #${name}: page is ${over}px wider than the screen`);
-        await page.screenshot({ path: path.join(OUT, `${size}-${name}.png`), fullPage: true });
+        await scrollThrough(page);
+        if (size === 'phone') for (const what of await sideways(page)) problems.push(`${size} #${name}: scrolls sideways: ${what}`);
+        await page.screenshot({ path: path.join(OUT, `${size}-${name.replace('/', '-')}.png`), fullPage: true });
       }
       await ctx.close();
     }
@@ -104,5 +142,5 @@ async function seed(base) {
     console.error(`UI check failed:\n  ${problems.join('\n  ')}`);
     process.exit(1);
   }
-  console.log(`UI check: ${PAGES.length} pages × ${Object.keys(SIZES).length} sizes, no script errors, nothing wider than the screen. Screenshots in ui-shots/.`);
+  console.log(`UI check: ${PAGES.length} pages × ${Object.keys(SIZES).length} sizes, no script errors, nothing wider than the screen, nothing scrolling sideways on the phone. Screenshots in ui-shots/.`);
 })().catch((e) => { console.error(e); process.exit(1); });
